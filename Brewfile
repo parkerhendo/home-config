@@ -1,7 +1,9 @@
 cask_args appdir: '/Applications'
 
+tap 'homebrew/core'
+tap 'homebrew/services'
 tap 'caskroom/cask'
-tap 'caskroom/versions'
+tap 'caskroom/cask-versions'
 
 # brew install
 brew 'node'
@@ -13,12 +15,17 @@ brew 'yarn'
 brew 'postgresql'
 brew 'mongodb'
 brew 'wifi-password'
+brew 'nvm'
+brew 'fish'
 
 # Cask installs
 
 # General Apps
 cask 'google-chrome'
+cask 'google-chrome-dev'
 cask 'firefox'
+cask 'firefox-developer-edition'
+cask 'safari-technology-preview'
 cask 'dropbox'
 cask 'bartender'
 cask '1password'
@@ -31,6 +38,8 @@ cask 'vlc'
 cask 'grammarly'
 cask 'sip'
 cask 'droplr'
+cask 'cleanmymac3'
+cask 'discord'
 # Development Apps
 cask 'vscode'
 cask 'iterm2'
@@ -44,6 +53,7 @@ cask 'dash'
 cask 'github'
 cask 'graphql-ide'
 cask 'gitscout'
+cask 'processing2'
 # Design Apps
 cask 'sketch'
 cask 'abstract'
@@ -57,4 +67,7 @@ cask 'origami-studio'
 cask 'principle'
 cask 'protopie'
 cask 'unity'
+cask 'unity-hub'
+cask 'unity-ios-support-for-editor'
+cask 'unity-standard-assets'
 cask 'zeplin'
