@@ -17,6 +17,7 @@ brew 'mongodb'
 brew 'wifi-password'
 brew 'nvm'
 brew 'fish'
+brew 'glslviewer'
 
 # Cask installs
 
