@@ -8,7 +8,7 @@ export ZSH="/Users/parkerhenderson/.oh-my-zsh"
 # load a random theme each time oh-my-zsh is loaded, in which case,
 # to know which specific one was loaded, run: echo $RANDOM_THEME
 # See https://github.com/ohmyzsh/ohmyzsh/wiki/Themes
-ZSH_THEME="spaceship"
+ZSH_THEME="robbyrussell"
 
 # Set list of themes to pick from when loading at random
 # Setting this variable when ZSH_THEME=random will cause zsh to load
@@ -101,6 +101,7 @@ source $ZSH/oh-my-zsh.sh
 # alias ohmyzsh="mate ~/.oh-my-zsh"
 
 alias ckit="~/ckit/bin/ckit"
+alias vi="nvim"
 
 # navigating files
 alias dev="cd ~/Developer"
@@ -121,14 +122,14 @@ export PATH=$PATH:$CKIT_DIR/bin
 export PATH=$HOME/.radicle/bin:$PATH
 export PATH="/Applications/CMake.app/Contents/bin":"$PATH"
 
-# The next line updates PATH for the Google Cloud SDK.
-if [ -f '/Users/parkerhenderson/Downloads/google-cloud-sdk/path.zsh.inc' ]; then . '/Users/parkerhenderson/Downloads/google-cloud-sdk/path.zsh.inc'; fi
-
-# The next line enables shell command completion for gcloud.
-if [ -f '/Users/parkerhenderson/Downloads/google-cloud-sdk/completion.zsh.inc' ]; then . '/Users/parkerhenderson/Downloads/google-cloud-sdk/completion.zsh.inc'; fi
-
 eval $(thefuck --alias)
 
  export NVM_DIR="$HOME/.nvm"
   [ -s "/opt/homebrew/opt/nvm/nvm.sh" ] && \. "/opt/homebrew/opt/nvm/nvm.sh"  # This loads nvm
   [ -s "/opt/homebrew/opt/nvm/etc/bash_completion.d/nvm" ] && \. "/opt/homebrew/opt/nvm/etc/bash_completion.d/nvm"  # This loads nvm bash_completion
+# The next line updates PATH for the Google Cloud SDK.
+if [ -f '/Users/parkerhenderson/Downloads/google-cloud-sdk/path.zsh.inc' ]; then . '/Users/parkerhenderson/Downloads/google-cloud-sdk/path.zsh.inc'; fi
+
+# The next line enables shell command completion for gcloud.
+if [ -f '/Users/parkerhenderson/Downloads/google-cloud-sdk/completion.zsh.inc' ]; then . '/Users/parkerhenderson/Downloads/google-cloud-sdk/completion.zsh.inc'; fi
+alias lg='lazygit'
