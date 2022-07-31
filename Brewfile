@@ -1,4 +1,4 @@
-cask_args appdir: '/Applications'
+Ecask_args appdir: '/Applications'
 
 tap 'homebrew/core'
 tap 'homebrew/services'

@@ -133,3 +133,10 @@ if [ -f '/Users/parkerhenderson/Downloads/google-cloud-sdk/path.zsh.inc' ]; then
 # The next line enables shell command completion for gcloud.
 if [ -f '/Users/parkerhenderson/Downloads/google-cloud-sdk/completion.zsh.inc' ]; then . '/Users/parkerhenderson/Downloads/google-cloud-sdk/completion.zsh.inc'; fi
 alias lg='lazygit'
+
+# bun completions
+[ -s "/Users/parkerhenderson/.bun/_bun" ] && source "/Users/parkerhenderson/.bun/_bun"
+
+# bun
+export BUN_INSTALL="/Users/parkerhenderson/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"

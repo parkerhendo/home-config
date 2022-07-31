@@ -1,44 +1,28 @@
 call plug#begin()
-Plug 'arcticicestudio/nord-vim'
+Plug 'jasonlong/nord-vim'
 Plug 'neoclide/coc.nvim', {'branch': 'release'}
+Plug 'nvim-treesitter/nvim-treesitter', {'do': ':TSUpdate'}
 Plug 'nvim-lua/plenary.nvim'
 Plug 'nvim-telescope/telescope.nvim'
-Plug 'nvim-treesitter/nvim-treesitter', {'do': ':TSUpdate'}
+Plug 'nvim-lualine/lualine.nvim'
 Plug 'kyazdani42/nvim-web-devicons'
-Plug 'vim-airline/vim-airline'
-Plug 'vim-airline/vim-airline-themes'
-Plug 'lukas-reineke/lsp-format.nvim'
-Plug 'christoomey/vim-tmux-navigator'
 Plug 'cohama/lexima.vim'
+Plug 'lewis6991/impatient.nvim'
+Plug 'jiangmiao/auto-pairs'
 
-Plug 'rust-lang/rust.vim'
-Plug 'vim-language-dept/css-syntax.vim'
-Plug 'pangloss/vim-javascript'
-Plug 'styled-components/vim-styled-components'
-Plug 'jparise/vim-graphql'
-Plug 'godlygeek/tabular'
-Plug 'preservim/vim-markdown'
-Plug 'Chiel92/vim-autoformat'
-Plug 'leafgarland/typescript-vim'
-Plug 'fatih/vim-go', { 'do': ':GoUpdateBinaries'}
+Plug 'styled-components/vim-styled-components', { 'branch': 'main' }
 
-" clojure things
-Plug 'guns/vim-sexp'
-Plug 'kien/rainbow_parentheses.vim'
-Plug 'tpope/vim-salve.git'
-Plug 'tpope/vim-projectionist.git'
-Plug 'tpope/vim-dispatch.git'
-Plug 'tpope/vim-fireplace.git'
-Plug 'guns/vim-clojure-highlight'
-Plug 'tpope/vim-sexp-mappings-for-regular-people'
-
+Plug 'neovim/nvim-lspconfig'
+Plug 'hrsh7th/cmp-nvim-lsp'
+Plug 'hrsh7th/cmp-buffer'
+Plug 'hrsh7th/cmp-path'
+Plug 'hrsh7th/cmp-cmdline'
+Plug 'hrsh7th/nvim-cmp'
 call plug#end()
 
-
-
 " editor configuration
-colorscheme nord
-
+set termguicolors
+set completeopt=menu,menuone,noselect
 set number
 set relativenumber
 set ignorecase
@@ -59,19 +43,47 @@ set invhlsearch
 
 syntax on
 filetype plugin indent on
-set splitbelow
-set splitright
+
+colorscheme nord
+
+
+" prettier setup
+command! -nargs=0 Prettier :call CocAction('runCommand', 'prettier.formatFile')
+
 " open file tree 
 :nmap <space>e <Cmd>CocCommand explorer<CR>
 
 " Find files
 :nmap <space>p <Cmd>Telescope find_files<CR>
 
-" enable Shift-tab
-:inoremap <S-Tab> <C-d>
+
+"auto complete suggestion
+inoremap <silent><expr> <c-space> coc#refresh()
+inoremap <silent><expr> <c-@> coc#refresh()
+
+" GoTo code navigation
+nmap <silent> gd <Plug>(coc-definition)
+nmap <silent> gy <Plug>(coc-type-definition)
+nmap <silent> gi <Plug>(coc-implementation)
+nmap <silent> gr <Plug>(coc-references)
+
+" Show documentation
+nnoremap <silent> K :call ShowDocumentation()<CR>
+
+function! ShowDocumentation()
+  if CocAction('hasProvider', 'hover')
+    call CocActionAsync('doHover')
+  else
+    call feedkeys('K', 'in')
+  endif
+endfunction
 
 " making split mode easier
 nnoremap <C-J> <C-W><C-J>
 nnoremap <C-K> <C-W><C-K>
 nnoremap <C-L> <C-W><C-L>
 nnoremap <C-H> <C-W><C-H>
+
+" resizing
+noremap <silent> <C-S-Left> :vertical resize +5<CR>
+noremap <silent> <C-S-Right> :vertical resize -5<CR>
