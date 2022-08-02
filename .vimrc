@@ -9,7 +9,7 @@ Plug 'nvim-lualine/lualine.nvim'
 Plug 'cohama/lexima.vim'
 Plug 'lewis6991/impatient.nvim'
 Plug 'jiangmiao/auto-pairs'
-
+Plug 'APZelos/blamer.nvim'
 Plug 'styled-components/vim-styled-components', { 'branch': 'main' }
 
 Plug 'neovim/nvim-lspconfig'
@@ -46,6 +46,11 @@ filetype plugin indent on
 
 colorscheme nord
 
+" blamer config
+let g:blamer_enabled = 1
+let g:blamer_delay = 500
+let g:blamer_show_in_visual_modes = 1
+let g:blamer_show_in_insert_modes = 0
 
 " prettier setup
 command! -nargs=0 Prettier :call CocAction('runCommand', 'prettier.formatFile')
