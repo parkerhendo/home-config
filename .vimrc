@@ -10,8 +10,11 @@ Plug 'cohama/lexima.vim'
 Plug 'lewis6991/impatient.nvim'
 Plug 'jiangmiao/auto-pairs'
 Plug 'APZelos/blamer.nvim'
+
+" syntax helpers
 Plug 'styled-components/vim-styled-components', { 'branch': 'main' }
 
+" autocomplete things
 Plug 'neovim/nvim-lspconfig'
 Plug 'hrsh7th/cmp-nvim-lsp'
 Plug 'hrsh7th/cmp-buffer'
