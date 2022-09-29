@@ -16,6 +16,7 @@ SESSIONEXISTS=$(tmux list-sessions | grep $workSession)
 if [ "$SESSIONEXISTS" = "" ]
 then
   tmux new-session -d -s $workSession
+  tmux new-session -d -s $mySession
 
   # WORK SESSION
   tmux rename-window -t $workSession:1 -n 'hemingway'
@@ -34,16 +35,17 @@ then
   tmux send-keys -t $workSession:4 "cd ${pps}" C-m
   tmux send-keys -t $workSession:4 "clear" C-m
 
+  # PERSONAL SESSION
+
+  # window=1
+  tmux rename-window -t $mySession:$window -n 'personal-site'
+  tmux send-keys -t $mySession:$window "cd ${parkerhendocom}" C-m
+
+  # window=2
+  tmux new-window -t $mySession:$window -n 'dotfiles'
+  tmux send-keys -t $mySession:$window "cd ${dotfiles}" C-m
 
 fi
+
 tmux attach-session -t $workSession:1
-# # PERSONAL SESSION
-
-# window=1
-# tmux rename-window -t $mySession:$window -n 'personal-site'
-# tmux send-keys -t $mySession:$window "cd ${parkerhendocom}" C-m
-
-# window=2
-# tmux new-window -t $mySession:$window -n 'dotfiles'
-# tmux send-keys -t $mySession:$window "cd ${dotfiles}" C-m
 

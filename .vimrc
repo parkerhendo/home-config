@@ -95,3 +95,5 @@ nnoremap <C-H> <C-W><C-H>
 " resizing
 noremap <silent> <C-S-Left> :vertical resize +5<CR>
 noremap <silent> <C-S-Right> :vertical resize -5<CR>
+noremap <silent> <C-S-Up> :resize +2<CR>
+noremap <silent> <C-S-Down> :resize -2<CR>

@@ -102,6 +102,7 @@ source $ZSH/oh-my-zsh.sh
 
 alias ckit="~/ckit/bin/ckit"
 alias vi="nvim"
+alias tmux-start="~/dotfiles/scripts/tmux-start.sh"
 
 # navigating files
 alias dev="cd ~/Developer"
@@ -112,7 +113,7 @@ alias parkerhendo="cd ~/Developer/parkerhendocom && git pull"
 
 alias pull="git pull"
 alias push="git push"
-alias gca="git commit -a -m '$1'"
+# alias gca="git commit -a -m '1'"
 
 # Paths
 export NINJA_DIR=$HOME/ninja/ninja
