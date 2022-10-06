@@ -1,8 +1,8 @@
 Ecask_args appdir: '/Applications'
 
 tap 'homebrew/bundle'
-tap 'caskroom/cask'
-tap 'caskroom/cask-fonts'
+tap 'homebrew/cask'
+tap 'homebrew/cask-fonts'
 tap 'homebrew/core'
 tap 'homebrew/services'
 
@@ -21,6 +21,7 @@ brew 'jq'
 brew 'node'
 brew 'neovim'
 brew 'nvm'
+brew 'openssh'
 brew 'pnpm'
 brew 'postgresql', restart_service: true
 brew 'python3'
