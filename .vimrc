@@ -13,7 +13,7 @@ Plug 'APZelos/blamer.nvim'
 
 " syntax helpers
 Plug 'styled-components/vim-styled-components', { 'branch': 'main' }
-
+Plug 'stephenway/postcss.vim'
 " autocomplete things
 Plug 'neovim/nvim-lspconfig'
 Plug 'hrsh7th/cmp-nvim-lsp'
