@@ -1,0 +1,27 @@
+[user]
+  name = Parker Henderson
+  email = parker@parkerhendo.com
+
+[include]
+  path = /Users/parkerhenderson/.gitalias.txt
+
+[push]
+  default = current
+
+[core]
+  pager = delta
+  excludefile = /User/parkerhenderson/.gitignore_global
+
+[interactive]
+  diffFilter = delta --color-only
+
+[delta]
+  navigate = true
+  syntax-theme = Nord
+  light = false
+
+[merge]
+  conflictstyle = diff3
+
+[diff]
+  colorMoved = default
