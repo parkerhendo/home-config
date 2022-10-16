@@ -22,8 +22,8 @@ keymap("n", "<M-l>", "<C-w>l", {})
 
 -- resize splits
 vim.cmd([[
-noremap <silent> <C-S-Left> :vertical resize +5<CR>
-noremap <silent> <C-S-Right> :vertical resize -5<CR>
+noremap <silent> <C-S-Left> :vertical resize -5<CR>
+noremap <silent> <C-S-Right> :vertical resize +5<CR>
 noremap <silent> <C-S-Up> :resize +2<CR>
 noremap <silent> <C-S-Down> :resize -2<CR>
 ]])
