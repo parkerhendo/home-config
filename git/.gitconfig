@@ -11,6 +11,7 @@
 [core]
   pager = delta
   excludefile = /User/parkerhenderson/.gitignore_global
+  editor = "nvim"
 
 [interactive]
   diffFilter = delta --color-only
