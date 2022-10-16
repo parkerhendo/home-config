@@ -20,6 +20,14 @@ keymap("n", "<M-k>", "<C-w>k", {})
 keymap("n", "<M-h>", "<C-w>h", {})
 keymap("n", "<M-l>", "<C-w>l", {})
 
+-- resize splits
+vim.cmd([[
+noremap <silent> <C-S-Left> :vertical resize +5<CR>
+noremap <silent> <C-S-Right> :vertical resize -5<CR>
+noremap <silent> <C-S-Up> :resize +2<CR>
+noremap <silent> <C-S-Down> :resize -2<CR>
+]])
+
 -- Move lines up/down (visual mode)
 keymap("v", "J", ":m '>+1<cr>gv=gv", {})
 keymap("v", "K", ":m '<-2<cr>gv=gv", {})
