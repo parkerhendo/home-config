@@ -369,6 +369,17 @@ require('telescope').setup{
   }
 }
 
+-- toggleterm
+require'toggleterm'.setup {
+  shade_terminals = false
+}
+local Terminal  = require('toggleterm.terminal').Terminal
+local lazygit = Terminal:new({ cmd = "lazygit", hidden = true, direction = "float" })
+
+function _lazygit_toggle()
+  lazygit:toggle()
+end
+
 -- treesitter
 require'nvim-treesitter.configs'.setup {
   ensure_installed = { "html", "css", "markdown", "javascript", "typescript", "json", "lua", "prisma", "ruby", "rust", "tsx", "vim", "yaml" },
