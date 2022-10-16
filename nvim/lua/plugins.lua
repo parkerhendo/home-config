@@ -35,13 +35,15 @@ return require('packer').startup(function(use)
       }
     end
   }
-	use 'wbthomason/packer.nvim'
-	use 'jasonlong/nord-vim'
+	
   use "nvim-lua/plenary.nvim"
   use 'nvim-tree/nvim-web-devicons'
   use 'JoosepAlviste/nvim-ts-context-commentstring'
   use 'nvim-treesitter/playground'
   use 'tpope/vim-surround'
+  use 'ThePrimeagen/harpoon'
+  use 'wbthomason/packer.nvim'
+	use 'jasonlong/nord-vim'
   use 'jiangmiao/auto-pairs'
   use 'lewis6991/impatient.nvim'
   use 'karb94/neoscroll.nvim'
