@@ -47,7 +47,6 @@ return require('packer').startup(function(use)
   use 'jiangmiao/auto-pairs'
   use 'lewis6991/impatient.nvim'
   use 'karb94/neoscroll.nvim'
-  use 'ggandor/leap.nvim'
   use 'windwp/nvim-ts-autotag'
   use 'github/copilot.vim'
 

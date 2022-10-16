@@ -43,6 +43,9 @@ vim.cmd [[set mouse=a]]
 vim.cmd [[set invhlsearch]]
 vim.cmd [[lcd $PWD]]
 
+-- highlight yanked text
+vim.cmd [[ autocmd! TextYankPost * silent! lua require'highlight'.on_yank("IncSearch", 500, vim.v.event) ]]
+
 -- fix eslint errors on save
 vim.cmd [[autocmd BufWritePre *.tsx,*.ts,*.jsx,*.js EslintFixAll]]
 
@@ -110,8 +113,6 @@ require('Comment').setup({
 
 -- colors
 vim.cmd [[colorscheme nord]]
-
-require('leap').set_default_keymaps()
 
 -- lspconfig
 vim.diagnostic.config {
