@@ -44,7 +44,12 @@ vim.cmd [[set invhlsearch]]
 vim.cmd [[lcd $PWD]]
 
 -- highlight yanked text
-vim.cmd [[ autocmd! TextYankPost * silent! lua require'highlight'.on_yank("IncSearch", 500, vim.v.event) ]]
+vim.cmd([[
+augroup highlight_yank
+    autocmd!
+    au TextYankPost * silent! lua vim.highlight.on_yank{higroup="IncSearch", timeout=500}
+augroup END
+]])
 
 -- fix eslint errors on save
 vim.cmd [[autocmd BufWritePre *.tsx,*.ts,*.jsx,*.js EslintFixAll]]
