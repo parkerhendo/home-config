@@ -21,6 +21,13 @@ export PATH="/Applications/CMake.app/Contents/bin":"$PATH"
 
 eval $(thefuck --alias)
 
+# plugins
+plugins=(vi-mode)
+
+# Enable vi mode
+bindkey -v
+bindkey -M vicmd 'V' edit-command-line
+
  export NVM_DIR="$HOME/.nvm"
   [ -s "/opt/homebrew/opt/nvm/nvm.sh" ] && \. "/opt/homebrew/opt/nvm/nvm.sh"  # This loads nvm
   [ -s "/opt/homebrew/opt/nvm/etc/bash_completion.d/nvm" ] && \. "/opt/homebrew/opt/nvm/etc/bash_completion.d/nvm"  # This loads nvm bash_completion
