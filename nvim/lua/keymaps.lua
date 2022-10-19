@@ -54,6 +54,11 @@ vim.cmd([[
   nnoremap <silent><C-;> :lua require("harpoon.ui").nav_file(4)<CR>
 ]])
 
+-- Copilot
+vim.cmd([[
+imap <silent><script><expr> <right> copilot#Accept("\<CR>")
+]])
+
 -- Trouble
 vim.api.nvim_set_keymap("n", "<leader>xx", "<cmd>Trouble<cr>",
   {silent = true, noremap = true}
