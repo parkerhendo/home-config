@@ -14,6 +14,9 @@ keymap("n", "<leader>q", ":q<cr>", {})
 -- nvim-tree
 keymap("n", "<leader>e", ":NvimTreeToggle<cr>", {})
 
+-- preitter
+keymap("n", "<leader>p", ":Prettier<cr>", {})
+
 -- navigating splits
 keymap("n", "<M-j>", "<C-w>j", {})
 keymap("n", "<M-k>", "<C-w>k", {})
