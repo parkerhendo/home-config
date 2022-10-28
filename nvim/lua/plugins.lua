@@ -50,7 +50,6 @@ return require('packer').startup(function(use)
   use 'karb94/neoscroll.nvim'
   use 'windwp/nvim-ts-autotag'
   use 'github/copilot.vim'
-  use 'prettier/vim-prettier'
 
   -- Git
   use 'APZelos/blamer.nvim'
