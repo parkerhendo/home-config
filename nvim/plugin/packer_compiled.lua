@@ -226,11 +226,6 @@ _G.packer_plugins = {
     path = "/Users/parkerhenderson/.local/share/nvim/site/pack/packer/start/trouble.nvim",
     url = "https://github.com/folke/trouble.nvim"
   },
-  ["vim-prettier"] = {
-    loaded = true,
-    path = "/Users/parkerhenderson/.local/share/nvim/site/pack/packer/start/vim-prettier",
-    url = "https://github.com/prettier/vim-prettier"
-  },
   ["vim-surround"] = {
     loaded = true,
     path = "/Users/parkerhenderson/.local/share/nvim/site/pack/packer/start/vim-surround",
