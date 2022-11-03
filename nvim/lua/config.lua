@@ -120,9 +120,6 @@ require('Comment').setup({
   end,
 })
 
--- colors
-vim.cmd [[colorscheme nord]]
-
 -- lspconfig
 vim.diagnostic.config {
   underline = { severity = vim.diagnostic.severity.ERROR },
@@ -196,6 +193,9 @@ for _, lsp in pairs(servers) do
   }
 end
 
+
+-- colors
+vim.cmd [[colorscheme nord]]
 
 -- lualine
 nord1 = "#232730"

@@ -44,12 +44,12 @@ return require('packer').startup(function(use)
   use 'tpope/vim-surround'
   use 'ThePrimeagen/harpoon'
   use 'wbthomason/packer.nvim'
-	use 'parkerhendo/nord-vim'
   use 'jiangmiao/auto-pairs'
   use 'lewis6991/impatient.nvim'
   use 'karb94/neoscroll.nvim'
   use 'windwp/nvim-ts-autotag'
   use 'github/copilot.vim'
+	use 'parkerhendo/nord-vim'
   -- Git
   use 'APZelos/blamer.nvim'
   use 'akinsho/toggleterm.nvim'
