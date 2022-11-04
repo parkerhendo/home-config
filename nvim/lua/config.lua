@@ -195,7 +195,9 @@ end
 
 
 -- colors
-vim.cmd [[colorscheme nord]]
+vim.g.nord_bold = false
+vim.g.nord_disable_background = true -- use iterm background color
+require('nord').set();
 
 -- lualine
 nord1 = "#232730"
