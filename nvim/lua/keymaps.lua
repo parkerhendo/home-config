@@ -10,6 +10,7 @@ keymap("n", "<leader>pi", ":source $MYVIMRC<cr>:PackerSync<cr>", {})
 -- quick write and quit
 keymap("n", "<leader>w", ":w<cr>", {})
 keymap("n", "<leader>q", ":q<cr>", {})
+keymap("n", "<leader>Q", ":q!<cr>", {})
 
 -- nvim-tree
 keymap("n", "<leader>e", ":NvimTreeToggle<cr>", {})
