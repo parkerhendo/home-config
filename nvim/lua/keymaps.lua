@@ -7,6 +7,15 @@ keymap("n", "<leader>v", ":e $MYVIMRC<cr>", {})
 keymap("n", "<leader>V", ":source $MYVIMRC<cr>", {})
 keymap("n", "<leader>pi", ":source $MYVIMRC<cr>:PackerSync<cr>", {})
 
+keymap("n", "<leader>p", "\"_dP", { noremap=true })
+
+keymap("n", "<leader>y", "\"+y", { noremap=true })
+keymap("v", "<leader>y", "\"+y", { noremap=true })
+keymap("n", "<leader>Y", "\"+Y", {})
+
+keymap("n", "<leader>d", "\"_d", { noremap=true })
+keymap("v", "<leader>d", "\"_d", { noremap=true })
+
 -- quick write and quit
 keymap("n", "<leader>w", ":w<cr>", {})
 keymap("n", "<leader>q", ":q<cr>", {})
@@ -16,7 +25,7 @@ keymap("n", "<leader>Q", ":q!<cr>", {})
 keymap("n", "<leader>e", ":NvimTreeToggle<cr>", {})
 
 -- preitter
-keymap("n", "<leader>p", ":Prettier<cr>", {})
+keymap("n", "<leader>P", ":Prettier<cr>", {})
 
 -- navigating splits
 keymap("n", "<M-j>", "<C-w>j", {})
