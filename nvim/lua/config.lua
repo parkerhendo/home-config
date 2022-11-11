@@ -43,13 +43,26 @@ vim.cmd [[set mouse=a]]
 vim.cmd [[set invhlsearch]]
 vim.cmd [[lcd $PWD]]
 
+local augroup = vim.api.nvim_create_augroup
+local autocmd = vim.api.nvim_create_autocmd
+local yank_group = augroup('HighlightYank', {})
+
+function R(name)
+  require("plenary.reload").reload_module(name)
+end
+
 -- highlight yanked text
-vim.cmd([[
-augroup highlight_yank
-    autocmd!
-    au TextYankPost * silent! lua vim.highlight.on_yank{higroup="IncSearch", timeout=100}
-augroup END
-]])
+autocmd('TextYankPost', {
+  group = yank_group,
+  pattern = '*',
+  callback = function()
+    vim.highlight.on_yank({
+      higroup = 'IncSearch',
+      timeout = 40
+    })
+  end,
+})
+
 
 -- fix eslint errors on save
 vim.cmd [[autocmd BufWritePre *.tsx,*.ts,*.jsx,*.js EslintFixAll]]
