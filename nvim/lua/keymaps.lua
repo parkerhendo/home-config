@@ -72,22 +72,15 @@ vim.cmd([[
 imap <silent><script><expr> <right> copilot#Accept("\<CR>")
 ]])
 
+keymap("n", "<leader>u", ":UndotreeToggle<CR>", { noremap=true })
+
 -- Trouble
-vim.api.nvim_set_keymap("n", "<leader>xx", "<cmd>Trouble<cr>",
-  {silent = true, noremap = true}
-)
-vim.api.nvim_set_keymap("n", "<leader>xw", "<cmd>Trouble workspace_diagnostics<cr>",
-  {silent = true, noremap = true}
-)
-vim.api.nvim_set_keymap("n", "<leader>xd", "<cmd>Trouble document_diagnostics<cr>",
-  {silent = true, noremap = true}
-)
-vim.api.nvim_set_keymap("n", "<leader>xl", "<cmd>Trouble loclist<cr>",
-  {silent = true, noremap = true}
-)
-vim.api.nvim_set_keymap("n", "<leader>xq", "<cmd>Trouble quickfix<cr>",
-  {silent = true, noremap = true}
-)
-vim.api.nvim_set_keymap("n", "gr", "<cmd>Trouble lsp_references<cr>",
-  {silent = true, noremap = true}
-)
+keymap("n", "<leader>xx", "<cmd>Trouble<cr>", {silent = true, noremap = true})
+keymap("n", "<leader>xw", "<cmd>Trouble workspace_diagnostics<cr>", {silent = true, noremap = true})
+keymap("n", "<leader>xd", "<cmd>Trouble document_diagnostics<cr>", {silent = true, noremap = true})
+keymap("n", "<leader>xl", "<cmd>Trouble loclist<cr>", {silent = true, noremap = true})
+keymap("n", "<leader>xq", "<cmd>Trouble quickfix<cr>", {silent = true, noremap = true})
+keymap("n", "gr", "<cmd>Trouble lsp_references<cr>", {silent = true, noremap = true})
+
+-- Random, but helpful keymaps
+keymap("n", "<leader>X","<cmd>!chmod +x %<CR>", { silent = true })

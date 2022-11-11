@@ -35,6 +35,7 @@ return require('packer').startup(function(use)
       }
     end
   }
+  use 'mbbill/undotree'
   use 'simrat39/rust-tools.nvim'
   use "nvim-lua/plenary.nvim"
   use 'nvim-tree/nvim-web-devicons'
