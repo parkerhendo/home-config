@@ -7,7 +7,7 @@ set.fileencoding="utf-8"
 set.smartindent=true
 set.autoindent=true
 set.iskeyword:append("-")
-set.clipboard="unnamedplus"
+set.clipboard=""
 set.smarttab=true
 set.tabstop=2
 set.softtabstop=2
@@ -62,7 +62,6 @@ autocmd('TextYankPost', {
     })
   end,
 })
-
 
 -- fix eslint errors on save
 vim.cmd [[autocmd BufWritePre *.tsx,*.ts,*.jsx,*.js EslintFixAll]]
