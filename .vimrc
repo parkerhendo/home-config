@@ -47,8 +47,6 @@ set invhlsearch
 syntax on
 filetype plugin indent on
 
-colorscheme nord
-
 " blamer config
 let g:blamer_enabled = 1
 let g:blamer_delay = 500
