@@ -11,6 +11,10 @@ alias vi="nvim"
 alias tmux-start="~/dotfiles/script/tmux-start.sh"
 alias tmux-work="~/dotfiles/script/tmux-work.sh"
 
+export EDITOR="/opt/homebrew/bin/nvim"
+export VISUAL="/opt/homebrew/bin/nvim"
+
+
 # Paths
 export NINJA_DIR=$HOME/ninja/ninja
 export PATH=$PATH:$NINJA_DIR
@@ -27,6 +31,7 @@ plugins=(vi-mode)
 # Enable vi mode
 bindkey -v
 bindkey -M vicmd 'V' edit-command-line
+set -o vi
 
  export NVM_DIR="$HOME/.nvm"
   [ -s "/opt/homebrew/opt/nvm/nvm.sh" ] && \. "/opt/homebrew/opt/nvm/nvm.sh"  # This loads nvm
