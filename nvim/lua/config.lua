@@ -271,7 +271,7 @@ require('lualine').setup {
 
 -- treesitter
 require'nvim-treesitter.configs'.setup {
-  ensure_installed = { "html", "css", "markdown", "javascript", "typescript", "json", "lua", "prisma", "ruby", "rust", "tsx", "vim", "yaml", "sql" },
+  ensure_installed = { "c","html", "css", "markdown", "javascript", "typescript", "json", "lua", "prisma", "ruby", "rust", "tsx", "vim", "yaml", "sql" },
   highlight = {
     enable = true
   },
