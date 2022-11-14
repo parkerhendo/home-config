@@ -1,5 +1,6 @@
 #!/usr/bin/env sh
 
+# YABAI config
 alt + ctrl + cmd - r           : launchctl kickstart -k "gui/${UID}/homebrew.mxcl.yabai"
 alt + ctrl - j                 : yabai -m window --focus stack.next || yabai -m window --focus next || yabai -m window --focus first
 alt + ctrl - k                 : yabai -m window --focus stack.prev || yabai -m window --focus prev || yabai -m window --focus last
@@ -13,3 +14,6 @@ alt + ctrl - f                 : yabai -m window --toggle zoom-fullscreen
 alt + ctrl - r                 : yabai -m window --toggle split
 alt + ctrl - v                 : yabai -m space --mirror y-axis
 alt + ctrl - space             : yabai -m window --toggle float; yabai -m window --grid 8:8:1:1:6:6
+
+alt + ctrl - n                 : yabai -m window --space next; yabai -m space --focus next
+alt + ctrl - p                 : yabai -m window --space prev; yabai -m space --focus prev
