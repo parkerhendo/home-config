@@ -1963,11 +1963,11 @@
 	<key>SplitPaneDimmingAmount</key>
 	<real>0.19801924325887438</real>
 	<key>StatusBarPosition</key>
-	<integer>1</integer>
+	<integer>0</integer>
 	<key>StretchTabsToFillBar</key>
 	<false/>
 	<key>TabStyleWithAutomaticOption</key>
-	<integer>5</integer>
+	<integer>6</integer>
 	<key>TabViewType</key>
 	<integer>0</integer>
 	<key>UseBorder</key>

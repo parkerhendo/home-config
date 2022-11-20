@@ -39,6 +39,9 @@ vim.cmd [[set magic]]
 vim.cmd [[set noerrorbells]]
 vim.cmd [[set complete+=kspell]]
 vim.cmd [[set completeopt=menu,menuone,noselect]]
+
+vim.opt.shortmess = vim.opt.shortmess + "c"
+
 vim.cmd [[set mouse=a]]
 vim.cmd [[set invhlsearch]]
 vim.cmd [[lcd $PWD]]
@@ -187,6 +190,33 @@ local servers = {
   'sumneko_lua',
   'pyright'
 }
+
+local rust_opts = {
+  tools = {
+    runnable = {
+      use_telescope = true,
+    },
+    inlay_hints = {
+      auto = true,
+      show_parameter_hints = false,
+      parameter_hints_prefix = "",
+      other_hints_prefix = "",
+    },
+  },
+
+  server = {
+    on_attach = on_attach,
+    settings = {
+      ["rust-analyzer"] = {
+        checkOnSave = {
+          command = "clippy",
+        },
+      },
+    },
+  },
+}
+
+require("rust-tools").setup(opts)
 
 for _, lsp in pairs(servers) do
   require('lspconfig')[lsp].setup {
