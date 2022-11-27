@@ -188,8 +188,25 @@ local servers = {
   'eslint',
   'tailwindcss',
   'sumneko_lua',
-  'pyright'
+  'pyright',
 }
+
+for _, lsp in pairs(servers) do
+  require('lspconfig')[lsp].setup {
+    capabilities = capabilities,
+    on_attach = on_attach,
+    handlers = {
+      ['textDocument/definition'] = function(err, result, method, ...)
+        if vim.tbl_islist(result) and #result > 1 then
+          local filtered_result = filter(result, filterReactDTS)
+          return vim.lsp.handlers['textDocument/defintion'](err, filtered_result, method, ...)
+        end
+
+        vim.lsp.handlers['textDocument/definition'](err, result, method, ...)
+      end
+    }
+  }
+end
 
 local rust_opts = {
   tools = {
@@ -217,24 +234,6 @@ local rust_opts = {
 }
 
 require("rust-tools").setup(opts)
-
-for _, lsp in pairs(servers) do
-  require('lspconfig')[lsp].setup {
-    capabilities = capabilities,
-    on_attach = on_attach,
-    handlers = {
-      ['textDocument/definition'] = function(err, result, method, ...)
-        if vim.tbl_islist(result) and #result > 1 then
-          local filtered_result = filter(result, filterReactDTS)
-          return vim.lsp.handlers['textDocument/defintion'](err, filtered_result, method, ...)
-        end
-
-        vim.lsp.handlers['textDocument/definition'](err, result, method, ...)
-      end
-    }
-  }
-end
-
 
 -- colors
 vim.g.nord_bold = false
