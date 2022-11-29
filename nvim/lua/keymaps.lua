@@ -7,6 +7,7 @@ keymap("n", "<leader>v", ":e $MYVIMRC<cr>", {})
 keymap("n", "<leader>V", ":source $MYVIMRC<cr>", {})
 keymap("n", "<leader>pi", ":source $MYVIMRC<cr>:PackerSync<cr>", {})
 
+-- clipboard management nicities
 keymap("n", "<leader>p", "\"_dP", { noremap=true })
 
 keymap("n", "<leader>y", "\"+y", { noremap=true })
