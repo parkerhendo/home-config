@@ -20,7 +20,7 @@ export NINJA_DIR=$HOME/ninja/ninja
 export PATH=$PATH:$NINJA_DIR
 export CKIT_DIR=$HOME/ckit
 export PATH=$PATH:$CKIT_DIR/bin
-export PATH=$HOME/.radicle/bin:$PATH
+export PATH=$PATH:"/User/parkerhenderson/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rust-analyzer"
 export PATH="/Applications/CMake.app/Contents/bin":"$PATH"
 
 eval $(thefuck --alias)

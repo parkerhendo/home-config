@@ -35,8 +35,8 @@ return require('packer').startup(function(use)
       }
     end
   }
+  use 'mfussenegger/nvim-dap'
   use 'mbbill/undotree'
-  use 'simrat39/rust-tools.nvim'
   use "nvim-lua/plenary.nvim"
   use 'nvim-tree/nvim-web-devicons'
   use 'JoosepAlviste/nvim-ts-context-commentstring'
@@ -64,4 +64,6 @@ return require('packer').startup(function(use)
   use 'hrsh7th/nvim-cmp'
   use 'L3MON4D3/LuaSnip'
   use 'saadparwaiz1/cmp_luasnip'
+
+  use 'simrat39/rust-tools.nvim'
 end)

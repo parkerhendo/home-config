@@ -222,7 +222,8 @@ local rust_opts = {
   },
 
   server = {
-    on_attach = on_attach,
+    on_attach = function (_, bufnr)
+    end,
     settings = {
       ["rust-analyzer"] = {
         checkOnSave = {
