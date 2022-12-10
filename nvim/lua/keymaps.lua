@@ -70,7 +70,7 @@ vim.cmd([[
 
 -- Copilot
 vim.cmd([[
-imap <silent><script><expr> <right> copilot#Accept("\<CR>")
+  imap <silent><script><expr> <right> copilot#Accept("\<CR>")
 ]])
 
 keymap("n", "<leader>u", ":UndotreeToggle<CR>", { noremap=true })
