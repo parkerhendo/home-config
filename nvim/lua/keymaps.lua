@@ -82,5 +82,11 @@ keymap("n", "<leader>xl", "<cmd>Trouble loclist<cr>", {silent = true, noremap = 
 keymap("n", "<leader>xq", "<cmd>Trouble quickfix<cr>", {silent = true, noremap = true})
 keymap("n", "gr", "<cmd>Trouble lsp_references<cr>", {silent = true, noremap = true})
 
+-- diagnostics
+keymap('n', '<leader>dd', "<cmd>Telescope diagnostics<CR>", { noremap=true, silent=true })
+keymap('n', 'do', vim.diagnostic.open_float, { noremap=true, silent=true })
+keymap('n', '[d', vim.diagnostic.goto_prev, { noremap=true, silent=true })
+keymap('n', ']d', vim.diagnostic.goto_next, { noremap=true, silent=true })
+
 -- Random, but helpful keymaps
 keymap("n", "<leader>X","<cmd>!chmod +x %<CR>", { silent = true })
