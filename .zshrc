@@ -11,6 +11,8 @@ alias vi="nvim"
 alias tmux-start="~/dotfiles/script/tmux-start.sh"
 alias tmux-work="~/dotfiles/script/tmux-work.sh"
 
+alias tailscale="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+
 export EDITOR="/opt/homebrew/bin/nvim"
 export VISUAL="/opt/homebrew/bin/nvim"
 
