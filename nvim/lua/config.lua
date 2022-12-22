@@ -136,6 +136,13 @@ require('Comment').setup({
 })
 
 -- lspconfig
+require"fidget".setup({
+  window = {
+    blend = 100,              -- &winblend for the window
+    zindex = 2,             -- the zindex value for the window
+  },
+})
+
 vim.diagnostic.config {
   underline = { severity = vim.diagnostic.severity.ERROR },
   signs = { severity = vim.diagnostic.severity.ERROR },
@@ -234,7 +241,7 @@ require("rust-tools").setup(opts)
 
 -- colors
 vim.g.nord_bold = false
-vim.g.nord_disable_background = true -- use iterm background color
+vim.g.nord_disable_background = false -- use iterm background color
 require('nord').set();
 
 -- lualine
