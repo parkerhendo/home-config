@@ -54,7 +54,7 @@ nnoremap <space> <cmd>lua require('telescope.builtin').buffers()<cr>
 ]])
 
 -- toggleterm
-keymap("n", "<leader>t", "<cmd>lua _lazygit_toggle()<CR>", {noremap = true, silent = true})
+keymap("n", "<leader>g", "<cmd>lua _lazygit_toggle()<CR>", {noremap = true, silent = true})
 
 -- Harpoon
 vim.cmd([[
