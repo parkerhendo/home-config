@@ -51,3 +51,4 @@ alias lg='lazygit'
 # bun
 export BUN_INSTALL="/Users/parkerhenderson/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
+export PATH="/opt/homebrew/opt/ruby/bin: $PATH"
