@@ -5,6 +5,7 @@ session="work"
 # directories
 cloud="~/Developer/cloud-frontend"
 materialize="~/Developer/materialize"
+playground="~/Developer/mz-sql-playground"
 
 SESSIONEXISTS=$(tmux list-sessions | grep $workSession)
 
@@ -19,6 +20,10 @@ then
 
   tmux new-window -t $session:2 -n 'materialize-core'
   tmux send-keys -t $session:2 "cd ${materialize}" C-m
+  tmux send-keys -t $session:2 "clear" C-m
+
+  tmux new-window -t $session:2 -n 'mz-sql-playground'
+  tmux send-keys -t $session:2 "cd ${playground}" C-m
   tmux send-keys -t $session:2 "clear" C-m
 fi
 
