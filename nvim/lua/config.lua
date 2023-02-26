@@ -190,8 +190,9 @@ local servers = {
   'tsserver',
   'eslint',
   'tailwindcss',
-  'sumneko_lua',
+  'lua_ls',
   'pyright',
+  'clojure_lsp',
 }
 
 for _, lsp in pairs(servers) do

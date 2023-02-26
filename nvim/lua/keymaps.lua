@@ -1,6 +1,7 @@
 local keymap = vim.api.nvim_set_keymap
 
 vim.g.mapleader = ","
+vim.g.maplocalleader = ","
 
 -- init.lua management
 keymap("n", "<leader>v", ":e $MYVIMRC<cr>", {})
@@ -21,6 +22,9 @@ keymap("v", "<leader>d", "\"_d", { noremap=true })
 keymap("n", "<leader>w", ":w<cr>", {})
 keymap("n", "<leader>q", ":q<cr>", {})
 keymap("n", "<leader>Q", ":q!<cr>", {})
+
+-- Clojure
+keymap("n", "<leader>eb", ":ConjureEval<cr>", {})
 
 -- nvim-tree
 keymap("n", "<leader>e", ":NvimTreeToggle<cr>", {})

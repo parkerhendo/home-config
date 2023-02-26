@@ -35,6 +35,13 @@ return require('packer').startup(function(use)
       }
     end
   }
+  -- Clojure
+  use 'Olical/conjure'
+  use 'guns/vim-sexp'
+  use 'tpope/vim-sexp-mappings-for-regular-people'
+  use 'jiangmiao/auto-pairs'
+  use 'gpanders/nvim-parinfer'
+
   use 'mfussenegger/nvim-dap'
   use 'mbbill/undotree'
   use "nvim-lua/plenary.nvim"
