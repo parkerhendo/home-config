@@ -1,4 +1,6 @@
 return require('packer').startup(function(use)
+  use 'wbthomason/packer.nvim'
+  use 'jiangmiao/auto-pairs'
   use {
     'nvim-tree/nvim-tree.lua',
     requires = {
@@ -16,7 +18,7 @@ return require('packer').startup(function(use)
   }
   use {
     'nvim-telescope/telescope.nvim',
-    requires = { {'nvim-lua/plenary.nvim'} }
+    requires = {'nvim-lua/plenary.nvim'}
   }
   use {
     'numToStr/Comment.nvim',
@@ -35,28 +37,18 @@ return require('packer').startup(function(use)
       }
     end
   }
-  -- Clojure
-  use 'Olical/conjure'
-  use 'guns/vim-sexp'
-  use 'tpope/vim-sexp-mappings-for-regular-people'
-  use 'jiangmiao/auto-pairs'
-  use 'gpanders/nvim-parinfer'
-
-  use 'mfussenegger/nvim-dap'
-  use 'mbbill/undotree'
   use "nvim-lua/plenary.nvim"
   use 'nvim-tree/nvim-web-devicons'
   use 'JoosepAlviste/nvim-ts-context-commentstring'
   use 'nvim-treesitter/playground'
   use 'tpope/vim-surround'
   use 'ThePrimeagen/harpoon'
-  use 'wbthomason/packer.nvim'
-  use 'jiangmiao/auto-pairs'
   use 'lewis6991/impatient.nvim'
   use 'karb94/neoscroll.nvim'
   use 'windwp/nvim-ts-autotag'
   use 'github/copilot.vim'
   use 'parkerhendo/nord.nvim'
+
   -- Git
   use 'APZelos/blamer.nvim'
   use 'akinsho/toggleterm.nvim'
@@ -73,6 +65,5 @@ return require('packer').startup(function(use)
   use 'saadparwaiz1/cmp_luasnip'
 
   use 'simrat39/rust-tools.nvim'
-
   use 'j-hui/fidget.nvim'
 end)

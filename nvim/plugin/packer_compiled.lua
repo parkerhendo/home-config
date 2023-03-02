@@ -170,11 +170,6 @@ _G.packer_plugins = {
     path = "/Users/parkerhenderson/.local/share/nvim/site/pack/packer/start/nvim-cmp",
     url = "https://github.com/hrsh7th/nvim-cmp"
   },
-  ["nvim-dap"] = {
-    loaded = true,
-    path = "/Users/parkerhenderson/.local/share/nvim/site/pack/packer/start/nvim-dap",
-    url = "https://github.com/mfussenegger/nvim-dap"
-  },
   ["nvim-lspconfig"] = {
     loaded = true,
     path = "/Users/parkerhenderson/.local/share/nvim/site/pack/packer/start/nvim-lspconfig",
@@ -246,6 +241,7 @@ _G.packer_plugins = {
     path = "/Users/parkerhenderson/.local/share/nvim/site/pack/packer/start/trouble.nvim",
     url = "https://github.com/folke/trouble.nvim"
   },
+<<<<<<< HEAD
   undotree = {
     loaded = true,
     path = "/Users/parkerhenderson/.local/share/nvim/site/pack/packer/start/undotree",
@@ -261,6 +257,14 @@ _G.packer_plugins = {
     path = "/Users/parkerhenderson/.local/share/nvim/site/pack/packer/start/vim-sexp-mappings-for-regular-people",
     url = "https://github.com/tpope/vim-sexp-mappings-for-regular-people"
   },
+||||||| parent of ffbcce0 (fixed my mysterious issue)
+  undotree = {
+    loaded = true,
+    path = "/Users/parkerhenderson/.local/share/nvim/site/pack/packer/start/undotree",
+    url = "https://github.com/mbbill/undotree"
+  },
+=======
+>>>>>>> ffbcce0 (fixed my mysterious issue)
   ["vim-surround"] = {
     loaded = true,
     path = "/Users/parkerhenderson/.local/share/nvim/site/pack/packer/start/vim-surround",
