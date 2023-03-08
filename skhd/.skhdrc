@@ -17,3 +17,7 @@ alt + ctrl - space             : yabai -m window --toggle float; yabai -m window
 
 alt + ctrl + cmd - n           : yabai -m window --space next; yabai -m space --focus next
 alt + ctrl + cmd - p           : yabai -m window --space prev; yabai -m space --focus prev
+
+# app specific
+
+alt + ctrl + shift - n         : open -a "Logseq"

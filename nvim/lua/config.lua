@@ -240,7 +240,7 @@ local rust_opts = {
   },
 }
 
-require("rust-tools").setup(opts)
+require("rust-tools").setup(rust_opts)
 
 -- colors
 vim.g.nord_bold = false
