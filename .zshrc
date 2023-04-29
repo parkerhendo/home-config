@@ -52,3 +52,12 @@ alias lg='lazygit'
 export BUN_INSTALL="/Users/parkerhenderson/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 export PATH="/opt/homebrew/opt/ruby/bin: $PATH"
+
+export WASMTIME_HOME="$HOME/.wasmtime"
+
+export PATH="$WASMTIME_HOME/bin:$PATH"
+
+[ -f "/Users/parkerhenderson/.ghcup/env" ] && source "/Users/parkerhenderson/.ghcup/env" # ghcup-env
+
+# opam configuration
+[[ ! -r /Users/parkerhenderson/.opam/opam-init/init.zsh ]] || source /Users/parkerhenderson/.opam/opam-init/init.zsh  > /dev/null 2> /dev/null
