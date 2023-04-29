@@ -1,12 +1,33 @@
-Ecask_args appdir: '/Applications'
+cask_args appdir: '/Applications'
 
 tap 'homebrew/bundle'
 tap 'homebrew/cask'
 tap 'homebrew/cask-fonts'
+tap "homebrew/cask-versions"
 tap 'homebrew/core'
 tap 'homebrew/services'
+tap "koekeishiya/formulae"
+tap "planetscale/tap"
 
 # brew install
+brew "cmake"
+brew "duckdb"
+brew "exa"
+brew "fd"
+brew "unbound"
+brew "gnutls"
+brew "tesseract"
+brew "ffmpeg"
+brew "fish"
+brew "flyctl"
+brew "fzf"
+brew "gh"
+brew "git"
+brew "git-delta"
+brew "go"
+brew "grep"
+brew "helm"
+brew "hugo"
 brew 'bat'
 brew 'exa'
 brew 'fd'
@@ -18,20 +39,27 @@ brew 'git'
 brew 'git-delta'
 brew 'grep'
 brew 'jq'
+brew "kind"
+brew "lua-language-server"
 brew 'node'
 brew 'neovim'
 brew 'nvm'
+brew "lazygit"
 brew 'openssh'
 brew 'pnpm'
 brew 'postgresql', restart_service: true
 brew 'python3'
 brew 'ripgrep'
+brew "rust-analyzer"
 brew 'ruby'
 brew 'rust'
 brew 'tmux'
+brew "tree"
 brew 'wget'
 brew 'wifi-password'
 brew 'yarn'
+brew "koekeishiya/formulae/skhd"
+brew "koekeishiya/formulae/yabai"
 
 # Cask installs
 cask 'bartender'

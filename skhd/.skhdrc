@@ -21,3 +21,4 @@ alt + ctrl + cmd - p           : yabai -m window --space prev; yabai -m space --
 # app specific
 
 alt + ctrl + shift - n         : open -a "Logseq"
+alt + ctrl + shift - m         : open -a "Things3"
