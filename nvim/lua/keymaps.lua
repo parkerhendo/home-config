@@ -63,9 +63,6 @@ keymap("n", "<leader>t", "<cmd>lua _lazygit_toggle()<CR>", {noremap = true, sile
 -- Harpoon
 vim.cmd([[
   nnoremap <silent><leader>m :lua require("harpoon.mark").add_file()<CR>
-
-  " These mapping are really for <C-h>, <C-j>, <C-k>, <C-l> and use directions
-  " because of my Karabiner mapping for <C-j> being down system wide, etc.
   nnoremap <silent><left> :lua require("harpoon.ui").toggle_quick_menu()<CR>
   nnoremap <silent><up> :lua require("harpoon.ui").nav_next()<CR>
   nnoremap <silent><down> :lua require("harpoon.ui").nav_prev()<CR>
@@ -73,7 +70,7 @@ vim.cmd([[
 
 -- Copilot
 vim.cmd([[
-  imap <silent><script><expr> <right> copilot#Accept("\<CR>")
+  imap <silent><script><expr> <leader><tab> copilot#Accept("\<CR>")
 ]])
 
 keymap("n", "<leader>u", ":UndotreeToggle<CR>", { noremap=true })

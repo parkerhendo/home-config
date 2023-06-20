@@ -62,3 +62,4 @@ export PATH="$WASMTIME_HOME/bin:$PATH"
 # opam configuration
 [[ ! -r /Users/parkerhenderson/.opam/opam-init/init.zsh ]] || source /Users/parkerhenderson/.opam/opam-init/init.zsh  > /dev/null 2> /dev/null
 export PATH="/Users/parkerhenderson/.local/bin:$PATH"
+umask 022
