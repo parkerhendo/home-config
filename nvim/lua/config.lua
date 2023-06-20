@@ -195,6 +195,7 @@ local servers = {
   'lua_ls',
   'pyright',
   'clojure_lsp',
+  'ocamllsp'
 }
 
 for _, lsp in pairs(servers) do
