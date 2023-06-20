@@ -4,10 +4,10 @@
 yabai -m signal --add event=dock_did_restart action="sudo yabai --load-sa"
 sudo yabai --load-sa
 
-yabai -m config top_padding                                     4
-yabai -m config bottom_padding                                  4
-yabai -m config left_padding                                    4
-yabai -m config right_padding                                   4
+yabai -m config top_padding                                     8
+yabai -m config bottom_padding                                  8
+yabai -m config left_padding                                    8
+yabai -m config right_padding                                   8
 yabai -m config window_gap                                      4
 
 yabai -m config layout                                          bsp
@@ -34,7 +34,6 @@ yabai -m rule --add app="CleanShot X"                           manage=off
 yabai -m rule --add app="Loom"                                  manage=off
 yabai -m rule --add app="iTerm"                                 space=^1
 yabai -m rule --add app="Arc"                                   space=^2
-yabai -m rule --add app="Mimestream"                            space=^3
 yabai -m rule --add app="Slack"                                 space=^3
 yabai -m rule --add app="Figma Beta"                            space=^4
 

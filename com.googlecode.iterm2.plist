@@ -1504,7 +1504,7 @@
 			<key>Guid</key>
 			<string>805ECA70-2A45-4C70-A56C-74CBADA62A6D</string>
 			<key>Horizontal Spacing</key>
-			<real>1</real>
+			<real>1.1000000000000001</real>
 			<key>Idle Code</key>
 			<integer>0</integer>
 			<key>Jobs to Ignore</key>
