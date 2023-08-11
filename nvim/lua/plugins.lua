@@ -65,5 +65,5 @@ return require('packer').startup(function(use)
   use 'saadparwaiz1/cmp_luasnip'
 
   use 'simrat39/rust-tools.nvim'
-  use 'j-hui/fidget.nvim'
+  use { 'j-hui/fidget.nvim', tag='legacy'}
 end)

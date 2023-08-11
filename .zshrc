@@ -24,6 +24,8 @@ export CKIT_DIR=$HOME/ckit
 export PATH=$PATH:$CKIT_DIR/bin
 export PATH=$PATH:"/User/parkerhenderson/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rust-analyzer"
 export PATH="/Applications/CMake.app/Contents/bin":"$PATH"
+export FLYCTL_INSTALL="/Users/parkerhenderson/.fly"
+export PATH="$FLYCTL_INSTALL/bin:$PATH"
 
 eval $(thefuck --alias)
 
