@@ -23,14 +23,8 @@ keymap("n", "<leader>w", ":w<cr>", {})
 keymap("n", "<leader>q", ":q<cr>", {})
 keymap("n", "<leader>Q", ":q!<cr>", {})
 
--- Clojure
-keymap("n", "<leader>eb", ":ConjureEval<cr>", {})
-
 -- nvim-tree
 keymap("n", "<leader>e", ":NvimTreeToggle<cr>", {})
-
--- preitter
-keymap("n", "<leader>P", ":Prettier<cr>", {})
 
 -- navigating splits
 keymap("n", "<M-j>", "<C-w>j", {})
@@ -45,6 +39,11 @@ noremap <silent> <C-S-Right> :vertical resize +5<CR>
 noremap <silent> <C-S-Up> :resize +2<CR>
 noremap <silent> <C-S-Down> :resize -2<CR>
 ]])
+--Remap for dealing with word wrap
+keymap('n', 'k', "v:count == 0 ? 'gk' : 'k'", { noremap = true, expr = true, silent = true })
+keymap('v', 'k', "v:count == 0 ? 'gk' : 'k'", { noremap = true, expr = true, silent = true })
+keymap('v', 'j', "v:count == 0 ? 'gj' : 'j'", { noremap = true, expr = true, silent = true })
+keymap('n', 'j', "v:count == 0 ? 'gj' : 'j'", { noremap = true, expr = true, silent = true })
 
 -- Move lines up/down (visual mode)
 keymap("v", "J", ":m '>+1<cr>gv=gv", {})
@@ -73,8 +72,6 @@ vim.cmd([[
   imap <silent><script><expr> <leader><tab> copilot#Accept("\<CR>")
 ]])
 
-keymap("n", "<leader>u", ":UndotreeToggle<CR>", { noremap=true })
-
 -- Trouble
 keymap("n", "<leader>xx", "<cmd>Trouble<cr>", {silent = true, noremap = true})
 keymap("n", "<leader>xw", "<cmd>Trouble workspace_diagnostics<cr>", {silent = true, noremap = true})
@@ -85,9 +82,9 @@ keymap("n", "gr", "<cmd>Trouble lsp_references<cr>", {silent = true, noremap = t
 
 -- diagnostics
 keymap('n', '<leader>dd', "<cmd>Telescope diagnostics<CR>", { noremap=true, silent=true })
-keymap('n', 'do', vim.diagnostic.open_float, { noremap=true, silent=true })
-keymap('n', '[d', vim.diagnostic.goto_prev, { noremap=true, silent=true })
-keymap('n', ']d', vim.diagnostic.goto_next, { noremap=true, silent=true })
+keymap('n', '<leader>do', "<cmd>lua vim.diagnostic.open_float(0, { scope = \"line\" })<cr>", { noremap=true, silent=true })
+keymap('n', 'dn', vim.diagnostic.goto_prev, { noremap=true, silent=true })
+keymap('n', 'dp', vim.diagnostic.goto_next, { noremap=true, silent=true })
 
 -- Random, but helpful keymaps
 keymap("n", "<leader>X","<cmd>!chmod +x %<CR>", { silent = true })
