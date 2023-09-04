@@ -82,7 +82,7 @@ keymap("n", "gr", "<cmd>Trouble lsp_references<cr>", {silent = true, noremap = t
 
 -- diagnostics
 keymap('n', '<leader>dd', "<cmd>Telescope diagnostics<CR>", { noremap=true, silent=true })
-keymap('n', '<leader>do', "<cmd>lua vim.diagnostic.open_float(0, { scope = \"line\" })<cr>", { noremap=true, silent=true })
+keymap('n', 'do', "<cmd>lua vim.diagnostic.open_float(0, { scope = \"line\" })<cr>", { noremap=true, silent=true })
 keymap('n', 'dn', vim.diagnostic.goto_prev, { noremap=true, silent=true })
 keymap('n', 'dp', vim.diagnostic.goto_next, { noremap=true, silent=true })
 
