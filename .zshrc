@@ -8,8 +8,6 @@ source $ZSH/oh-my-zsh.sh
 
 alias ckit="~/ckit/bin/ckit"
 alias vi="nvim"
-alias tmux-start="~/dotfiles/script/tmux-start.sh"
-alias tmux-work="~/dotfiles/script/tmux-work.sh"
 
 alias tailscale="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 
