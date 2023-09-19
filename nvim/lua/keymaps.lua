@@ -51,9 +51,9 @@ keymap("v", "K", ":m '<-2<cr>gv=gv", {})
 
 -- Telescope
 vim.cmd([[
-nnoremap <leader>f <cmd>lua require('telescope.builtin').find_files()<cr>
-nnoremap <leader>g <cmd>lua require('telescope.builtin').live_grep()<cr>
-nnoremap <space> <cmd>lua require('telescope.builtin').buffers()<cr>
+nnoremap <leader>f <cmd>lua require('telescope.builtin').find_files({ hidden=true })<cr>
+nnoremap <leader>g <cmd>lua require('telescope.builtin').live_grep({ hidden=true })<cr>
+nnoremap <space> <cmd>lua require('telescope.builtin').buffers({ hidden=true })<cr>
 ]])
 
 -- toggleterm
