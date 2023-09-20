@@ -176,13 +176,6 @@ return packer.startup(function(use)
     end
   }) 
   
-
-
-
-  use({'hrsh7th/cmp-nvim-lsp' })
-
-  use 'simrat39/rust-tools.nvim'
-
   if is_bootstrapped then
     require('packer').sync()
   end
