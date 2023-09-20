@@ -67,11 +67,6 @@ vim.cmd([[
   nnoremap <silent><down> :lua require("harpoon.ui").nav_prev()<CR>
 ]])
 
--- Copilot
-vim.cmd([[
-  imap <silent><script><expr> <leader><tab> copilot#Accept("\<CR>")
-]])
-
 -- Trouble
 keymap("n", "<leader>xx", "<cmd>Trouble<cr>", {silent = true, noremap = true})
 keymap("n", "<leader>xw", "<cmd>Trouble workspace_diagnostics<cr>", {silent = true, noremap = true})
@@ -83,8 +78,8 @@ keymap("n", "gr", "<cmd>Trouble lsp_references<cr>", {silent = true, noremap = t
 -- diagnostics
 keymap('n', '<leader>dd', "<cmd>Telescope diagnostics<CR>", { noremap=true, silent=true })
 keymap('n', 'do', "<cmd>lua vim.diagnostic.open_float(0, { scope = \"line\" })<cr>", { noremap=true, silent=true })
-keymap('n', 'dn', vim.diagnostic.goto_prev, { noremap=true, silent=true })
-keymap('n', 'dp', vim.diagnostic.goto_next, { noremap=true, silent=true })
+keymap('n', 'dn', "<cmd>lua vim.diagnostic.goto_prev<cr>", { noremap=true, silent=true })
+keymap('n', 'dp', "<cmd>lua vim.diagnostic.goto_next<cr>", { noremap=true, silent=true })
 
 -- Random, but helpful keymaps
 keymap("n", "<leader>X","<cmd>!chmod +x %<CR>", { silent = true })
