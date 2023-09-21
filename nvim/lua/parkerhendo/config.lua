@@ -68,9 +68,6 @@ autocmd('TextYankPost', {
   end,
 })
 
--- fix eslint errors on save
-vim.cmd [[autocmd BufWritePre *.tsx,*.ts,*.jsx,*.js EslintFixAll]]
-
 -- Set formatoptions on each file open since it'll get overwritten by other plugins
 vim.cmd [[autocmd FileType * setlocal formatoptions-=c formatoptions-=r formatoptions-=o ]]
 
