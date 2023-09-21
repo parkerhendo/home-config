@@ -50,23 +50,11 @@ vim.cmd [[packadd packer.nvim]]
 
 local augroup = vim.api.nvim_create_augroup
 local autocmd = vim.api.nvim_create_autocmd
-local yank_group = augroup('HighlightYank', {})
 
 function R(name)
   require("plenary.reload").reload_module(name)
 end
 
--- highlight yanked text
-autocmd('TextYankPost', {
-  group = yank_group,
-  pattern = '*',
-  callback = function()
-    vim.highlight.on_yank({
-      higroup = 'IncSearch',
-      timeout = 40
-    })
-  end,
-})
 
 -- Set formatoptions on each file open since it'll get overwritten by other plugins
 vim.cmd [[autocmd FileType * setlocal formatoptions-=c formatoptions-=r formatoptions-=o ]]

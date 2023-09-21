@@ -19,7 +19,7 @@ local packer = require('packer')
 local conf = {
   display = {
     open_fn = function()
-      return require('packer.util').float({ border = 'single' })
+      return require('packer.util').float({ border = 'rounded' })
     end,
   }
 }
@@ -28,24 +28,24 @@ packer.init(conf)
 
 return packer.startup(function(use)
   -- Let packer manage itself
-  use 'wbthomason/packer.nvim'
+  use('wbthomason/packer.nvim')
 
   -- Personal fork of nord.nvim
-  use 'parkerhendo/nord.nvim'
+  use('parkerhendo/nord.nvim')
 
   -- file tree
-  use {
+  use({
     'nvim-tree/nvim-tree.lua',
     requires = {
-      'nvim-tree/nvim-web-devicons' 
+      'nvim-tree/nvim-web-devicons'
     },
     tag = 'nightly'
-  }
+  })
 
-  use {
+  use({
     'nvim-lualine/lualine.nvim',
     requires = { 'nvim-tree/nvim-web-devicons', opt = true }
-  }
+  })
 
   -- Install treesitter for better syntax highlighting
 	use {
@@ -61,8 +61,10 @@ return packer.startup(function(use)
 		after = "nvim-treesitter",
 	})
 
+  -- Install nvim-notify for better notifications
+	use("rcarriga/nvim-notify")
 
-  -- Autocomplete
+  -- Install lsp
   use({
     'neovim/nvim-lspconfig',
     requires = {
@@ -81,16 +83,6 @@ return packer.startup(function(use)
     }
   })
 
-  use ({
-    'j-hui/fidget.nvim',
-    tag = 'legacy',
-    config = function()
-      require("fidget").setup {
-        -- options
-      }
-    end,
-  })
-  
   -- Install nvim-cmp for autocompletion
   use({
     'hrsh7th/nvim-cmp',
@@ -106,10 +98,19 @@ return packer.startup(function(use)
   })
 
   -- Install telescope
-  use {
+  use({
     'nvim-telescope/telescope.nvim',
     requires = {'nvim-lua/plenary.nvim'}
-  }
+  })
+
+  -- Install nvim-lsp-file-operations for file operations via lsp in the file tree
+	use({
+		"antosha417/nvim-lsp-file-operations",
+		requires = {
+			"nvim-lua/plenary.nvim",
+			"nvim-neo-tree/neo-tree.nvim",
+		},
+	})
 
   use {
     'numToStr/Comment.nvim',
@@ -124,7 +125,7 @@ return packer.startup(function(use)
     config = function()
       require('neoscroll').setup()
     end
-  }) 
+  })
 
   -- Install nvim-autopairs  and nvim-ts-autotag to auto close brackets & tags
 	use("windwp/nvim-autopairs")
@@ -139,7 +140,7 @@ return packer.startup(function(use)
     config = function()
       require("trouble").setup {}
     end
-  }) 
+  })
 
   -- Install context-commentstring to enable jsx commenting is ts/js/tsx/jsx files
   use('JoosepAlviste/nvim-ts-context-commentstring')
@@ -151,31 +152,17 @@ return packer.startup(function(use)
   -- use 'karb94/neoscroll.nvim'
 
   -- Install github copilot
-  use({
-    "zbirenbaum/copilot.lua",
-  })
+  -- use({
+  --   "zbirenbaum/copilot.lua",
+  -- })
 
   -- Git
-  use 'APZelos/blamer.nvim'
+  use('APZelos/blamer.nvim')
+
   -- use to access lazygit inside neovim
-  use 'akinsho/toggleterm.nvim'
-  use 'lewis6991/gitsigns.nvim'
-  use({
-    'akinsho/git-conflict.nvim',
-    tag = "*",
-    config = function()
-      require('git-conflict').setup {
-        default_mappings = false, -- disable buffer local mapping created by this plugin
-        disable_diagnostics = false, -- This will disable the diagnostics in a buffer whilst it is conflicted
-        list_opener = "copen", -- command or function to open the conflicts list
-        highlights = { -- They must have background color, otherwise the default color will be used
-          incoming = "DiffText",
-          current = "DiffAdd",
-        },
-      }
-    end
-  }) 
-  
+  use('akinsho/toggleterm.nvim')
+  use('lewis6991/gitsigns.nvim')
+
   if is_bootstrapped then
     require('packer').sync()
   end

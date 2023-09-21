@@ -1,6 +1,5 @@
 local null_ls = require("null-ls")
--- local map_lsp_keybinds = require("parkerhendo.keymaps").map_lsp_keybinds 
-local keymap = vim.api.nvim_set_keymap
+local map_lsp_keybinds = require("parkerhendo.keymaps").map_lsp_keybinds
 
 -- Use neodev to configure lua_ls in nvim directories - must load before lspconfig
 require("neodev").setup()
@@ -47,116 +46,51 @@ local function tsserver_on_publish_diagnostics_override(_, result, ctx, config)
 	vim.lsp.diagnostic.on_publish_diagnostics(_, result, ctx, config)
 end
 
--- servers
+-- LSP servers to install (see list here: https://github.com/williamboman/mason-lspconfig.nvim#available-lsp-servers )
 local servers = {
-  bashls = {},
-  cssls = {},
-  html = {},
-  clojure_lsp = {},
-  eslint = {},
-  lua_ls = {},
-  ocamllsp = {},
-  pyright = {},
-  rust_analyzer = {
-    settings = {
-      ["rust-analyzer"] = {
-        checkOnSave = {
-          command = "clippy",
-        },
-      },
-    },
-  },
-  tsserver = {
-    settings = {
-      experimental = {
-        enableProjectDiagnostics = true,
-      }
-    },
-    handlers = {
+	bashls = {},
+	cssls = {},
+	graphql = {},
+	html = {},
+	jsonls = {},
+	lua_ls = {},
+	marksman = {},
+	ocamllsp = {},
+	prismals = {},
+	pyright = {},
+	solidity = {},
+	sqlls = {},
+	tailwindcss = {},
+	tsserver = {
+		settings = {
+			experimental = {
+				enableProjectDiagnostics = true,
+			},
+		},
+		handlers = {
 			["textDocument/publishDiagnostics"] = vim.lsp.with(tsserver_on_publish_diagnostics_override, {}),
 		},
-  },
-  tailwindcss = {},
+	},
+	rust_analyzer = {},
+	yamlls = {},
 }
 
--- lspconfig
-
-vim.diagnostic.config {
-  underline = { severity = vim.diagnostic.severity.ERROR },
-  signs = { severity = vim.diagnostic.severity.ERROR },
-  virtual_text = { severity = vim.diagnostic.severity.ERROR }
-}
-
-
--- filter out node_modules/@types/react/index.d.ts results when jumping to definitions
-local function filter(arr, fn)
-  if type(arr) ~= "table" then
-    return arr
-  end
-  
-  local filtered = {}
-  for k, v in pairs(arr) do
-    if fn(v, k, arr) then
-      table.insert(filtered, v)
-    end
-  end
-
-  return filtered
-end
-
-local function filterReactDTS(value)
-  return string.match(value.uri, 'react/index.d.ts') == nil
-end
-
--- default handlers
+-- Default handlers for LSP
 local default_handlers = {
-  ["textDocument/hover"] = vim.lsp.with(vim.lsp.handlers.hover, { border = "rounded" }),
+	["textDocument/hover"] = vim.lsp.with(vim.lsp.handlers.hover, { border = "rounded" }),
 	["textDocument/signatureHelp"] = vim.lsp.with(vim.lsp.handlers.signature_help, { border = "rounded" }),
 }
 
-
 -- nvim-cmp supports additional completion capabilities
 local capabilities = vim.lsp.protocol.make_client_capabilities()
-capabilities = require('cmp_nvim_lsp').default_capabilities(capabilities)
+local default_capabilities = require("cmp_nvim_lsp").default_capabilities(capabilities)
 
-local on_attach = function(client, buffer_number)
-  vim.api.nvim_buf_set_option(bufnr, 'omnifunc', 'v:lua.vim.lsp.omnifunc')
-  map_lsp_keybinds(buffer_number)
- --  vim.keymap.set('n', '<leader>rn', vim.lsp.buf.rename, { desc = "LSP: [R]e[n]ame", buffer = buffer_number, noremap = true })
- --  vim.keymap.set('n', '<leader>ca', vim.lsp.buf.code_action, { desc = "LSP: [C]ode [A]ction", buffer = buffer_number, noremap = true })
- --  vim.keymap.set('n', 'gd', vim.lsp.buf.definition, { desc = "LSP: [G]o to [D]efinition", buffer = buffer_number, noremap = true })
-	--
- --  -- Telescope LSP keybinds --
-	-- vim.keymap.set(
-	-- 	'n', "gr",
-	-- 	require("telescope.builtin").lsp_references,
-	-- 	{ desc = "LSP: [G]oto [R]eferences", buffer = buffer_number, noremap = true }
-	-- )
-	--
-	-- vim.keymap.set(
-	-- 	'n', "gi",
-	-- 	require("telescope.builtin").lsp_implementations,
-	-- 	{ desc = "LSP: [G]oto [I]mplementation", buffer = buffer_number, noremap = true }
-	-- )
-	--
-	-- vim.keymap.set(
-	-- 	'n', "<leader>bs",
-	-- 	require("telescope.builtin").lsp_document_symbols,
-	-- 	{ desc = "LSP: [B]uffer [S]ymbols", buffer = buffer_number, noremap = true }
-	-- )
-	--
-	-- vim.keymap.set(
-	-- 	'n', "<leader>ps",
-	-- 	require("telescope.builtin").lsp_workspace_symbols,
-	-- 	{ desc = "LSP: [P]roject [S]ymbols", buffer = buffer_number, noremap = true }
-	-- )
-	--
- --  vim.keymap.set('n', "K", vim.lsp.buf.hover, { desc = "LSP: Hover Documentation", buffer = buffer_number, noremap = true })
-	-- vim.keymap.set('n', "<leader>k", vim.lsp.buf.signature_help, { desc = "LSP: Signature Documentation", buffer = buffer_number, noremap = true })
-	-- vim.keymap.set('i', "<C-k>", vim.lsp.buf.signature_help, { desc = "LSP: Signature Documentation", buffer = buffer_number, noremap = true })
-	-- vim.keymap.set('n', "td", vim.lsp.buf.type_definition, { desc = "LSP: [T]ype [D]efinition", buffer = buffer_number, noremap = true })
+local on_attach = function(_client, buffer_number)
+	-- Pass the current buffer to map lsp keybinds
+	map_lsp_keybinds(buffer_number)
 
-  vim.api.nvim_buf_create_user_command(buffer_number, "Format", function(_)
+	-- Create a command `:Format` local to the LSP buffer
+	vim.api.nvim_buf_create_user_command(buffer_number, "Format", function(_)
 		vim.lsp.buf.format({
 			filter = function(format_client)
 				-- Use Prettier to format TS/JS if it's available
@@ -164,14 +98,62 @@ local on_attach = function(client, buffer_number)
 			end,
 		})
 	end, { desc = "LSP: Format current buffer with LSP" })
+
+	-- if client.server_capabilities.codeLensProvider then
+	-- 	vim.api.nvim_create_autocmd({ "BufEnter", "InsertLeave", "CursorHold" }, {
+	-- 		buffer = buffer_number,
+	-- 		callback = vim.lsp.codelens.refresh,
+	-- 		desc = "LSP: Refresh code lens",
+	-- 		group = vim.api.nvim_create_augroup("codelens", { clear = true }),
+	-- 	})
+	-- end
 end
 
-
+-- Iterate over our servers and set them up
 for name, config in pairs(servers) do
-  require('lspconfig')[name].setup {
-    on_attach = on_attach,
-    capabilities = capabilities,
-    settings = config.settings,
-    handlers = vim.tbl_deep_extend("force", {}, default_handlers, config.handlers or {}),
-  }
+	require("lspconfig")[name].setup({
+		on_attach = on_attach,
+		capabilities = default_capabilities,
+		settings = config.settings,
+		handlers = vim.tbl_deep_extend("force", {}, default_handlers, config.handlers or {}),
+	})
 end
+
+-- Congifure LSP linting, formatting, diagnostics, and code actions
+local formatting = null_ls.builtins.formatting
+local diagnostics = null_ls.builtins.diagnostics
+local code_actions = null_ls.builtins.code_actions
+
+null_ls.setup({
+	border = "rounded",
+	sources = {
+		-- formatting
+		formatting.prettier,
+		formatting.stylua,
+		formatting.ocamlformat,
+
+		-- diagnostics
+		diagnostics.eslint_d.with({
+			condition = function(utils)
+				return utils.root_has_file({ ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json" })
+			end,
+		}),
+
+		-- code actions
+		code_actions.eslint_d.with({
+			condition = function(utils)
+				return utils.root_has_file({ ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json" })
+			end,
+		}),
+	},
+})
+
+-- Configure borderd for LspInfo ui
+require("lspconfig.ui.windows").default_options.border = "rounded"
+
+-- Configure diagostics border
+vim.diagnostic.config({
+	float = {
+		border = "rounded",
+	},
+})
