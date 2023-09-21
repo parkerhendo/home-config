@@ -175,10 +175,3 @@ for name, config in pairs(servers) do
     handlers = vim.tbl_deep_extend("force", {}, default_handlers, config.handlers or {}),
   }
 end
-
-require"fidget".setup({
-  window = {
-    blend = 100,
-    zindex = 2,
-  },
-})

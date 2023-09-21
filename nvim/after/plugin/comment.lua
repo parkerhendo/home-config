@@ -1,0 +1,23 @@
+require('Comment').setup({
+  pre_hook = function(ctx)
+    if vim.bo.filetype == 'typescriptreact' then
+      local U = require('Comment.utils')
+
+      -- determine to use line or block commentstring
+      local type = ctx.ctype == U.ctype.line and '__default' or '__multiline'
+
+      -- Determine location where to calculate commentstring from
+      local loc = nil
+      if ctx.ctype == U.ctype.block then
+        loc = require('ts_context_commentstring.utils').get_cursor_location()
+      elseif ctx.cmotion == U.cmotion.v or ctx.cmotion == U.cmotion.V then
+        loc = require('ts_context_commentstring.utils').get_visual_start_location()
+      end
+
+      return require('ts_context_commentstring.internal').calculate_commentstring({
+        key = type,
+        location = loc
+      })
+    end
+  end,
+})
