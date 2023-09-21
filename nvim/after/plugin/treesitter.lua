@@ -1,6 +1,6 @@
 require("nvim-treesitter.configs").setup({
 	ensure_installed = {
-    "c",
+		"c",
 		"lua",
 		"javascript",
 		"typescript",
@@ -12,7 +12,7 @@ require("nvim-treesitter.configs").setup({
 		"markdown",
 		"ocaml",
 		"ocaml_interface",
-    "rust",
+		"rust",
 		"yaml",
 		"vim",
 		"graphql",
@@ -29,9 +29,9 @@ require("nvim-treesitter.configs").setup({
 	autopairs = {
 		enable = true,
 	},
-  playground = {
-    enable = true,
-  },
+	playground = {
+		enable = true,
+	},
 	autotag = {
 		enable = true,
 	},

@@ -98,15 +98,6 @@ local on_attach = function(_client, buffer_number)
 			end,
 		})
 	end, { desc = "LSP: Format current buffer with LSP" })
-
-	-- if client.server_capabilities.codeLensProvider then
-	-- 	vim.api.nvim_create_autocmd({ "BufEnter", "InsertLeave", "CursorHold" }, {
-	-- 		buffer = buffer_number,
-	-- 		callback = vim.lsp.codelens.refresh,
-	-- 		desc = "LSP: Refresh code lens",
-	-- 		group = vim.api.nvim_create_augroup("codelens", { clear = true }),
-	-- 	})
-	-- end
 end
 
 -- Iterate over our servers and set them up
