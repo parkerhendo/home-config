@@ -49,9 +49,9 @@ config.window_decorations = "TITLE|RESIZE"
 config.window_close_confirmation = "NeverPrompt"
 
 config.window_padding = {
-	left = "24px",
-	right = "24px",
-	top = "1.5cell",
+	left = "16px",
+	right = "16px",
+	top = "0.5cell",
 	bottom = "0.5cell",
 }
 

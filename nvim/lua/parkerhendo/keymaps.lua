@@ -3,8 +3,6 @@ local keymap = vim.api.nvim_set_keymap
 local nnoremap = require("parkerhendo.keymap_utils").nnoremap
 local vnoremap = require("parkerhendo.keymap_utils").vnoremap
 local inoremap = require("parkerhendo.keymap_utils").inoremap
-local tnoremap = require("parkerhendo.keymap_utils").tnoremap
-local xnoremap = require("parkerhendo.keymap_utils").xnoremap
 
 local M = {}
 
@@ -17,14 +15,14 @@ nnoremap("<leader>V", ":source $MYVIMRC<cr>")
 nnoremap("<leader>pi", ":source $MYVIMRC<cr>:PackerSync<cr>")
 
 -- clipboard management nicities
-nnoremap("<leader>p", "\"_dP")
+nnoremap("<leader>p", '"_dP')
 
-nnoremap("<leader>y", "\"+y")
-vnoremap("<leader>y", "\"+y")
-nnoremap("<leader>Y", "\"+Y")
+nnoremap("<leader>y", '"+y')
+vnoremap("<leader>y", '"+y')
+nnoremap("<leader>Y", '"+Y')
 
-nnoremap("<leader>d", "\"_d")
-vnoremap("<leader>d", "\"_d")
+nnoremap("<leader>d", '"_d')
+vnoremap("<leader>d", '"_d')
 
 -- quick write and quit
 nnoremap("<leader>w", ":w<cr>")
@@ -47,10 +45,10 @@ nnoremap("<C-S-Up>", ":resize +2<cr>")
 nnoremap("<C-S-Down>", ":resize -2<cr>")
 
 --Remap for dealing with word wrap
-nnoremap('k', "v:count == 0 ? 'gk' : 'k'", {expr = true, silent = true })
-vnoremap('k', "v:count == 0 ? 'gk' : 'k'", {expr = true, silent = true })
-vnoremap('j', "v:count == 0 ? 'gj' : 'j'", {expr = true, silent = true })
-nnoremap('j', "v:count == 0 ? 'gj' : 'j'", {expr = true, silent = true })
+nnoremap("k", "v:count == 0 ? 'gk' : 'k'", { expr = true, silent = true })
+vnoremap("k", "v:count == 0 ? 'gk' : 'k'", { expr = true, silent = true })
+vnoremap("j", "v:count == 0 ? 'gj' : 'j'", { expr = true, silent = true })
+nnoremap("j", "v:count == 0 ? 'gj' : 'j'", { expr = true, silent = true })
 
 -- Move lines up/down (visual mode)
 vnoremap("J", ":m '>+1<cr>gv=gv")
@@ -64,7 +62,7 @@ nnoremap <space> <cmd>lua require('telescope.builtin').buffers()<cr>
 ]])
 
 -- toggleterm
-nnoremap("<leader>t", "<cmd>lua _lazygit_toggle()<CR>", {silent = true})
+nnoremap("<leader>t", "<cmd>lua _lazygit_toggle()<CR>", { silent = true })
 
 -- Harpoon
 vim.cmd([[
@@ -75,30 +73,30 @@ vim.cmd([[
 ]])
 
 -- Trouble
-nnoremap("<leader>xx", "<cmd>Trouble<cr>", {silent = true})
-nnoremap("<leader>xw", "<cmd>Trouble workspace_diagnostics<cr>", {silent = true})
-nnoremap("<leader>xd", "<cmd>Trouble document_diagnostics<cr>", {silent = true})
-nnoremap("<leader>xl", "<cmd>Trouble loclist<cr>", {silent = true})
-nnoremap("<leader>xq", "<cmd>Trouble quickfix<cr>", {silent = true})
-nnoremap("gr", "<cmd>Trouble lsp_references<cr>", {silent = true})
+nnoremap("<leader>xx", "<cmd>Trouble<cr>", { silent = true })
+nnoremap("<leader>xw", "<cmd>Trouble workspace_diagnostics<cr>", { silent = true })
+nnoremap("<leader>xd", "<cmd>Trouble document_diagnostics<cr>", { silent = true })
+nnoremap("<leader>xl", "<cmd>Trouble loclist<cr>", { silent = true })
+nnoremap("<leader>xq", "<cmd>Trouble quickfix<cr>", { silent = true })
+nnoremap("gr", "<cmd>Trouble lsp_references<cr>", { silent = true })
 
 -- diagnostics
-nnoremap('<leader>dd', "<cmd>Telescope diagnostics<CR>", {silent=true})
-nnoremap('do', "<cmd>lua vim.diagnostic.open_float(0, { scope = \"line\" })<cr>", {silent=true})
-nnoremap('dn', "<cmd>lua vim.diagnostic.goto_prev<cr>", {silent=true})
-nnoremap('dp', "<cmd>lua vim.diagnostic.goto_next<cr>", {silent=true})
+nnoremap("<leader>dd", "<cmd>Telescope diagnostics<CR>", { silent = true })
+nnoremap("do", '<cmd>lua vim.diagnostic.open_float(0, { scope = "line" })<cr>', { silent = true })
+nnoremap("dn", "<cmd>lua vim.diagnostic.goto_prev<cr>", { silent = true })
+nnoremap("dp", "<cmd>lua vim.diagnostic.goto_next<cr>", { silent = true })
 
 -- Random, but helpful keymaps
-keymap("n", "<leader>X","<cmd>!chmod +x %<CR>", { silent = true })
+keymap("n", "<leader>X", "<cmd>!chmod +x %<CR>", { silent = true })
 
 -- LSP
 
-M.map_lsp_keybinds = function (buffer_number)
-  nnoremap('<leader>rn', vim.lsp.buf.rename, { desc = "LSP: [R]e[n]ame", buffer = buffer_number})
-  nnoremap('<leader>ca', vim.lsp.buf.code_action, { desc = "LSP: [C]ode [A]ction", buffer = buffer_number})
-  nnoremap('gd', vim.lsp.buf.definition, { desc = "LSP: [G]o to [D]efinition", buffer = buffer_number})
+M.map_lsp_keybinds = function(buffer_number)
+	nnoremap("<leader>rn", vim.lsp.buf.rename, { desc = "LSP: [R]e[n]ame", buffer = buffer_number })
+	nnoremap("<leader>ca", vim.lsp.buf.code_action, { desc = "LSP: [C]ode [A]ction", buffer = buffer_number })
+	nnoremap("gd", vim.lsp.buf.definition, { desc = "LSP: [G]o to [D]efinition", buffer = buffer_number })
 
-  -- Telescope LSP keybinds --
+	-- Telescope LSP keybinds --
 	nnoremap(
 		"gr",
 		require("telescope.builtin").lsp_references,
@@ -123,7 +121,7 @@ M.map_lsp_keybinds = function (buffer_number)
 		{ desc = "LSP: [P]roject [S]ymbols", buffer = buffer_number }
 	)
 
-  nnoremap("K", vim.lsp.buf.hover, { desc = "LSP: Hover Documentation", buffer = buffer_number })
+	nnoremap("K", vim.lsp.buf.hover, { desc = "LSP: Hover Documentation", buffer = buffer_number })
 	nnoremap("<leader>k", vim.lsp.buf.signature_help, { desc = "LSP: Signature Documentation", buffer = buffer_number })
 	inoremap("<C-k>", vim.lsp.buf.signature_help, { desc = "LSP: Signature Documentation", buffer = buffer_number })
 	nnoremap("td", vim.lsp.buf.type_definition, { desc = "LSP: [T]ype [D]efinition", buffer = buffer_number })
