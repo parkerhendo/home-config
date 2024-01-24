@@ -9,6 +9,13 @@ require("nvim-tree").setup({
 	update_focused_file = {
 		enable = true,
 	},
+	renderer = {
+		icons = {
+			show = {
+				folder_arrow = false,
+			},
+		},
+	},
 	view = {
 		width = 45,
 		float = {

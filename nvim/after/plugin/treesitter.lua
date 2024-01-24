@@ -35,10 +35,6 @@ require("nvim-treesitter.configs").setup({
 	autotag = {
 		enable = true,
 	},
-	context_commentstring = {
-		enable = true,
-		enable_autocmd = false,
-	},
 	incremental_selection = {
 		enable = true,
 		keymaps = {
@@ -82,5 +78,12 @@ require("nvim-treesitter.configs").setup({
 				["[]"] = "@class.outer",
 			},
 		},
+	},
+})
+
+require("ts_context_commentstring").setup({
+	enable_autocmd = false,
+	languages = {
+		typescript = "// %s",
 	},
 })

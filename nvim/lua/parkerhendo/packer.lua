@@ -160,6 +160,9 @@ return packer.startup(function(use)
 	use("akinsho/toggleterm.nvim")
 	use("lewis6991/gitsigns.nvim")
 
+	-- show color previews in neovim
+	-- use("uga-rosa/ccc.nvim")
+
 	if is_bootstrapped then
 		require("packer").sync()
 	end
