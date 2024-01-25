@@ -63,8 +63,6 @@ export PATH="$WASMTIME_HOME/bin:$PATH"
 [[ ! -r /Users/parkerhenderson/.opam/opam-init/init.zsh ]] || source /Users/parkerhenderson/.opam/opam-init/init.zsh  > /dev/null 2> /dev/null
 export PATH="/Users/parkerhenderson/.local/bin:$PATH"
 umask 022
-export VOLTA_HOME="$HOME/.volta"
-export PATH="$VOLTA_HOME/bin:$PATH"
 #compdef gt
 ###-begin-gt-completions-###
 #
@@ -87,3 +85,5 @@ compdef _gt_yargs_completions gt
 
 
 eval "$(atuin init zsh)"
+
+export PATH="$HOME/.yarn/bin:$HOME/.config/yarn/global/node_modules/.bin:$PATH"
