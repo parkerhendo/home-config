@@ -14,6 +14,9 @@ alias tailscale="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 export EDITOR="/opt/homebrew/bin/nvim"
 export VISUAL="/opt/homebrew/bin/nvim"
 
+export ATUIN_NOBIND="true"
+eval "$(atuin init zsh)"
+bindkey '^r' _atuin_search_widget
 
 # Paths
 export NINJA_DIR=$HOME/ninja/ninja
@@ -71,6 +74,7 @@ umask 022
 # Installation: gt completion >> ~/.zshrc
 #    or gt completion >> ~/.zprofile on OSX.
 #
+
 _gt_yargs_completions()
 {
   local reply
@@ -87,3 +91,4 @@ compdef _gt_yargs_completions gt
 eval "$(atuin init zsh)"
 
 export PATH="$HOME/.yarn/bin:$HOME/.config/yarn/global/node_modules/.bin:$PATH"
+eval "$(atuin init zsh)"
