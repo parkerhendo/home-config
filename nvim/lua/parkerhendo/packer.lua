@@ -30,6 +30,10 @@ return packer.startup(function(use)
 	-- Let packer manage itself
 	use("wbthomason/packer.nvim")
 
+	use({
+		"lukas-reineke/indent-blankline.nvim",
+	})
+
 	-- Personal fork of nord.nvim
 	use("parkerhendo/nord.nvim")
 
@@ -50,6 +54,7 @@ return packer.startup(function(use)
 	-- Install treesitter for better syntax highlighting
 	use({
 		"nvim-treesitter/nvim-treesitter",
+		command = "TSUpdate",
 		run = function()
 			require("nvim-treesitter.install").update({ with_sync = true })
 		end,
