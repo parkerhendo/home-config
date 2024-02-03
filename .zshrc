@@ -15,6 +15,7 @@ export EDITOR="/opt/homebrew/bin/nvim"
 export VISUAL="/opt/homebrew/bin/nvim"
 
 export ATUIN_NOBIND="true"
+
 eval "$(atuin init zsh)"
 bindkey '^r' _atuin_search_widget
 

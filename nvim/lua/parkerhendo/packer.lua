@@ -30,10 +30,6 @@ return packer.startup(function(use)
 	-- Let packer manage itself
 	use("wbthomason/packer.nvim")
 
-	use({
-		"lukas-reineke/indent-blankline.nvim",
-	})
-
 	-- Personal fork of nord.nvim
 	use("parkerhendo/nord.nvim")
 
@@ -165,8 +161,9 @@ return packer.startup(function(use)
 	use("akinsho/toggleterm.nvim")
 	use("lewis6991/gitsigns.nvim")
 
-	-- show color previews in neovim
-	-- use("uga-rosa/ccc.nvim")
+	use({
+		"lukas-reineke/indent-blankline.nvim",
+	})
 
 	if is_bootstrapped then
 		require("packer").sync()
