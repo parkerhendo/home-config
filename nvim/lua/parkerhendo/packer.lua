@@ -50,7 +50,7 @@ return packer.startup(function(use)
   -- Install treesitter for better syntax highlighting
   use({
     "nvim-treesitter/nvim-treesitter",
-    command = "TSUpdate",
+    cmd = "TSUpdate",
     run = function()
       require("nvim-treesitter.install").update({ with_sync = true })
     end,
