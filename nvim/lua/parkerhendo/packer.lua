@@ -47,14 +47,14 @@ return packer.startup(function(use)
     requires = { "nvim-tree/nvim-web-devicons", opt = true },
   })
 
-	-- Install treesitter for better syntax highlighting
-	use({
-		"nvim-treesitter/nvim-treesitter",
-		command = "TSUpdate",
-		run = function()
-			require("nvim-treesitter.install").update({ with_sync = true })
-		end,
-		})
+  -- Install treesitter for better syntax highlighting
+  use({
+    "nvim-treesitter/nvim-treesitter",
+    command = "TSUpdate",
+    run = function()
+      require("nvim-treesitter.install").update({ with_sync = true })
+    end,
+  })
 
   -- Additional text objects for treesitter
   use({
@@ -132,6 +132,9 @@ return packer.startup(function(use)
   -- Install vim-surround for managing parenthese, brackets, quotes, etc
   use("tpope/vim-surround")
 
+  -- install vim-fugitive
+  use({ "tpope/vim-fugitive" })
+
   use({
     "folke/trouble.nvim",
     requires = "kyazdani42/nvim-web-devicons",
@@ -146,9 +149,6 @@ return packer.startup(function(use)
   -- easily track and switch between buffers
   use("ThePrimeagen/harpoon")
 
-  -- Install neoscroll for smooth scrolling
-  -- use 'karb94/neoscroll.nvim'
-
   -- Install github copilot
   use({
     "zbirenbaum/copilot.lua",
@@ -161,11 +161,11 @@ return packer.startup(function(use)
   use("akinsho/toggleterm.nvim")
   use("lewis6991/gitsigns.nvim")
 
-	use({
-		"lukas-reineke/indent-blankline.nvim",
-	})
-	-- show color previews in neovim
-	-- use("uga-rosa/ccc.nvim")
+  use({
+    "lukas-reineke/indent-blankline.nvim",
+  })
+  -- show color previews in neovim
+  -- use("uga-rosa/ccc.nvim")
 
   if is_bootstrapped then
     require("packer").sync()
