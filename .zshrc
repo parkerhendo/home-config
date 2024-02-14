@@ -14,10 +14,6 @@ alias tailscale="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 export EDITOR="/opt/homebrew/bin/nvim"
 export VISUAL="/opt/homebrew/bin/nvim"
 
-export ATUIN_NOBIND="true"
-
-eval "$(atuin init zsh)"
-bindkey '^r' _atuin_search_widget
 
 # Paths
 export NINJA_DIR=$HOME/ninja/ninja
@@ -28,8 +24,8 @@ export PATH=$PATH:"/User/parkerhenderson/.rustup/toolchains/stable-aarch64-apple
 export PATH="/Applications/CMake.app/Contents/bin":"$PATH"
 export FLYCTL_INSTALL="/Users/parkerhenderson/.fly"
 export PATH="$FLYCTL_INSTALL/bin:$PATH"
-
-eval $(thefuck --alias)
+export PATH="/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH"
+export PATH="$HOME/.yarn/bin:$HOME/.config/yarn/global/node_modules/.bin:$PATH"
 
 # plugins
 plugins=(vi-mode)
@@ -88,8 +84,7 @@ _gt_yargs_completions()
 compdef _gt_yargs_completions gt
 ###-end-gt-completions-###
 
+export ATUIN_NOBIND="true"
 
 eval "$(atuin init zsh)"
-
-export PATH="$HOME/.yarn/bin:$HOME/.config/yarn/global/node_modules/.bin:$PATH"
-eval "$(atuin init zsh)"
+bindkey '^r' _atuin_search_widget
