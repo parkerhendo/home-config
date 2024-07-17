@@ -8,19 +8,27 @@
       url = "github:nix-community/home-manager";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    nix-index-database = {
+      url = "github:Mic92/nix-index-database";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { nixpkgs, home-manager, ... }: let
-    arch = "aarch64-darwin";
+  outputs = { nixpkgs, home-manager, nix-index-database, ... }: let
+    systems = "aarch64-darwin";
+    forAllSystems = nixpkgs.lib.genAttrs systems;
   in {
-    defaultPackage.${arch} =
-      home-manager.defaultPackage.${arch};
+    formatter = forAllSystems (system: nixpkgs.${system}.nixfmt);
+
+    defaultPackage.aarch64-darwin =
+      home-manager.defaultPackage.aarch64-darwin;
 
     homeConfigurations."parkerhenderson@phendo" =
       home-manager.lib.homeManagerConfiguration {
-        pkgs = nixpkgs.legacyPackages.${arch};
+        pkgs = nixpkgs.legacyPackages.aarch64-darwin;
 
-        modules = [ ./phendo.nix ];
+        modules = [ ./phendo.nix nix-index-database.hmModules.nix-index ];
       };
   };
 }
