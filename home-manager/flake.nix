@@ -24,11 +24,21 @@
     defaultPackage.aarch64-darwin =
       home-manager.defaultPackage.aarch64-darwin;
 
-    homeConfigurations."parkerhenderson@phendo" =
+    homeConfigurations = {
+      "parkerhenderson@phendo" =
       home-manager.lib.homeManagerConfiguration {
         pkgs = nixpkgs.legacyPackages.aarch64-darwin;
 
         modules = [ ./phendo.nix nix-index-database.hmModules.nix-index ];
       };
+
+      "parker@redwood" =
+      home-manager.lib.homeManagerConfiguration {
+        pkgs = nixpkgs.legacyPackages.aarch64-darwin;
+
+        modules = [ ./redwood.nix nix-index-database.hmModules.nix-index ];
+      };
+
+    }
   };
 }
