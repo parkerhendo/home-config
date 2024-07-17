@@ -30,5 +30,11 @@ defaults write com.apple.screencapture location ~/Documents/Dropbox/Screenshots/
 # name screenshots as Screenshot...
 defaults write com.apple.screencapture name "Screenshot"
 
+# Disable audible chime when plugged in
+defaults write com.apple.PowerChime ChimeOnNoHardware -bool true && killall PowerChime
+
+# Force sub-pixel anti-aliasing
+defaults -currentHost write -g AppleFontSmoothing -int 0
+
 echo "$(tput setaf 1)done, note that some of these changes require app restart or logout to take effect...$(tput sgr0)"
 

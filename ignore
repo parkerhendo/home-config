@@ -1,0 +1,7 @@
+# ignore file for rg
+
+node_modules/
+*.map
+.git/
+assets/
+dist/

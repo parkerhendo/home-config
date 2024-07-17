@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+PACKAGES=(
+  neovim
+  npm-check-updates
+  prettier
+)
+
+npm install -g "${PACKAGES[@]}"

@@ -19,6 +19,7 @@
     pkgs.rustup
     pkgs.tmux
     pkgs.tree
+    pkgs.yabai
   ];
 
   programs.git = {
