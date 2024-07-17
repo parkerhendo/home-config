@@ -30,8 +30,10 @@ return packer.startup(function(use)
   -- Let packer manage itself
   use("wbthomason/packer.nvim")
 
-  -- Personal fork of nord.nvim
-  use("parkerhendo/nord.nvim")
+	-- transparent bg
+	use({ "xiyaowong/transparent.nvim", cmd = "TransparentEnable" })
+	-- Dark theme (Personal fork of nord.nvim)
+	use("parkerhendo/nord.nvim")
 
   -- file tree
   use({
@@ -47,14 +49,14 @@ return packer.startup(function(use)
     requires = { "nvim-tree/nvim-web-devicons", opt = true },
   })
 
-  -- Install treesitter for better syntax highlighting
-  use({
-    "nvim-treesitter/nvim-treesitter",
-    cmd = "TSUpdate",
-    run = function()
-      require("nvim-treesitter.install").update({ with_sync = true })
-    end,
-  })
+	-- Install treesitter for better syntax highlighting
+	use({
+		"nvim-treesitter/nvim-treesitter",
+		cmd = "TSUpdate",
+		run = function()
+			require("nvim-treesitter.install").update({ with_sync = true })
+		end,
+	})
 
   -- Additional text objects for treesitter
   use({

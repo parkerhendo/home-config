@@ -14,9 +14,8 @@ yabai -m config window_gap                                      8
 
 yabai -m config layout                                          bsp
 yabai -m config mouse_follows_focus                             off
-yabai -m config focus_follows_mouse                             on
+yabai -m config focus_follows_mouse                             off
 yabai -m config window_placement                                second_child
-yabai -m config window_topmost                                  off
 yabai -m config split_ratio                                     0.60
 yabai -m config auto_balance                                    on
 yabai -m config mouse_modifier                                  ctrl
@@ -31,12 +30,13 @@ yabai -m rule --add app="Preview"                               manage=off
 yabai -m rule --add app="zoom.us"                               manage=off
 yabai -m rule --add app="Spotify"                               manage=off
 yabai -m rule --add app="CleanShot X"                           manage=off
-# yabai -m rule --add app="Tana"                                  manage=off
 yabai -m rule --add app="Loom"                                  manage=off
 yabai -m rule --add app="iTerm"                                 space=^1
 yabai -m rule --add app="Arc"                                   space=^2
 yabai -m rule --add app="Slack"                                 space=^3
 yabai -m rule --add app="Superhuman"                            space=^3
+yabai -m rule --add app="Texts"                                 space=^3
+yabai -m rule --add app="Obsidian"                              space=^3
 yabai -m rule --add app="Figma Beta"                            space=^4
 
 yabai -m space 2 --layout stack

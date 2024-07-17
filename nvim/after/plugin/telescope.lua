@@ -1,5 +1,5 @@
 local telescope = require("telescope")
-local actions = require('telescope.actions')
+local actions = require("telescope.actions")
 local trouble = require("trouble.providers.telescope")
 
 require("telescope").setup({
@@ -11,25 +11,25 @@ require("telescope").setup({
 				["<C-t>"] = trouble.open_with_trouble,
 				["<C-q>"] = actions.send_selected_to_qflist + actions.open_qflist,
 				["<C-x>"] = actions.delete_buffer,
-        ["<esc>"] = actions.close
+				["<esc>"] = actions.close,
 			},
-      n = {
-        ["<c-t>"] = trouble.open_with_trouble,
-        ["q"] = actions.close
-      }
+			n = {
+				["<c-t>"] = trouble.open_with_trouble,
+				["q"] = actions.close,
+			},
 		},
-    pickers = {
-      find_files = {
-        theme = "dropdown",
-      },
-      buffers = {
-        theme = "dropdown",
-        sort_lastused = true
-      },
-      live_grep = {
-        theme = "dropdown",
-      }
-    },
+		pickers = {
+			find_files = {
+				theme = "dropdown",
+			},
+			buffers = {
+				theme = "dropdown",
+				sort_lastused = true,
+			},
+			live_grep = {
+				theme = "dropdown",
+			},
+		},
 		file_ignore_patterns = {
 			"node_modules",
 			"yarn.lock",
