@@ -1,4 +1,4 @@
-export ZSH="/Users/parkerhenderson/.oh-my-zsh"
+ZSH="/Users/parkerhenderson/.oh-my-zsh"
 
 ZSH_THEME="robbyrussell"
 
@@ -14,9 +14,6 @@ alias tailscale="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 export EDITOR="/opt/homebrew/bin/nvim"
 export VISUAL="/opt/homebrew/bin/nvim"
 
-eval "$(atuin init zsh)"
-bindkey '^r' _atuin_search_widget
-
 # Paths
 export NINJA_DIR=$HOME/ninja/ninja
 export PATH=$PATH:$NINJA_DIR
@@ -26,7 +23,6 @@ export PATH=$PATH:"/User/parkerhenderson/.rustup/toolchains/stable-aarch64-apple
 export PATH="/Applications/CMake.app/Contents/bin":"$PATH"
 export FLYCTL_INSTALL="/Users/parkerhenderson/.fly"
 export PATH="$FLYCTL_INSTALL/bin:$PATH"
-<<<<<<< HEAD
 export PATH="/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH"
 export PATH="$HOME/.yarn/bin:$HOME/.config/yarn/global/node_modules/.bin:$PATH"
 
@@ -62,6 +58,11 @@ export PATH="$WASMTIME_HOME/bin:$PATH"
 
 [ -f "/Users/parkerhenderson/.ghcup/env" ] && source "/Users/parkerhenderson/.ghcup/env" # ghcup-env
 
+export ATUIN_NOBIND="true"
+eval "$(atuin init zsh)"
+bindkey '^r' _atuin_search_widget
+
+
 # opam configuration
 [[ ! -r /Users/parkerhenderson/.opam/opam-init/init.zsh ]] || source /Users/parkerhenderson/.opam/opam-init/init.zsh  > /dev/null 2> /dev/null
 export PATH="/Users/parkerhenderson/.local/bin:$PATH"
@@ -71,3 +72,9 @@ umask 022
 export PYENV_ROOT="$HOME/.pyenv"
 [[ -d $PYENV_ROOT/bin ]] && export PATH="$PYENV_ROOT/bin:$PATH"
 eval "$(pyenv init -)"
+
+# Nix
+if [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
+  . '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
+fi
+# End Nix
