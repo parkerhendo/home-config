@@ -38,7 +38,6 @@
 
         modules = [ ./redwood.nix nix-index-database.hmModules.nix-index ];
       };
-
-    }
+    };
   };
 }

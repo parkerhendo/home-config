@@ -1,25 +1,13 @@
-{ pkgs, ... }: {
+let
+  commons = import ./commons.nix;
+in { pkgs, ... }: {
   home.username = "parkerhenderson";
   home.homeDirectory = "/Users/parkerhenderson";
   home.stateVersion = "22.11";
 
-  home.packages = [
-    pkgs.bat
-    pkgs.coreutils
-    pkgs.darwin.trash
-    pkgs.fd
-    pkgs.ffmpeg
-    pkgs.fzf
-    pkgs.gh
-    pkgs.git
-    pkgs.neovim
-    pkgs.nixfmt
-    pkgs.parallel
-    pkgs.ripgrep
+  home.packages = with commons; [
     pkgs.rustup
-    pkgs.tmux
-    pkgs.tree
-    pkgs.yabai
+    pkgs.atuin
   ];
 
   programs.git = {

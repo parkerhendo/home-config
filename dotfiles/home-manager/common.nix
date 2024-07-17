@@ -1,0 +1,19 @@
+{
+  commonPackages = [
+    pkgs.atuin
+    pkgs.bat
+    pkgs.coreutils
+    pkgs.darwin.trash
+    pkgs.fd
+    pkgs.ffmpeg
+    pkgs.fzf
+    pkgs.gh
+    pkgs.git
+    pkgs.neovim
+    pkgs.nixfmt
+    pkgs.ripgrep
+    pkgs.tmux
+    pkgs.tree
+    pkgs.yabai
+  ]
+}

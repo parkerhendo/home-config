@@ -59,6 +59,7 @@ export PATH="$WASMTIME_HOME/bin:$PATH"
 [ -f "/Users/parkerhenderson/.ghcup/env" ] && source "/Users/parkerhenderson/.ghcup/env" # ghcup-env
 
 export ATUIN_NOBIND="true"
+ATUIN_CONFIG_DIR="~/.config/atuin"
 eval "$(atuin init zsh)"
 bindkey '^r' _atuin_search_widget
 
