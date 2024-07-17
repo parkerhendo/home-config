@@ -14,6 +14,8 @@ alias tailscale="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 export EDITOR="/opt/homebrew/bin/nvim"
 export VISUAL="/opt/homebrew/bin/nvim"
 
+eval "$(atuin init zsh)"
+bindkey '^r' _atuin_search_widget
 
 # Paths
 export NINJA_DIR=$HOME/ninja/ninja
@@ -24,8 +26,9 @@ export PATH=$PATH:"/User/parkerhenderson/.rustup/toolchains/stable-aarch64-apple
 export PATH="/Applications/CMake.app/Contents/bin":"$PATH"
 export FLYCTL_INSTALL="/Users/parkerhenderson/.fly"
 export PATH="$FLYCTL_INSTALL/bin:$PATH"
-
-eval $(thefuck --alias)
+<<<<<<< HEAD
+export PATH="/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH"
+export PATH="$HOME/.yarn/bin:$HOME/.config/yarn/global/node_modules/.bin:$PATH"
 
 # plugins
 plugins=(vi-mode)
@@ -63,5 +66,8 @@ export PATH="$WASMTIME_HOME/bin:$PATH"
 [[ ! -r /Users/parkerhenderson/.opam/opam-init/init.zsh ]] || source /Users/parkerhenderson/.opam/opam-init/init.zsh  > /dev/null 2> /dev/null
 export PATH="/Users/parkerhenderson/.local/bin:$PATH"
 umask 022
-export VOLTA_HOME="$HOME/.volta"
-export PATH="$VOLTA_HOME/bin:$PATH"
+
+# pyenv
+export PYENV_ROOT="$HOME/.pyenv"
+[[ -d $PYENV_ROOT/bin ]] && export PATH="$PYENV_ROOT/bin:$PATH"
+eval "$(pyenv init -)"

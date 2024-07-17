@@ -53,7 +53,3 @@ alt + ctrl + cmd + shift - s    : yabai -m space --layout stack
 
 # Navigating stacks
 alt + ctrl + cmd - a            : yabai -m window --stack recent;
-
-# app specific
-alt + ctrl + shift - n         : open -a "Logseq"
-alt + ctrl + shift - m         : open -a "Things3"

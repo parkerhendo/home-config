@@ -1,0 +1,9 @@
+-- require("ccc").setup({
+-- 	-- Your preferred settings
+-- 	-- Example: enable highlighter
+-- 	highlight_mode = "gutter",
+-- 	highlighter = {
+-- 		auto_enable = true,
+-- 		lsp = true,
+-- 	},
+-- })
