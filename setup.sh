@@ -18,16 +18,16 @@ fi
 
 touch ~/.hushlogin
 
-ln -si "$DOTFILE_DIR"/atuin/config.toml ~/.config/atuin/config.toml
+ln -sni "$DOTFILE_DIR"/atuin/config.toml ~/.config/atuin/config.toml
 ln -si "$DOTFILE_DIR"/dircolors ~/.dircolors
-ln -si "$DOTFILE_DIR"/gitconfig ~/.gitconfig
-ln -si "$DOTFILE_DIR"/gitignore_global ~/.gitignore_global
+ln -si "$DOTFILE_DIR"/git/gitconfig ~/.gitconfig
+ln -si "$DOTFILE_DIR"/gitconfig/gitignore_global ~/.gitignore_global
 ln -si "$DOTFILE_DIR"/ignore ~/.ignore
 ln -si "$DOTFILE_DIR"/tmux.conf ~/.tmux.conf
-ln -si "$DOTFILE_DIR"/vim ~/.vim
-ln -si "$DOTFILE_DIR"/nvim ~/.config/nvim
+ln -sni "$DOTFILE_DIR"/vim ~/.vim
+ln -sni "$DOTFILE_DIR"/nvim ~/.config/nvim
 ln -si "$DOTFILE_DIR"/zprofile ~/.zprofile
-ln -si "$DOTFILE_DIR"/zsh ~/.zsh
+ln -sni "$DOTFILE_DIR"/zsh ~/.zsh
 ln -si "$DOTFILE_DIR"/zshrc ~/.zshrc
 ln -si "$DOTFILE_DIR"/yabai/yabairc ~/.yabairc
 ln -si "$DOTFILE_DIR"/skhd/skhdrc ~/.skhdrc
@@ -35,7 +35,7 @@ ln -si "$DOTFILE_DIR"/skhd/skhdrc ~/.skhdrc
 ln -si "$(pwd)"/scripts ~/.bin
 
 if [[ $HOSTNAME == "phendo" ]]; then
-  ln -si "$DOTFILE_DIR"/hammerspoon ~/.hammerspoon
+  ln -sni "$DOTFILE_DIR"/hammerspoon ~/.hammerspoon
 
   askBeforeRunning ./scripts/setup-osx
 fi

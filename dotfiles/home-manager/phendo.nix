@@ -8,6 +8,7 @@ in { pkgs, ... }: {
   home.packages = with commons; [
     pkgs.rustup
     pkgs.atuin
+    pkgs.nodejs_20
   ];
 
   programs.git = {
