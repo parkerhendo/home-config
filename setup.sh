@@ -9,7 +9,7 @@ function askBeforeRunning() {
   fi
 }
 
-DOTFILE_DIR="$(pwd)"
+DOTFILE_DIR="$(pwd)/dotfiles"
 HOSTNAME="$(hostname -s)"
 
 if [ ! -d ~/.config ]; then
@@ -18,28 +18,29 @@ fi
 
 touch ~/.hushlogin
 
+ln -si "$DOTFILE_DIR"/atuin/config.toml ~/.config/atuin/config.toml
 ln -si "$DOTFILE_DIR"/dircolors ~/.dircolors
 ln -si "$DOTFILE_DIR"/gitconfig ~/.gitconfig
 ln -si "$DOTFILE_DIR"/gitignore_global ~/.gitignore_global
 ln -si "$DOTFILE_DIR"/ignore ~/.ignore
 ln -si "$DOTFILE_DIR"/tmux.conf ~/.tmux.conf
 ln -si "$DOTFILE_DIR"/vim ~/.vim
-ln -si "$DOTFILE_DIR"/vim ~/.config/nvim
+ln -si "$DOTFILE_DIR"/nvim ~/.config/nvim
 ln -si "$DOTFILE_DIR"/zprofile ~/.zprofile
 ln -si "$DOTFILE_DIR"/zsh ~/.zsh
 ln -si "$DOTFILE_DIR"/zshrc ~/.zshrc
+ln -si "$DOTFILE_DIR"/yabai/yabairc ~/.yabairc
+ln -si "$DOTFILE_DIR"/skhd/skhdrc ~/.skhdrc
 
 ln -si "$(pwd)"/scripts ~/.bin
 
 if [[ $HOSTNAME == "phendo" ]]; then
   ln -si "$DOTFILE_DIR"/hammerspoon ~/.hammerspoon
 
-  askBeforeRunning ./launchctls/reinstall-launchctls.sh
-  askBeforeRunning ./terminfos/generate-terminfos.sh
   askBeforeRunning ./scripts/setup-osx
 fi
 
-if [ -d ~/.config/nvim/ ]; then
+if [ -d ~/.local/share/nvim/site/pack/packer/start/packer.nvim ]; then
   echo
   git clone --depth 1 https://github.com/wbthomason/packer.nvim\
  ~/.local/share/nvim/site/pack/packer/start/packer.nvim
