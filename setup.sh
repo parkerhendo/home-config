@@ -31,7 +31,6 @@ ln -sni "$DOTFILE_DIR"/zsh ~/.zsh
 ln -si "$DOTFILE_DIR"/zshrc ~/.zshrc
 ln -si "$DOTFILE_DIR"/yabai/yabairc ~/.yabairc
 ln -si "$DOTFILE_DIR"/skhd/skhdrc ~/.skhdrc
-
 ln -si "$(pwd)"/scripts ~/.bin
 
 if [[ $HOSTNAME == "phendo" ]]; then

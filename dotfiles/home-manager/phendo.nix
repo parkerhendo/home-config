@@ -8,17 +8,22 @@
     pkgs.bat
     pkgs.coreutils
     pkgs.darwin.trash
+    pkgs.docker
     pkgs.fd
     pkgs.ffmpeg
     pkgs.fzf
     pkgs.gh
     pkgs.git
+    pkgs.go
+    pkgs.btop
     pkgs.lazygit
     pkgs.neovim
     pkgs.nixfmt
     pkgs.nodejs_20
+    pkgs.python312
     pkgs.ripgrep
     pkgs.rustup
+    pkgs.skhd
     pkgs.tmux
     pkgs.tree
     pkgs.yabai
