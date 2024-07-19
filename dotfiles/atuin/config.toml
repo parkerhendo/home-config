@@ -1,5 +1,0 @@
-keymap_mode = "vim-normal"
-filter_mode = "directory"
-style = "compact"
-invert = false
-enter_accept = true

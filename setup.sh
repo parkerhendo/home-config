@@ -18,16 +18,14 @@ fi
 
 touch ~/.hushlogin
 
-ln -sni "$DOTFILE_DIR"/atuin/config.toml ~/.config/atuin/config.toml
 ln -si "$DOTFILE_DIR"/dircolors ~/.dircolors
 ln -si "$DOTFILE_DIR"/git/gitconfig ~/.gitconfig
 ln -si "$DOTFILE_DIR"/gitconfig/gitignore_global ~/.gitignore_global
 ln -si "$DOTFILE_DIR"/ignore ~/.ignore
 ln -si "$DOTFILE_DIR"/tmux.conf ~/.tmux.conf
-ln -sni "$DOTFILE_DIR"/vim ~/.vim
-ln -sni "$DOTFILE_DIR"/nvim ~/.config/nvim
+ln -si "$DOTFILE_DIR"/nvim ~/.config/nvim
 ln -si "$DOTFILE_DIR"/zprofile ~/.zprofile
-ln -sni "$DOTFILE_DIR"/zsh ~/.zsh
+ln -si "$DOTFILE_DIR"/zsh ~/.zsh
 ln -si "$DOTFILE_DIR"/zshrc ~/.zshrc
 ln -si "$DOTFILE_DIR"/yabai/yabairc ~/.yabairc
 ln -si "$DOTFILE_DIR"/skhd/skhdrc ~/.skhdrc
@@ -55,6 +53,7 @@ if [ -d ~/.zsh/ ]; then
   git clone https://github.com/hlissner/zsh-autopair
   git clone https://github.com/romkatv/gitstatus
   git clone https://github.com/zdharma-continuum/fast-syntax-highlighting
+  git clone https://github.com/softmoth/zsh-vim-mode
   git clone https://github.com/romkatv/zsh-defer
 
   popd > /dev/null || exit;
@@ -63,7 +62,6 @@ fi
 if [ -d ~/.config/nix/ ]; then
   echo "Would you like to install Nix?"
   askBeforeRunning curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
-  source ~/.zshrc
   echo "Nix Installed!!"
 else
   echo "Nix is already installed!"

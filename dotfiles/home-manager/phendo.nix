@@ -3,30 +3,29 @@
   home.homeDirectory = "/Users/parkerhenderson";
   home.stateVersion = "22.11";
 
-  home.packages = [
-    pkgs.atuin
-    pkgs.bat
-    pkgs.coreutils
-    pkgs.darwin.trash
-    pkgs.docker
-    pkgs.fd
-    pkgs.ffmpeg
-    pkgs.fzf
-    pkgs.gh
-    pkgs.git
-    pkgs.go
-    pkgs.btop
-    pkgs.lazygit
-    pkgs.neovim
-    pkgs.nixfmt
-    pkgs.nodejs_20
-    pkgs.python312
-    pkgs.ripgrep
-    pkgs.rustup
-    pkgs.skhd
-    pkgs.tmux
-    pkgs.tree
-    pkgs.yabai
+  home.packages = with pkgs; [
+    bat
+    coreutils
+    darwin.trash
+    docker
+    fd
+    ffmpeg
+    fzf
+    gh
+    git
+    go
+    btop
+    lazygit
+    neovim
+    nixfmt
+    nodejs_20
+    python312
+    ripgrep
+    rustup
+    skhd
+    tmux
+    tree
+    yabai
   ];
 
   programs.git = {
