@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # simple interactive mac cleanup script
 
 read -p "$(tput setaf 3)Clean packager caches?$(tput sgr0) (y/n) " RESP

@@ -122,6 +122,7 @@ null_ls.setup({
 		formatting.prettier,
 		formatting.stylua,
 		formatting.ocamlformat,
+		diagnostics.vale,
 
 		-- diagnostics
 		diagnostics.eslint_d.with({

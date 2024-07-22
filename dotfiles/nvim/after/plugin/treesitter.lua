@@ -1,4 +1,7 @@
 require("nvim-treesitter.configs").setup({
+	modules = {},
+	auto_install = true,
+	ignore_install = {},
 	ensure_installed = {
 		"c",
 		"lua",
@@ -8,14 +11,8 @@ require("nvim-treesitter.configs").setup({
 		"tsx",
 		"html",
 		"css",
-		"prisma",
 		"markdown",
-		"ocaml",
-		"ocaml_interface",
 		"rust",
-		"yaml",
-		"vim",
-		"graphql",
 		"bash",
 	},
 	sync_install = false,

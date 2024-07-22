@@ -23,6 +23,7 @@ ln -si "$DOTFILE_DIR"/git/gitconfig ~/.gitconfig
 ln -si "$DOTFILE_DIR"/gitconfig/gitignore_global ~/.gitignore_global
 ln -si "$DOTFILE_DIR"/ignore ~/.ignore
 ln -si "$DOTFILE_DIR"/tmux.conf ~/.tmux.conf
+ln -si "$DOTFILE_DIR"/vale.ini ~/.vale.ini
 ln -si "$DOTFILE_DIR"/nvim ~/.config/nvim
 ln -si "$DOTFILE_DIR"/zprofile ~/.zprofile
 ln -si "$DOTFILE_DIR"/zsh ~/.zsh
@@ -31,7 +32,7 @@ ln -si "$DOTFILE_DIR"/yabai/yabairc ~/.yabairc
 ln -si "$DOTFILE_DIR"/skhd/skhdrc ~/.skhdrc
 ln -si "$(pwd)"/scripts ~/.bin
 
-if [[ $HOSTNAME == "phendo" ]]; then
+if [[ $HOSTNAME == "phendo" ]] || [[ $HOSTNAME == "redwood" ]] || [[ $HOSTNAME == "railway" ]]; then
   ln -sni "$DOTFILE_DIR"/hammerspoon ~/.hammerspoon
 
   askBeforeRunning ./scripts/setup-osx
