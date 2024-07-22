@@ -1,0 +1,34 @@
+if [ -f ~/.zsh/plugins/zsh-defer/zsh-defer.plugin.zsh ]; then
+  source ~/.zsh/plugins/zsh-defer/zsh-defer.plugin.zsh
+else
+  echo "zsh-defer is missing! run \`setup.sh\`"
+  echo "you'll get some errors below..."
+  echo
+fi
+
+files=(
+  aliases
+  bindkeys
+  colors
+  completion
+  functions
+  history
+  locale
+  options
+  plugins
+  prompt
+)
+
+for file in $files; do
+  source ~/.zsh/$file.zsh
+done
+
+autoload edit-command-line
+zle -N edit-command-line
+bindkey '^Xe' edit-command-line
+
+# Nix
+if [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
+  . '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
+fi
+# End Nix

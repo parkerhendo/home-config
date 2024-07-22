@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+echo "Please enter your name:"
+read -r name
+
+# set computer name
+sudo scutil --set ComputerName "$name"
+dscacheutil -flushcache

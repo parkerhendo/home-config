@@ -1,0 +1,9 @@
+export NINJA_DIR=$HOME/ninja/ninja
+export PATH=$PATH:$NINJA_DIR
+export CKIT_DIR=$HOME/ckit
+export PATH=$PATH:$CKIT_DIR/bin
+export PATH=$PATH:"/User/parkerhenderson/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rust-analyzer"
+export PATH="/Applications/CMake.app/Contents/bin":"$PATH"
+export FLYCTL_INSTALL="/Users/parkerhenderson/.fly"
+export PATH="$FLYCTL_INSTALL/bin:$PATH"
+export PATH="$HOME/.yarn/bin:$HOME/.config/yarn/global/node_modules/.bin:$PATH"

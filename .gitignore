@@ -1,3 +1,9 @@
-/.nvm/
+# OSX
+.DS_Store
 
+# ZSH
+**/zsh/**.zsh.zwc
+**/zsh/plugins
+
+# NVIM
 packer_compiled.lua
