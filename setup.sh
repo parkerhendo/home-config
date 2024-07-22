@@ -60,13 +60,9 @@ if [ -d ~/.zsh/ ]; then
   popd > /dev/null || exit;
 fi
 
-if [ -d ~/.config/nix/ ]; then
-  echo "Would you like to install Nix?"
-  askBeforeRunning curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
-  echo "Nix Installed!!"
-else
-  echo "Nix is already installed!"
-fi
+echo "Would you like to install Nix?"
+askBeforeRunning curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
+echo "Nix Installed!!"
 
 if command -v nix &> /dev/null; then
   read -p "$(tput setaf 3)Do you want to set up home-manager?$(tput sgr0) (y/n) " RESP
