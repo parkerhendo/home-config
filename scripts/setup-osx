@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# dark dock with light windows
+defaults write -g NSRequiresAquaSystemAppearance -bool Yes
+
 # disable the "accents" menu on keyboard key held
 defaults write NSGlobalDomain ApplePressAndHoldEnabled -bool false
 
