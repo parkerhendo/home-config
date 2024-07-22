@@ -38,6 +38,13 @@
 
         modules = [ ./redwood.nix nix-index-database.hmModules.nix-index ];
       };
+
+      "parker@railway" =
+      home-manager.lib.homeManagerConfiguration {
+        pkgs = nixpkgs.legacyPackages.aarch64-darwin;
+
+        modules = [ ./railway.nix nix-index-database.hmModules.nix-index ];
+      };
     };
   };
 }
