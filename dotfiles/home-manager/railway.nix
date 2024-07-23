@@ -3,23 +3,25 @@
   home.homeDirectory = "/Users/parker";
   home.stateVersion = "22.11";
 
-  home.packages = [
-    pkgs.bat
-    pkgs.coreutils
-    pkgs.darwin.trash
-    pkgs.fd
-    pkgs.ffmpeg
-    pkgs.fzf
-    pkgs.gh
-    pkgs.git
-    pkgs.neovim
-    pkgs.nixfmt
-    pkgs.parallel
-    pkgs.ripgrep
-    pkgs.rustup
-    pkgs.tmux
-    pkgs.tree
-    pkgs.yabai
+  home.packages = with pkgs; [
+    bat
+    coreutils
+    darwin.trash
+    fd
+    ffmpeg
+    fzf
+    gh
+    git
+    lazygit
+    neovim
+    nixfmt
+    parallel
+    ripgrep
+    rustup
+    tmux
+    tree
+    yabai
+    skhd
   ];
 
   programs.git = {

@@ -2,16 +2,20 @@
   name = Parker Henderson
   email = parker@parkerhendo.com
 
+[core]
+  quotepath = false
+  pager = less -x2
+  safecrlf = false
+  excludefile = /User/parkerhenderson/.gitignore_global
+  editor = "nvim"
+
 [include]
   path = /Users/parkerhenderson/.gitalias.txt
 
 [push]
   default = current
-
-[core]
-  pager = delta
-  excludefile = /User/parkerhenderson/.gitignore_global
-  editor = "nvim"
+  autoSetupRemote = true
+  followTags = true
 
 [interactive]
   diffFilter = delta --color-only

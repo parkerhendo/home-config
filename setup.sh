@@ -20,6 +20,7 @@ touch ~/.hushlogin
 
 ln -si "$DOTFILE_DIR"/dircolors ~/.dircolors
 ln -si "$DOTFILE_DIR"/git/gitconfig ~/.gitconfig
+ln -si "$DOTFILE_DIR"/git/gitalias.txt ~/.gitalias.txt
 ln -si "$DOTFILE_DIR"/gitconfig/gitignore_global ~/.gitignore_global
 ln -si "$DOTFILE_DIR"/ignore ~/.ignore
 ln -si "$DOTFILE_DIR"/tmux.conf ~/.tmux.conf
@@ -60,10 +61,6 @@ if [ -d ~/.zsh/ ]; then
   popd > /dev/null || exit;
 fi
 
-echo "Would you like to install Nix?"
-askBeforeRunning curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
-echo "Nix Installed!!"
-
 if command -v nix &> /dev/null; then
   read -p "$(tput setaf 3)Do you want to set up home-manager?$(tput sgr0) (y/n) " RESP
 
@@ -75,6 +72,8 @@ if command -v nix &> /dev/null; then
       nix run home-manager -- switch --flake .#parkerhenderson@phendo
     elif [[ $HOSTNAME == "redwood" ]]; then
       nix run home-manager -- switch --flake .#parker@redwood
+    elif [[ $HOSTNAME == "railway" ]]; then
+      nix run home-manager -- switch --flake .#parker@railway
     else
       echo
       echo "No home-manager configuration found for this machine!"
