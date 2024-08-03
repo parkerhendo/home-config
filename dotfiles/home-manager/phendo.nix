@@ -26,6 +26,7 @@
     tmux
     tree
     yabai
+    wifi-password
   ];
 
   programs.git = {
