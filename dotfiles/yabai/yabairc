@@ -33,6 +33,8 @@ yabai -m rule --add app="CleanShot X"                           manage=off
 yabai -m rule --add app="Loom"                                  manage=off
 yabai -m rule --add app="iTerm"                                 space=^1
 yabai -m rule --add app="Arc"                                   space=^2
+yabai -m rule --add app="Linear"                                space=^2
+yabai -m rule --add app="Discord"                               space=^3
 yabai -m rule --add app="Slack"                                 space=^3
 yabai -m rule --add app="Superhuman"                            space=^3
 yabai -m rule --add app="Texts"                                 space=^3
