@@ -14,19 +14,19 @@ function gitUpdate {
   fi
 }
 
-if [[ $(hostname -s) == "Orchid" ]]; then
+if [[ $(hostname -s) == "railway" ]]; then
   echo -e "$(tput setaf 2)Checking Nix...$(tput sgr0)"
   pushd ~/.config/home-manager > /dev/null || return
   nix flake update
-  home-manager switch --flake .#szymon@orchid
+  home-manager switch --flake .#parker@railway
   echo
   popd > /dev/null || return
 fi
 
-if [[ $(hostname -s) == "szymon-vm" ]]; then
+if [[ $(hostname -s) == "phendo" ]]; then
   echo -e "$(tput setaf 2)Checking Nix...$(tput sgr0)"
   pushd ~/.config/home-manager > /dev/null || return
-  nix run home-manager -- switch --flake .#szymon@devvm
+  nix run home-manager -- switch --flake .#parkerhenderson@phendo
   echo
   popd > /dev/null || return
 fi
