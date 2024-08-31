@@ -3,6 +3,9 @@ alias ll="LC_COLLATE=C ls --color=auto --group-directories-first --classify --hu
 alias la="LC_COLLATE=C ls --color=auto --group-directories-first --classify --human-readable --time-style=long-iso -l --almost-all"
 alias lt="LC_COLLATE=C ls --color=auto --group-directories-first --classify --human-readable --time-style=long-iso -l --almost-all -t --reverse"
 
+alias lg="lazygit"
+alias g="git"
+
 alias rm="rm -iv"
 alias mv="mv -iv"
 alias cp="cp -iv -a"
