@@ -1,2 +1,4 @@
 source ~/.zsh/exports.zsh
 source ~/.zsh/path.zsh
+
+eval "$(/opt/homebrew/bin/brew shellenv)"
