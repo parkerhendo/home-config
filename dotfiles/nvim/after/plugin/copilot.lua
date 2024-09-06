@@ -1,11 +1,11 @@
-require("copilot").setup({
-	suggestion = {
-		auto_trigger = true,
-		keymap = {
-			accept = "<M-/>",
-			-- I don't love this mapping, but for some reason
-			-- iterm overrides <C-/> which is dumb and annoying
-			dismiss = "<M-?>",
-		},
-	},
-})
+-- require("copilot").setup({
+-- 	suggestion = {
+-- 		auto_trigger = true,
+-- 		keymap = {
+-- 			accept = "<M-/>",
+-- 			-- I don't love this mapping, but for some reason
+-- 			-- iterm overrides <C-/> which is dumb and annoying
+-- 			dismiss = "<M-?>",
+-- 		},
+-- 	},
+-- })

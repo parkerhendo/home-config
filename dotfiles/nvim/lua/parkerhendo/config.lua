@@ -48,8 +48,6 @@ vim.cmd([[set mouse=a]])
 vim.cmd([[set invhlsearch]])
 vim.cmd([[lcd $PWD]])
 
-vim.cmd([[packadd packer.nvim]])
-
 local augroup = vim.api.nvim_create_augroup
 local autocmd = vim.api.nvim_create_autocmd
 
