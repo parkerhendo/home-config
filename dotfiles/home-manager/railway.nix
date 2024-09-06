@@ -5,6 +5,7 @@
 
   home.packages = with pkgs; [
     bat
+    btop
     coreutils
     darwin.trash
     fd
@@ -13,6 +14,8 @@
     gh
     git
     lazygit
+    nodejs_20
+    python312
     neovim
     nixfmt
     parallel
