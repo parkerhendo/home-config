@@ -1,9 +1,8 @@
 require("fidget").setup({
-	window = {
-		relative = "editor", -- where to anchor, either "win" or "editor"
-		blend = 0, -- &winblend for the window
-		zindex = 2, -- the zindex value for the window
-		border = "solid",
+	notification = {
+		window = {
+			winblend = 0,
+		},
 	},
 })
 

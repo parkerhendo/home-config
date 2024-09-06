@@ -1,5 +1,5 @@
 -- core files
-require("parkerhendo.packer")
+require("parkerhendo.lazy")
 require("parkerhendo.config")
 require("parkerhendo.keymaps")
 require("parkerhendo.keymap_utils")
