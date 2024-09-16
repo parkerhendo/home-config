@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-
+#something
 function askBeforeRunning() {
   SCRIPT=$1
 
