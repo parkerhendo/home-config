@@ -27,6 +27,7 @@
     tree
     yabai
     wifi-password
+    watchexec
   ];
 
   programs.git = {
