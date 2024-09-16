@@ -28,6 +28,7 @@
     yabai
     wifi-password
     watchexec
+    wezterm
   ];
 
   programs.git = {

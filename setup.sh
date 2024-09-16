@@ -31,6 +31,7 @@ ln -si "$DOTFILE_DIR"/zsh ~/.zsh
 ln -si "$DOTFILE_DIR"/zshrc ~/.zshrc
 ln -si "$DOTFILE_DIR"/yabai/yabairc ~/.yabairc
 ln -si "$DOTFILE_DIR"/skhd/skhdrc ~/.skhdrc
+ln -si "$DOTFILE_DIR"/wezterm/wezterm.lua ~/.wezterm.lua
 ln -si "$(pwd)"/scripts ~/.bin
 
 if [[ $HOSTNAME == "phendo" ]] || [[ $HOSTNAME == "redwood" ]] || [[ $HOSTNAME == "railway" ]]; then
