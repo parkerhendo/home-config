@@ -1,4 +1,3 @@
--- Pull in the wezterm API
 local wezterm = require("wezterm")
 local padding = 16
 local act = wezterm.action
@@ -10,6 +9,7 @@ return {
 		"BerkeleyMono Nerd Font Mono Plus Font Awesome Plus Font Awesome Extension Plus Octicons Plus Power Symbols Plus Codicons Plus Pomicons Plus Font Logos",
 		{ weight = 400, italics = false }
 	),
+	-- font = wezterm.font("MonoLisa Nerd Font Mono"),
 	scrollback_lines = 10000,
 	enable_tab_bar = false,
 	line_height = 1.05,
@@ -19,16 +19,14 @@ return {
 	window_close_confirmation = "NeverPrompt",
 	color_scheme = "Nord (Gogh)",
 	default_cursor_style = "BlinkingUnderline",
+	cursor_blink_rate = 900,
+	cursor_thickness = 1,
 	window_padding = {
 		left = padding,
 		right = padding,
 		top = padding,
 		bottom = padding,
 	},
-	initial_rows = 34,
-	initial_cols = 134,
-	pane_focus_follows_mouse = true,
-
 	keys = {
 		{ key = "k", mods = "CMD", action = act.ClearScrollback("ScrollbackAndViewport") },
 		{ key = "LeftArrow", mods = "CMD", action = act.SendKey({ key = "Home" }) },
