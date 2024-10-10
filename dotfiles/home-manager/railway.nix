@@ -19,6 +19,7 @@
     neovim
     nixfmt
     parallel
+    postgresql_16
     ripgrep
     rustup
     tmux
