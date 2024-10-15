@@ -17,6 +17,7 @@
     btop
     lazygit
     neovim
+    neofetch
     nixfmt
     nodejs_20
     python312

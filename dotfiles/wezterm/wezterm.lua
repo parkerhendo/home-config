@@ -2,42 +2,53 @@ local wezterm = require("wezterm")
 local padding = 16
 local act = wezterm.action
 
+---Return the suitable argument depending on the appearance
+---@param arg { light: any, dark: any } light and dark alternatives
+---@return any
+local function depending_on_appearance(arg)
+	local appearance = wezterm.gui.get_appearance()
+	if appearance:find("Dark") then
+		return arg.dark
+	else
+		return arg.light
+	end
+end
+
 return {
+	window_background_opacity = 0.6, -- hack to get the background color to match my custom nord theme...should probably fix properly with a custom theme at some point.
+	macos_window_background_blur = 100,
+	color_scheme = "nordfox",
 	front_end = "WebGpu",
 	font_size = 14,
 	font = wezterm.font(
 		"BerkeleyMono Nerd Font Mono Plus Font Awesome Plus Font Awesome Extension Plus Octicons Plus Power Symbols Plus Codicons Plus Pomicons Plus Font Logos",
-		{ weight = 400, italics = false }
+		{ weight = 400, italic = false }
 	),
-	-- font = wezterm.font("MonoLisa Nerd Font Mono"),
 	scrollback_lines = 10000,
 	enable_tab_bar = false,
 	line_height = 1.05,
 	audible_bell = "Disabled",
-	window_decorations = "RESIZE",
+	window_decorations = "RESIZE|TITLE",
+	pane_focus_follows_mouse = true,
 	adjust_window_size_when_changing_font_size = false,
 	window_close_confirmation = "NeverPrompt",
-	color_scheme = "Nord (Gogh)",
-	default_cursor_style = "BlinkingUnderline",
-	cursor_blink_rate = 900,
-	cursor_thickness = 1,
+	default_cursor_style = "BlinkingBlock",
+	cursor_blink_rate = 800,
+	cursor_thickness = 0.5,
 	window_padding = {
 		left = padding,
 		right = padding,
 		top = padding,
 		bottom = padding,
 	},
-	keys = {
-		{ key = "k", mods = "CMD", action = act.ClearScrollback("ScrollbackAndViewport") },
-		{ key = "LeftArrow", mods = "CMD", action = act.SendKey({ key = "Home" }) },
-		{ key = "RightArrow", mods = "CMD", action = act.SendKey({ key = "End" }) },
-		{ key = "LeftArrow", mods = "OPT", action = act.SendKey({ key = "b", mods = "ALT" }) },
-		{ key = "RightArrow", mods = "OPT", action = act.SendKey({ key = "f", mods = "ALT" }) },
-		{ key = "d", mods = "CMD", action = wezterm.action.SplitPane({ direction = "Down" }) },
-		{ key = "d", mods = "CMD|SHIFT", action = wezterm.action.SplitPane({ direction = "Right" }) },
-		{ key = "w", mods = "CMD", action = wezterm.action.CloseCurrentPane({ confirm = false }) },
-		{ key = "p", mods = "CMD|SHIFT", action = wezterm.action.ActivateCommandPalette },
-		{ key = "d", mods = "OPT", action = wezterm.action.ShowDebugOverlay },
-		{ key = "Enter", mods = "CMD", action = wezterm.action.TogglePaneZoomState },
+	use_fancy_tab_bar = true,
+	tab_max_width = 32,
+	colors = {
+		tab_bar = {
+			active_tab = depending_on_appearance({
+				light = { fg_color = "#f8f8f2", bg_color = "#209fb5" },
+				dark = { fg_color = "#6c7086", bg_color = "#74c7ec" },
+			}),
+		},
 	},
 }
