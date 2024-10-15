@@ -19,16 +19,61 @@ vim.opt.rtp:prepend(lazypath)
 
 require("lazy").setup({
 	spec = {
-		-- transparent bg
-		{ "xiyaowong/transparent.nvim", cmd = "TransparentEnable" },
-		-- Dark theme (Personal fork of nord.nvim)
-		{ "parkerhendo/nord.nvim" },
+		{
+			"jasonlong/poimandres.nvim",
+			lazy = false,
+			priority = 1000,
+			config = function()
+				require("poimandres").setup({
+					"jasonlong/poimandres.nvim",
+					name = "poimandres",
+					lazy = false,
+					opts = {
+						style = "storm",
+						transparent = true,
+					},
+				})
+			end,
+
+			-- optionally set the colorscheme within lazy config
+			init = function()
+				vim.cmd("colorscheme poimandres")
+			end,
+		},
 		-- file tree
 		{
 			"nvim-tree/nvim-tree.lua",
 			requires = {
 				"nvim-tree/nvim-web-devicons",
 			},
+			config = function()
+				require("lualine").setup({
+					options = {
+						component_separators = { left = "·" },
+					},
+					sections = {
+						lualine_a = { "mode" },
+						lualine_b = { "branch", "diff", "diagnostics" },
+						lualine_c = { { "filename", path = 1 } },
+						lualine_x = { "filetype" },
+						lualine_y = { "progress" },
+						lualine_z = { "location" },
+					},
+					inactive_sections = {
+						lualine_a = {},
+						lualine_b = {},
+						lualine_c = { { "filename", path = 1 } },
+						lualine_x = { "location" },
+						lualine_y = {},
+						lualine_z = {},
+					},
+				})
+			end,
+		},
+		{
+			"lukas-reineke/indent-blankline.nvim",
+			main = "ibl",
+			opts = {},
 		},
 		{
 			"nvim-lualine/lualine.nvim",
@@ -126,9 +171,10 @@ require("lazy").setup({
 
 		{ "lewis6991/gitsigns.nvim" },
 	},
+	{ import = "../plugins" },
 	-- Configure any other settings here. See the documentation for more details.
 	-- colorscheme that will be used when installing plugins.
-	install = { colorscheme = { "nord" } },
+	install = { colorscheme = { "poimandres" } },
 	-- automatically check for plugin updates
 	checker = { enabled = true },
 })
