@@ -6,11 +6,11 @@
   quotepath = false
   pager = less -x2
   safecrlf = false
-  excludefile = /User/parker/.gitignore_global
+  excludefile = ~/.gitignore_global
   editor = "nvim"
 
 [include]
-  path = /Users/parker/.gitalias.txt
+  path = ~/.gitalias.txt
 
 [push]
   default = current
