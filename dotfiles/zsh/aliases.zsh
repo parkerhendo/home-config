@@ -6,6 +6,17 @@ alias lt="LC_COLLATE=C ls --color=auto --group-directories-first --classify --hu
 alias lg="lazygit"
 alias g="git"
 
+# common git aliases
+alias co="git co"
+alias ga="git add"
+alias gaa="git add -A"
+alias gs="git status"
+alias gp="git pull"
+alias gpu="git push"
+alias gc="git commit"
+alias gd="git diff"
+
+
 alias rm="rm -iv"
 alias mv="mv -iv"
 alias cp="cp -iv -a"
