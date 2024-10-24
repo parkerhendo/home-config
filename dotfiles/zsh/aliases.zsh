@@ -7,7 +7,7 @@ alias lg="lazygit"
 alias g="git"
 
 # common git aliases
-alias co="git co"
+alias co="git checkout"
 alias ga="git add"
 alias gaa="git add -A"
 alias gs="git status"
