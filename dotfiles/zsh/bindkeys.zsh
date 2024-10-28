@@ -7,9 +7,9 @@ bindkey "^[[3~" delete-char
 bindkey "^[[5~" up-line-or-search
 bindkey "^[[6~" down-line-or-search
 
-bindkey "^r"    history-incremental-search-backward
-bindkey "^[[A"  history-beginning-search-backward
-bindkey "^[[B"  history-beginning-search-forward
+# bindkey "^r"    history-incremental-search-backward
+# bindkey "^[[A"  history-beginning-search-backward
+# bindkey "^[[B"  history-beginning-search-forward
 
 bindkey -M vicmd "L" end-of-line
 bindkey -M vicmd "H" beginning-of-line

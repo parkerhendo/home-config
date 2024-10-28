@@ -34,3 +34,4 @@ fi
 # End Nix
 eval "$(direnv hook zsh)"
 alias dev="/Users/parker/Developer/mono/dev"
+
