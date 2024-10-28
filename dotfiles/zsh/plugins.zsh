@@ -1,4 +1,12 @@
 # direnv
+load_atuin() {
+  if hash atuin > /dev/null; then
+    . "$HOME/.atuin/bin/env"
+    eval "$(atuin init zsh --disable-up-arrow)"
+  fi
+}
+
+# direnv
 load_direnv() {
   if hash direnv > /dev/null; then
     eval "$(direnv hook zsh)"
@@ -60,6 +68,7 @@ load_gitstatus() {
   setup_git_prompt_status
 }
 
+load_atuin # better shell history
 load_z # I often want to jump somewhere immediately when opening a shell
 load_direnv # same for direnv
 

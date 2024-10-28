@@ -4,6 +4,7 @@
   home.stateVersion = "22.11";
 
   home.packages = with pkgs; [
+    atuin
     bat
     coreutils
     darwin.trash
