@@ -18,6 +18,7 @@ fi
 
 touch ~/.hushlogin
 
+ln -si "$DOTFILE_DIR"/atuin ~/.config/atuin
 ln -si "$DOTFILE_DIR"/dircolors ~/.dircolors
 ln -si "$DOTFILE_DIR"/git/gitconfig ~/.gitconfig
 ln -si "$DOTFILE_DIR"/git/gitalias.txt ~/.gitalias.txt
