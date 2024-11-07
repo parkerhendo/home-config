@@ -83,8 +83,18 @@ vim.cmd([[colorscheme gruvbox]])
 function _theme_toggle()
   if vim.o.background == "dark" then
     vim.o.background = "light"
+    require("lualine").setup({
+      options = {
+        theme = "gruvbox_light",
+      }
+    })
   else
     vim.o.background = "dark"
+    require("lualine").setup({
+      options = {
+        theme = "gruvbox_dark",
+      }
+    })
   end
 end
 
