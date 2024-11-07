@@ -127,6 +127,7 @@ require("lazy").setup({
     { "akinsho/toggleterm.nvim" },
 
     { "lewis6991/gitsigns.nvim" },
+    { "almo7aya/openingh.nvim" },
     {
       'akinsho/git-conflict.nvim',
       version = "*",

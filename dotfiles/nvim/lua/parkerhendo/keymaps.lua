@@ -93,6 +93,8 @@ nnoremap("dp", "<cmd>lua vim.diagnostic.goto_next<cr>", { silent = true })
 
 -- Random, but helpful keymaps
 keymap("n", "<leader>X", "<cmd>!chmod +x %<CR>", { silent = true })
+keymap("n", "<leader>O", "<cmd>OpenInGHFileLines<CR>", { silent = true })
+keymap("n", "<leader>o", "<cmd>OpenInGHFile<CR>", { silent = true })
 
 -- LSP
 
