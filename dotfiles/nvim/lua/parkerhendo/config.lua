@@ -52,23 +52,23 @@ local augroup = vim.api.nvim_create_augroup
 local autocmd = vim.api.nvim_create_autocmd
 
 function R(name)
-	require("plenary.reload").reload_module(name)
+  require("plenary.reload").reload_module(name)
 end
 
 -- Set formatoptions on each file open since it'll get overwritten by other plugins
 vim.cmd([[autocmd FileType * setlocal formatoptions-=c formatoptions-=r formatoptions-=o ]])
 
 vim.opt.formatoptions = {
-	["1"] = true,
-	["2"] = true, -- Use indent from 2nd line of a paragraph
-	q = true, -- continue comments with gq"
-	c = false, -- Auto-wrap comments using textwidth
-	r = false, -- Continue comments when pressing Enter
-	n = true, -- Recognize numbered lists
-	t = false, -- autowrap lines using text width value
-	j = true, -- remove a comment leader when joining lines.
-	l = true,
-	v = true,
+  ["1"] = true,
+  ["2"] = true, -- Use indent from 2nd line of a paragraph
+  q = true,     -- continue comments with gq"
+  c = false,    -- Auto-wrap comments using textwidth
+  r = false,    -- Continue comments when pressing Enter
+  n = true,     -- Recognize numbered lists
+  t = false,    -- autowrap lines using text width value
+  j = true,     -- remove a comment leader when joining lines.
+  l = true,
+  v = true,
 }
 
 vim.cmd([[let g:blamer_enabled = 1]])
@@ -77,17 +77,34 @@ vim.cmd([[let g:blamer_show_in_visual_modes = 1]])
 vim.cmd([[let g:blamer_show_in_insert_modes = 0]])
 
 -- colors
-vim.g.nord_bold = false
-vim.g.nord_disable_background = true -- use iterm background color
-require("nord").set()
+vim.o.background = "dark" -- or "light" for light mode
+vim.cmd([[colorscheme gruvbox]])
+
+function _theme_toggle()
+  if vim.o.background == "dark" then
+    vim.o.background = "light"
+    require("lualine").setup({
+      options = {
+        theme = "gruvbox_light",
+      }
+    })
+  else
+    vim.o.background = "dark"
+    require("lualine").setup({
+      options = {
+        theme = "gruvbox_dark",
+      }
+    })
+  end
+end
 
 -- toggleterm
 require("toggleterm").setup({
-	shade_terminals = false,
+  shade_terminals = false,
 })
 local Terminal = require("toggleterm.terminal").Terminal
 local lazygit = Terminal:new({ cmd = "lazygit", hidden = true, direction = "float" })
 
 function _lazygit_toggle()
-	lazygit:toggle()
+  lazygit:toggle()
 end
