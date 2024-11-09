@@ -8,6 +8,7 @@ alias g="git"
 
 # common git aliases
 alias co="git checkout"
+alias nb="git checkout -b"
 alias ga="git add"
 alias gaa="git add -A"
 alias gs="git status"
