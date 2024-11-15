@@ -23,8 +23,15 @@ require("lazy").setup({
     { "xiyaowong/transparent.nvim", cmd = "TransparentEnable" },
     -- Dark theme (Personal fork of nord.nvim)
     -- { "parkerhendo/nord.nvim" },
+
     -- Gruvbox theme
-    { "ellisonleao/gruvbox.nvim",   priority = 1000,          config = true },
+    {
+      'f4z3r/gruvbox-material.nvim',
+      name = 'gruvbox-material',
+      lazy = false,
+      priority = 1000,
+      opts = {},
+    },
     -- file tree
     {
       "nvim-tree/nvim-tree.lua",
@@ -37,7 +44,7 @@ require("lazy").setup({
       requires = { "nvim-tree/nvim-web-devicons" },
     },
     -- Better git conflict UX
-    { "akinsho/git-conflict.nvim", version = "*", config = true },
+    { "akinsho/git-conflict.nvim",  version = "*",            config = true },
     -- Install treesitter for better syntax highlighting
     {
       "nvim-treesitter/nvim-treesitter",
@@ -97,12 +104,12 @@ require("lazy").setup({
       end,
     },
     -- Install neoscroll for smooth scrolling
-    {
-      "karb94/neoscroll.nvim",
-      config = function()
-        require("neoscroll").setup()
-      end,
-    },
+    -- {
+    --   "karb94/neoscroll.nvim",
+    --   config = function()
+    --     require("neoscroll").setup()
+    --   end,
+    -- },
     -- Install nvim-autopairs  and nvim-ts-autotag to auto close brackets & tags
     { "windwp/nvim-autopairs" },
     { "windwp/nvim-ts-autotag" },

@@ -78,7 +78,7 @@ vim.cmd([[let g:blamer_show_in_insert_modes = 0]])
 
 -- colors
 vim.o.background = "dark" -- or "light" for light mode
-vim.cmd([[colorscheme gruvbox]])
+vim.cmd([[colorscheme gruvbox-material]])
 
 function _theme_toggle()
   if vim.o.background == "dark" then
