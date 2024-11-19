@@ -18,6 +18,7 @@
     nodejs_20
     python312
     neovim
+    neofetch
     nixfmt
     parallel
     postgresql_16

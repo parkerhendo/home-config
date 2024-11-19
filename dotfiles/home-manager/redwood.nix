@@ -13,6 +13,7 @@
     gh
     git
     neovim
+    neofetch
     nixfmt
     parallel
     ripgrep
