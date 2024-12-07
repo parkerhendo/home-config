@@ -6,6 +6,7 @@
   home.packages = with pkgs; [
     atuin
     bat
+    btop
     coreutils
     darwin.trash
     docker
@@ -15,7 +16,7 @@
     gh
     git
     go
-    btop
+    k3d
     lazygit
     neovim
     neofetch
