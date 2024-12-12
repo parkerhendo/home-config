@@ -1,8 +1,8 @@
 -- core files
-require("parkerhendo.lazy")
-require("parkerhendo.config")
 require("parkerhendo.keymaps")
 require("parkerhendo.keymap_utils")
+require("parkerhendo.lazy")
+require("parkerhendo.config")
 
 -- helpers
 require("parkerhendo.format_on_save")
