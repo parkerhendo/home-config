@@ -31,6 +31,8 @@ yabai -m rule --add app="zoom.us"                               manage=off
 yabai -m rule --add app="Spotify"                               manage=off
 yabai -m rule --add app="CleanShot X"                           manage=off
 yabai -m rule --add app="Loom"                                  manage=off
+yabai -m rule --add app="Things 3"                              manage=off
+
 yabai -m rule --add app="iTerm"                                 space=^1
 yabai -m rule --add app="Arc"                                   space=^2
 yabai -m rule --add app="Linear"                                space=^2
