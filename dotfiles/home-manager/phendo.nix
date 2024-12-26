@@ -22,6 +22,7 @@
     neofetch
     nixfmt
     nodejs_20
+    parallel
     python312
     ripgrep
     rustup
