@@ -23,6 +23,7 @@ ln -si "$DOTFILE_DIR"/dircolors ~/.dircolors
 ln -si "$DOTFILE_DIR"/git/gitconfig ~/.gitconfig
 ln -si "$DOTFILE_DIR"/git/gitalias.txt ~/.gitalias.txt
 ln -si "$DOTFILE_DIR"/gitconfig/gitignore_global ~/.gitignore_global
+ln -si "$DOTFILE_DIR"/ghostty ~/.config/ghostty
 ln -si "$DOTFILE_DIR"/ignore ~/.ignore
 ln -si "$DOTFILE_DIR"/tmux.conf ~/.tmux.conf
 ln -si "$DOTFILE_DIR"/vale.ini ~/.vale.ini
