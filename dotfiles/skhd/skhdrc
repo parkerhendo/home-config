@@ -51,5 +51,8 @@ alt + ctrl + cmd + shift - b    : yabai -m space --layout bsp
 alt + ctrl + cmd + shift - f    : yabai -m space --layout float
 alt + ctrl + cmd + shift - s    : yabai -m space --layout stack
 
+# manipulate windows
+alt + ctrl - t : yabai -m window --toggle sticky ; yabai -m window --toggle float
+
 # Navigating stacks
 alt + ctrl + cmd - a            : yabai -m window --stack recent;

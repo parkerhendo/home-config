@@ -1,4 +1,11 @@
-theme = gruvbox-material
+term = xterm-256color
+theme = GruvboxDark
 font-family = "Berkeley Mono"
 font-size = 14.0
-adjust-cell-height=20%
+adjust-cell-height = 20%
+mouse-hide-while-typing = true
+macos-titlebar-style = hidden
+window-padding-x = 12
+window-padding-y = 6
+window-save-state = always
+window-colorspace = "display-p3"
