@@ -3,6 +3,7 @@
 
 # ZSH
 **/zsh/**.zsh.zwc
+**/zsh/**.zsh.zwc.old
 **/zsh/plugins
 
 # NVIM
