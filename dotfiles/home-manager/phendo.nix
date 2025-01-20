@@ -20,6 +20,7 @@
     lazygit
     neovim
     neofetch
+    nodePackages_latest.vercel
     nixfmt
     nodejs_20
     parallel
