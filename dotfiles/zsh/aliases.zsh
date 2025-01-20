@@ -6,6 +6,11 @@ alias lt="LC_COLLATE=C ls --color=auto --group-directories-first --classify --hu
 alias lg="lazygit"
 alias g="git"
 
+# TODO: ungodly betrayal - temporary until muscule memory swaps to use `cursor .`
+alias nvim="cursor ."
+# ...even more cursed - but just in case we need to run back to the comfort of home.
+alias vim="nvim"
+
 # common git aliases
 alias co="git checkout"
 alias nb="git checkout -b"
