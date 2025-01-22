@@ -2,6 +2,7 @@ term = xterm-256color
 theme = GruvboxDark
 font-family = "Berkeley Mono"
 font-size = 14.0
+font-feature = -liga -calt
 adjust-cell-height = 20%
 mouse-hide-while-typing = true
 macos-titlebar-style = hidden
