@@ -7,6 +7,8 @@
     atuin
     bat
     btop
+    bun
+    caddy
     coreutils
     darwin.trash
     fd
