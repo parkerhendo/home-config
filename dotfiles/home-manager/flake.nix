@@ -27,7 +27,10 @@
     homeConfigurations = {
       "parkerhenderson@phendo" =
       home-manager.lib.homeManagerConfiguration {
-        pkgs = nixpkgs.legacyPackages.aarch64-darwin;
+        pkgs = import nixpkgs {
+          system = "aarch64-darwin";
+          config.allowUnfree = true;
+        };
 
         modules = [ ./phendo.nix nix-index-database.hmModules.nix-index ];
       };
@@ -41,7 +44,10 @@
 
       "parker@railway" =
       home-manager.lib.homeManagerConfiguration {
-        pkgs = nixpkgs.legacyPackages.aarch64-darwin;
+        pkgs = import nixpkgs {
+          system = "aarch64-darwin";
+          config.allowUnfree = true;
+        };
 
         modules = [ ./railway.nix nix-index-database.hmModules.nix-index ];
       };

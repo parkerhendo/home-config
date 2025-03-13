@@ -1,4 +1,8 @@
-{ pkgs, ... }: {
+{ pkgs, ... }: let
+  unstable = import <nixpkgs-unstable> {
+    config.allowUnfree = true;
+  };
+in {
   home.username = "parkerhenderson";
   home.homeDirectory = "/Users/parkerhenderson";
   home.stateVersion = "22.11";
@@ -30,6 +34,7 @@
     skhd
     tmux
     tree
+    unstable.claude-code
     yabai
     wifi-password
     watchexec

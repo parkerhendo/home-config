@@ -1,4 +1,8 @@
-{ pkgs, ... }: {
+{ pkgs, ... }: let
+  unstable = import <nixpkgs-unstable> {
+    config.allowUnfree = true;
+  };
+in {
   home.username = "parker";
   home.homeDirectory = "/Users/parker";
   home.stateVersion = "22.11";
@@ -10,6 +14,7 @@
     bun
     caddy
     coreutils
+    unstable.claude-code
     darwin.trash
     fd
     ffmpeg
