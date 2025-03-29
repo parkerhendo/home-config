@@ -35,11 +35,11 @@
         modules = [ ./phendo.nix nix-index-database.hmModules.nix-index ];
       };
 
-      "parker@redwood" =
+      "parker@zephyr" =
       home-manager.lib.homeManagerConfiguration {
         pkgs = nixpkgs.legacyPackages.aarch64-darwin;
 
-        modules = [ ./redwood.nix nix-index-database.hmModules.nix-index ];
+        modules = [ ./zephyr.nix nix-index-database.hmModules.nix-index ];
       };
 
       "parker@railway" =
