@@ -71,11 +71,13 @@ if command -v nix &> /dev/null; then
     pushd ~/.config/home-manager || return;
 
     if [[ $HOSTNAME == "phendo" ]]; then
-      nix run home-manager -- switch --flake .#parkerhenderson@phendo
+      nix run home-manager -- switch --flake .#parkerhenderson@phendo --impure
     elif [[ $HOSTNAME == "redwood" ]]; then
-      nix run home-manager -- switch --flake .#parker@redwood
+      nix run home-manager -- switch --flake .#parker@redwood --impure
     elif [[ $HOSTNAME == "railway" ]]; then
-      nix run home-manager -- switch --flake .#parker@railway
+      nix run home-manager -- switch --flake .#parker@railway --impure
+    elif [[ $HOSTNAME == "zephyr"  ]]; then
+      nix run home-manager -- switch --flake .#parker@zephyr --impure
     else
       echo
       echo "No home-manager configuration found for this machine!"

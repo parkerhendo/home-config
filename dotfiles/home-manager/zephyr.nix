@@ -16,12 +16,14 @@ in {
     fzf
     gh
     git
+    lazygit
     neovim
     neofetch
     nixfmt
     parallel
     ripgrep
     rustup
+    skhd
     tmux
     tree
     yabai
