@@ -35,3 +35,7 @@ fi
 
 alias dev="/Users/parker/Developer/mono/dev"
 
+
+. "$HOME/.atuin/bin/env"
+
+eval "$(atuin init zsh)"
