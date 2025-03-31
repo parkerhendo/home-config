@@ -11,6 +11,7 @@ in {
     bat
     coreutils
     darwin.trash
+    unstable.claude-code
     fd
     ffmpeg
     fzf
