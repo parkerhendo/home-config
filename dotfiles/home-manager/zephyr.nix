@@ -28,6 +28,7 @@ in {
     tmux
     tree
     yabai
+    yt-dlp
   ];
 
   programs.git = {

@@ -36,6 +36,7 @@ in {
     tree
     unstable.claude-code
     yabai
+    yt-dlp
     wifi-password
     watchexec
   ];

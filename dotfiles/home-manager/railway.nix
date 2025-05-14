@@ -34,6 +34,7 @@ in {
     tmux
     tree
     yabai
+    yt-dlp
     skhd
   ];
 
