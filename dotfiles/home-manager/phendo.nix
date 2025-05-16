@@ -35,6 +35,7 @@ in {
     tmux
     tree
     unstable.claude-code
+    uv
     yabai
     yt-dlp
     wifi-password
