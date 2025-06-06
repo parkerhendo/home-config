@@ -1,4 +1,4 @@
-local null_ls = require("null-ls")
+local none_ls = require("null-ls")
 local map_lsp_keybinds = require("parkerhendo.keymaps").map_lsp_keybinds
 
 -- Use neodev to configure lua_ls in nvim directories - must load before lspconfig
@@ -46,7 +46,7 @@ local function tsserver_on_publish_diagnostics_override(_, result, ctx, config)
   vim.lsp.diagnostic.on_publish_diagnostics(_, result, ctx, config)
 end
 
--- LSP servers to install (see list here: https://github.com/williamboman/mason-lspconfig.nvim#available-lsp-servers )
+-- LSP servers to install
 local servers = {
   bashls = {},
   cssls = {},
@@ -61,7 +61,7 @@ local servers = {
   solidity = {},
   sqlls = {},
   tailwindcss = {},
-  tsserver = {
+  ts_ls = {
     settings = {
       experimental = {
         enableProjectDiagnostics = true,
@@ -94,7 +94,7 @@ local on_attach = function(_client, buffer_number)
     vim.lsp.buf.format({
       filter = function(format_client)
         -- Use Prettier to format TS/JS if it's available
-        return format_client.name ~= "tsserver" or not null_ls.is_registered("prettier")
+        return format_client.name ~= "ts_ls" or not none_ls.is_registered("prettier")
       end,
     })
   end, { desc = "LSP: Format current buffer with LSP" })
@@ -110,40 +110,41 @@ for name, config in pairs(servers) do
   })
 end
 
--- Congifure LSP linting, formatting, diagnostics, and code actions
-local formatting = null_ls.builtins.formatting
-local diagnostics = null_ls.builtins.diagnostics
-local code_actions = null_ls.builtins.code_actions
+-- Configure LSP linting, formatting, diagnostics, and code actions
+local formatting = none_ls.builtins.formatting
+local diagnostics = none_ls.builtins.diagnostics
+local code_actions = none_ls.builtins.code_actions
 
-null_ls.setup({
-  border = "rounded",
+none_ls.setup({
   sources = {
-    -- formatting
+    -- Formatting
     formatting.stylua,
-    formatting.ocamlformat,
-    diagnostics.vale,
-
-    --formatting
     formatting.prettier.with({
       condition = function(utils)
-        return utils.root_has_file({ ".prettierrc" })
+        return utils.root_has_file({ ".prettierrc", ".prettierrc.js", ".prettierrc.json" })
       end,
-      prefer_local = "node_modules/.bin"
     }),
+    formatting.black,
+    formatting.isort,
+    formatting.rustfmt,
+    formatting.ocamlformat,
 
-    -- diagnostics
-    diagnostics.eslint_d.with({
+    -- Diagnostics
+    diagnostics.eslint.with({
       condition = function(utils)
         return utils.root_has_file({ ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json" })
       end,
     }),
+    diagnostics.flake8,
+    diagnostics.mypy,
 
-    -- code actions
-    code_actions.eslint_d.with({
+    -- Code Actions
+    code_actions.eslint.with({
       condition = function(utils)
         return utils.root_has_file({ ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json" })
       end,
     }),
+    code_actions.gitsigns,
   },
 })
 

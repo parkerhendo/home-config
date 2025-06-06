@@ -6,7 +6,7 @@ return {
 		"williamboman/mason.nvim",
 		"williamboman/mason-lspconfig.nvim",
 		-- Install null-ls for diagnostics, code actions, and formatting
-		"nvimtools/none-ls.nvim",
+		"jose-elias-alvarez/null-ls.nvim",
 		-- Install neodev for better nvim configuration and plugin authoring via lsp configurations
 		"folke/neodev.nvim",
 		-- Progress/Status update for LSP

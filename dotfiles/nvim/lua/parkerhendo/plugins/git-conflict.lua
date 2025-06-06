@@ -12,6 +12,8 @@ return {
 				incoming = "DiffAdd",
 				current = "DiffText",
 			},
+			-- Use the new vim.hl API
+			use_hl = true,
 		})
 	end,
 }
