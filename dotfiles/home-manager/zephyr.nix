@@ -9,6 +9,7 @@ in {
 
   home.packages = with pkgs; [
     bat
+    btop
     coreutils
     darwin.trash
     unstable.claude-code
