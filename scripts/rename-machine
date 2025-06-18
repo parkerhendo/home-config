@@ -5,4 +5,6 @@ read -r name
 
 # set computer name
 sudo scutil --set ComputerName "$name"
+sudo scutil --set HostName "$name"
+
 dscacheutil -flushcache
