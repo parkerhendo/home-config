@@ -34,7 +34,7 @@ yabai -m rule --add app="Loom"                                  manage=off
 yabai -m rule --add app="Things 3"                              manage=off
 
 yabai -m rule --add app="Ghostty"                               space=^1
-yabai -m rule --add app="Arc"                                   space=^2
+yabai -m rule --add app="Dia"                                   space=^2
 yabai -m rule --add app="Linear"                                space=^2
 yabai -m rule --add app="Discord"                               space=^3
 yabai -m rule --add app="Amie"                                  space=^3
