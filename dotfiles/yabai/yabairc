@@ -44,7 +44,7 @@ yabai -m rule --add app="Texts"                                 space=^3
 yabai -m rule --add app="Obsidian"                              space=^3
 yabai -m rule --add app="Figma Beta"                            space=^4
 
-yabai -m space 2 --layout stack
-yabai -m space 3 --layout stack
+yabai -m space 2 --layout bsp
+yabai -m space 3 --layout bsp
 
 echo "yabai configuration loaded..."
