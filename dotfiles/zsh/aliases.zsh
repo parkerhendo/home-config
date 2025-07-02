@@ -5,6 +5,7 @@ alias lt="LC_COLLATE=C ls --color=auto --group-directories-first --classify --hu
 
 alias lg="lazygit"
 alias g="git"
+alias gemini="GOOGLE_CLOUD_PROJECT=parkerhendo gemini"
 
 # common git aliases
 alias co="git checkout"

@@ -12,16 +12,19 @@ in {
     btop
     coreutils
     darwin.trash
-    unstable.claude-code
+    claude-code
+    codex
     fd
     ffmpeg
     fzf
+    unstable.gemini-cli
     gh
     git
     lazygit
     neovim
     neofetch
     nixfmt
+    nodejs
     parallel
     ripgrep
     rustup
