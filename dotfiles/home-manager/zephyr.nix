@@ -24,7 +24,7 @@ in {
     neovim
     neofetch
     nixfmt
-    nodejs
+    nodejs_24
     parallel
     ripgrep
     rustup
