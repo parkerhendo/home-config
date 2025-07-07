@@ -13,16 +13,18 @@ in {
     btop
     bun
     caddy
+    claude-code
     coreutils
-    unstable.claude-code
+    codex
     darwin.trash
     fd
     ffmpeg
     fzf
+    unstable.gemini-cli
     gh
     git
     lazygit
-    nodejs_20
+    nodejs_24
     python312
     neovim
     neofetch
