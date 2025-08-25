@@ -10,3 +10,4 @@ window-padding-x = 12
 window-padding-y = 6
 window-save-state = always
 window-colorspace = "display-p3"
+keybind = shift+enter=text:\n
