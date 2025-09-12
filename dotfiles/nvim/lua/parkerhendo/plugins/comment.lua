@@ -1,5 +1,6 @@
 return {
 	"numToStr/Comment.nvim",
+	keys = { "gc", "gb" },
 	opts = {
 		pre_hook = function(ctx)
 			if vim.bo.filetype == "typescriptreact" then

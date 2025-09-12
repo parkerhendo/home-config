@@ -107,6 +107,9 @@ local default_handlers = {
 local capabilities = vim.lsp.protocol.make_client_capabilities()
 local default_capabilities = require("cmp_nvim_lsp").default_capabilities(capabilities)
 
+-- Create an augroup for format on save
+local format_on_save_augroup = vim.api.nvim_create_augroup("format_on_save", { clear = true })
+
 local on_attach = function(_client, buffer_number)
 	-- Pass the current buffer to map lsp keybinds
 	map_lsp_keybinds(buffer_number)
@@ -120,6 +123,15 @@ local on_attach = function(_client, buffer_number)
 			end,
 		})
 	end, { desc = "LSP: Format current buffer with LSP" })
+
+	vim.api.nvim_create_autocmd("BufWritePre", {
+		group = format_on_save_augroup,
+		buffer = buffer_number,
+		desc = "Run LSP formatting on a file on save",
+		callback = function()
+			vim.cmd.Format()
+		end,
+	})
 end
 
 -- Iterate over our servers and set them up

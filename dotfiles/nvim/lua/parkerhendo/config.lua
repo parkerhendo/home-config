@@ -1,7 +1,7 @@
 local set = vim.opt
 
 set.swapfile = false
-set.updatetime = 0
+set.updatetime = 300
 set.encoding = "utf-8"
 set.fileencoding = "utf-8"
 set.smartindent = true
@@ -70,11 +70,6 @@ vim.opt.formatoptions = {
 	l = true,
 	v = true,
 }
-
-vim.cmd([[let g:blamer_enabled = 1]])
-vim.cmd([[let g:blamer_delay = 500]])
-vim.cmd([[let g:blamer_show_in_visual_modes = 1]])
-vim.cmd([[let g:blamer_show_in_insert_modes = 0]])
 
 -- colors
 vim.o.background = "dark" -- or "light" for light mode

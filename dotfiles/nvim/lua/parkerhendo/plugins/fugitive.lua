@@ -1,2 +1,4 @@
--- install vim-fugitive
-return { "tpope/vim-fugitive" }
+return {
+	"tpope/vim-fugitive",
+	cmd = { "Git", "G" },
+}

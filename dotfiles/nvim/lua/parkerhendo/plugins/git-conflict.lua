@@ -1,7 +1,7 @@
--- Better git conflict UX
 return {
 	"akinsho/git-conflict.nvim",
 	version = "*",
+	event = "BufReadPre",
 	config = function()
 		require("git-conflict").setup({
 			default_mappings = true,

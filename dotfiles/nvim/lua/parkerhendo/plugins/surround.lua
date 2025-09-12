@@ -1,2 +1,4 @@
--- Install vim-surround for managing parenthese, brackets, quotes, etc
-return { "tpope/vim-surround" }
+return {
+	"tpope/vim-surround",
+	keys = { "ys", "ds", "cs" },
+}

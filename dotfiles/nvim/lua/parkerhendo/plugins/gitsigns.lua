@@ -1,5 +1,6 @@
 return {
 	"lewis6991/gitsigns.nvim",
+	event = "BufReadPre",
 	opts = {
 		signs = {
 			add = { hl = "GitSignsAdd", text = "•", numhl = "GitSignsAddNr", linehl = "GitSignsAddLn" },
