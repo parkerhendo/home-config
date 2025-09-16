@@ -26,7 +26,7 @@ in {
     neofetch
     nodePackages_latest.vercel
     nixfmt
-    nodejs_20
+    nodejs_24
     parallel
     python312
     ripgrep
@@ -34,7 +34,8 @@ in {
     skhd
     tmux
     tree
-    unstable.claude-code
+    claude-code
+    unstable.gemini-cli
     uv
     yabai
     yt-dlp
