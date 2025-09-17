@@ -1,9 +1,14 @@
-{ pkgs, inputs, ... }: 
+{ pkgs, inputs, ... }:
 
 {
   imports = [
-    ../default/home.nix
+    ../../home.common.nix
   ];
+
+  # User information (profile-specific)
+  home.username = "parkerhenderson";
+  home.homeDirectory = "/Users/parkerhenderson";
+  home.stateVersion = "22.11";
 
   # Phendo-specific packages
   home.packages = with pkgs; [
@@ -13,16 +18,41 @@
     go
     k3d
     nodePackages_latest.vercel
-    ocaml
     python312
+    codex
+    ocaml
     rustup
     uv
     watchexec
-    
+
     # Media and utilities specific to phendo
     gemini-cli
   ];
 
-  # Phendo-specific home configuration
-  # Any phendo-specific home-manager settings go here
+  # File management - symlink essential dotfiles (paths are profile-specific)
+  home.file = {
+    # Shell profile
+    ".zprofile".source = ../../dotfiles/zprofile;
+
+    # Git configuration
+    ".gitconfig".source = ../../dotfiles/git/gitconfig;
+    ".gitalias.txt".source = ../../dotfiles/git/gitalias.txt;
+    ".gitignore_global".source = ../../dotfiles/git/gitignore_global;
+
+    # Terminal and shell
+    ".tmux.conf".source = ../../dotfiles/tmux.conf;
+    ".dircolors".source = ../../dotfiles/dircolors;
+    ".ignore".source = ../../dotfiles/ignore;
+
+    # Development tools
+    ".vale.ini".source = ../../dotfiles/vale.ini;
+  };
+
+  # XDG config files (paths are profile-specific)
+  xdg.configFile = {
+    "nvim".source = ../../dotfiles/nvim;
+    "atuin".source = ../../dotfiles/atuin;
+    "ghostty".source = ../../dotfiles/ghostty;
+    "hammerspoon".source = ../../dotfiles/hammerspoon;
+  };
 }

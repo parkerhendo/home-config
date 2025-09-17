@@ -2,11 +2,29 @@
 
 {
   imports = [
-    ../default/darwin.nix
-    ../../darwin/system.nix
-    ../../darwin/homebrew.nix
+    ../../config.common.nix
   ];
 
+  # Phendo-specific homebrew packages (additional to common ones)
+  homebrew.casks = [
+    # Development tools
+    "orbstack"
+    "figma"
+
+    # Communication and productivity
+    "discord"
+    "slack"
+    "loom"
+
+    # Media and utilities
+    "spotify"
+    "cleanshot"
+  ];
+
+  homebrew.masApps = {
+    things3 = 904280696;
+    goodnotes = 1444383602;
+  };
   # Phendo-specific system configuration
-  # Any phendo-specific darwin/system settings go here
+  # Any other phendo-specific darwin/system settings go here
 }
