@@ -51,7 +51,7 @@
       "phendo" = nix-darwin.lib.darwinSystem {
         system = "aarch64-darwin";
         modules = [
-          ./darwin/configuration.nix
+          ./profiles/phendo/default.nix
           
           nix-homebrew.darwinModules.nix-homebrew
           {
@@ -72,7 +72,7 @@
             home-manager = {
               useGlobalPkgs = true;
               useUserPackages = true;
-              users.parkerhenderson = import ./home-manager/phendo.nix;
+              users.parkerhenderson = import ./profiles/phendo/home.nix;
               extraSpecialArgs = { inherit inputs; };
               backupFileExtension = "backup";
               verbose = true;
