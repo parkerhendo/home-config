@@ -32,7 +32,7 @@
           config.allowUnfree = true;
         };
 
-        modules = [ ./phendo.nix nix-index-database.hmModules.nix-index ];
+        modules = [ ./phendo.nix nix-index-database.homeModules.nix-index ];
       };
 
       "parker@zephyr" =
@@ -42,7 +42,7 @@
           config.allowUnfree = true;
         };
 
-        modules = [ ./zephyr.nix nix-index-database.hmModules.nix-index ];
+        modules = [ ./zephyr.nix nix-index-database.homeModules.nix-index ];
       };
 
       "parker@railway" =
@@ -52,7 +52,7 @@
           config.allowUnfree = true;
         };
 
-        modules = [ ./railway.nix nix-index-database.hmModules.nix-index ];
+        modules = [ ./railway.nix nix-index-database.homeModules.nix-index ];
       };
     };
   };

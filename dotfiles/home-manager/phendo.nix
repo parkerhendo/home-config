@@ -1,7 +1,5 @@
 { pkgs, ... }: let
-  unstable = import <nixpkgs-unstable> {
-    config.allowUnfree = true;
-  };
+  unstable = pkgs;
 in {
   home.username = "parkerhenderson";
   home.homeDirectory = "/Users/parkerhenderson";
@@ -26,7 +24,6 @@ in {
     neofetch
     nodePackages_latest.vercel
     nixfmt
-    nodejs_24
     parallel
     python312
     ripgrep
