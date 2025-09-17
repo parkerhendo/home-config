@@ -5,6 +5,13 @@
     ../../config.common.nix
   ];
 
+  system.primaryUser = "parkerhenderson";
+
+  # Define user account
+  users.users.parkerhenderson = {
+    name = "parkerhenderson";
+    home = "/Users/parkerhenderson";
+  };
   # Phendo-specific homebrew packages (additional to common ones)
   homebrew.casks = [
     # Development tools

@@ -6,8 +6,8 @@
   ];
 
   # User information (profile-specific)
-  home.username = "parkerhenderson";
-  home.homeDirectory = "/Users/parkerhenderson";
+  home.username = "parker";
+  home.homeDirectory = "/Users/parker";
   home.stateVersion = "22.11";
 
   # Zephyr-specific packages

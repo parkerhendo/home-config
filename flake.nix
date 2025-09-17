@@ -47,45 +47,61 @@
   }: {
     formatter.aarch64-darwin = nixpkgs.legacyPackages.aarch64-darwin.nixfmt-rfc-style;
 
-    darwinConfigurations = {
-      "phendo" = nix-darwin.lib.darwinSystem {
-        system = "aarch64-darwin";
-        modules = [
-          ./profiles/phendo/default.nix
-          
-          nix-homebrew.darwinModules.nix-homebrew
-          {
-            nix-homebrew = {
-              enable = true;
-              enableRosetta = true;
-              user = "parkerhenderson";
-              taps = {
-                "homebrew/homebrew-core" = homebrew-core;
-                "homebrew/homebrew-cask" = homebrew-cask;
-              };
-              mutableTaps = false;
-            };
-          }
-          
-          home-manager.darwinModules.home-manager
-          {
-            home-manager = {
-              useGlobalPkgs = true;
-              useUserPackages = true;
-              users.parkerhenderson = import ./profiles/phendo/home.nix;
-              extraSpecialArgs = { inherit inputs; };
-              backupFileExtension = "backup";
-              verbose = true;
-            };
-          }
-          
-          nix-index-database.darwinModules.nix-index
-          {
-            programs.nix-index-database.comma.enable = true;
-          }
-        ];
-        specialArgs = { inherit inputs; };
-      };
-    };
+    darwinConfigurations =
+      let
+        mkDarwinConfig = profileName:
+          let
+            profilePath = ./profiles/${profileName};
+            profileConfig = import (profilePath + "/default.nix");
+            homeConfig = import (profilePath + "/home.nix");
+            # Extract user from profile config
+            profileModule = profileConfig { inherit nixpkgs nix-darwin home-manager inputs; config = {}; pkgs = nixpkgs.legacyPackages.aarch64-darwin; lib = nixpkgs.lib; };
+            userName = profileModule.system.primaryUser or profileName;
+          in
+          nix-darwin.lib.darwinSystem {
+            system = "aarch64-darwin";
+            modules = [
+              (profilePath + "/default.nix")
+
+              nix-homebrew.darwinModules.nix-homebrew
+              {
+                nix-homebrew = {
+                  enable = true;
+                  enableRosetta = true;
+                  user = userName;
+                  taps = {
+                    "homebrew/homebrew-core" = homebrew-core;
+                    "homebrew/homebrew-cask" = homebrew-cask;
+                  };
+                  mutableTaps = false;
+                };
+              }
+
+              home-manager.darwinModules.home-manager
+              {
+                home-manager = {
+                  useGlobalPkgs = true;
+                  useUserPackages = true;
+                  users.${userName} = homeConfig;
+                  extraSpecialArgs = { inherit inputs; };
+                  backupFileExtension = "backup";
+                  verbose = true;
+                };
+              }
+
+              nix-index-database.darwinModules.nix-index
+              {
+                programs.nix-index-database.comma.enable = true;
+              }
+            ];
+            specialArgs = { inherit inputs; };
+          };
+
+        profiles = builtins.attrNames (builtins.readDir ./profiles);
+        validProfiles = builtins.filter (name:
+          builtins.pathExists (./profiles + "/${name}/default.nix")
+        ) profiles;
+      in
+      nixpkgs.lib.genAttrs validProfiles mkDarwinConfig;
   };
 }

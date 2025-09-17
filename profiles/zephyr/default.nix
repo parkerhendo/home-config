@@ -5,6 +5,14 @@
     ../../config.common.nix
   ];
 
+  # Set primary user for user-specific options
+  system.primaryUser = "parker";
+
+  # Define user account
+  users.users.parker = {
+    name = "parker";
+    home = "/Users/parker";
+  };
   # Zephyr-specific homebrew packages (additional to common ones)
   homebrew.casks = [
     # Add zephyr-specific casks here

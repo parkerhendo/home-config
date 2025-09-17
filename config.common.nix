@@ -5,32 +5,15 @@
     ./system.nix
   ];
 
-  # Nix configuration
-  nix = {
-    settings = {
-      experimental-features = [ "nix-command" "flakes" ];
-    };
-    optimise.automatic = true;
-    gc = {
-      automatic = true;
-      interval = { Weekday = 0; Hour = 2; Minute = 0; };
-      options = "--delete-older-than 30d";
-    };
-  };
-
-  # Set primary user for user-specific options
-  system.primaryUser = "parkerhenderson";
-
-  # Define user account
-  users.users.parkerhenderson = {
-    name = "parkerhenderson";
-    home = "/Users/parkerhenderson";
-  };
+  # Disable nix-darwin's Nix management (using Determinate Nix)
+  nix.enable = false;
 
   # System packages (global system tools)
   environment.systemPackages = with pkgs; [
     # Essential system tools only - CLI tools managed by home-manager
     nixfmt-rfc-style
+    inputs.nix-darwin.packages.${pkgs.system}.default
+    nix-prefetch
   ];
 
   # Window management services
