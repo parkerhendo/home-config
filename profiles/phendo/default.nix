@@ -7,6 +7,14 @@
 
   system.primaryUser = "parkerhenderson";
 
+  system.defaults = {
+    dock.persistent-apps = [
+      "/Applications/Beeper Desktop.app"
+      "/Applications/Dia.app"
+      "/Applications/Ghostty.app"
+    ];
+  };
+
   # Define user account
   users.users.parkerhenderson = {
     name = "parkerhenderson";

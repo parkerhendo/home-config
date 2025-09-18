@@ -3,6 +3,8 @@
 {
   # Common packages across all machines
   home.packages = with pkgs; [
+    betterdisplay
+
     # AI Stuff
     amp-cli
     codex
@@ -18,6 +20,7 @@
     fd
     fzf
     tree
+    jq
 
     # Development tools
     gh
@@ -32,6 +35,9 @@
     ffmpeg
     neofetch
     yt-dlp
+
+    # nix
+    niv
   ];
 
   # Git configuration (no paths)

@@ -122,6 +122,7 @@
       "cleanshot"
 
       # Utilities
+      "betterdisplay"
       "spaceman"
       "dropbox"
       "raycast"
