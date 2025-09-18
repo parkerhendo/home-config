@@ -1,11 +1,23 @@
 #!/usr/bin/env bash
 
+if command -v tput > /dev/null 2>&1; then
+  GREEN="$(tput setaf 2)"
+  YELLOW="$(tput setaf 3)"
+  RESET="$(tput sgr0)"
+else
+  GREEN=""
+  YELLOW=""
+  RESET=""
+fi
+
 function gitUpdate {
-  if [ -d "$*" ]; then
-    pushd "$*" > /dev/null || return
+  local path="$1"
+
+  if [ -d "$path" ]; then
+    pushd "$path" > /dev/null || return
 
     if [ -e .git ]; then
-      echo -e "$(tput setaf 2)Checking $(basename "$*")...$(tput sgr0)"
+      echo -e "${GREEN}Checking $(basename "$path")...${RESET}"
       git pull
       echo
     fi
@@ -14,30 +26,50 @@ function gitUpdate {
   fi
 }
 
-if [[ $(hostname -s) == "zephyr" ]]; then
-  echo -e "$(tput setaf 2)Checking Nix...$(tput sgr0)"
-  pushd ~/.config/home-manager > /dev/null || return
-  nix flake update
-  home-manager switch --flake .#parker@zephyr --impure
-  echo
-  popd > /dev/null || return
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." >/dev/null 2>&1 && pwd)"
+HOSTNAME="$(hostname -s)"
+PROFILE_PATH="${REPO_ROOT}/profiles/${HOSTNAME}"
 
-if [[ $(hostname -s) == "railway" ]]; then
-  echo -e "$(tput setaf 2)Checking Nix...$(tput sgr0)"
-  pushd ~/.config/home-manager > /dev/null || return
-  nix flake update
-  home-manager switch --flake .#parker@railway --impure
-  echo
-  popd > /dev/null || return
-fi
+function resolvePrimaryUser {
+  local user=""
 
-if [[ $(hostname -s) == "phendo" ]]; then
-  echo -e "$(tput setaf 2)Checking Nix...$(tput sgr0)"
-  pushd ~/.config/home-manager > /dev/null || return
-  home-manager switch --flake .#parkerhenderson@phendo --impure
-  echo
-  popd > /dev/null || return
+  if command -v nix > /dev/null 2>&1; then
+    user=$(nix eval --raw ".#darwinConfigurations.${HOSTNAME}.config.system.primaryUser" 2> /dev/null || true)
+  fi
+
+  if [ -z "$user" ] && [ -f "${PROFILE_PATH}/home.nix" ]; then
+    user=$(sed -n 's/.*home\.username\s*=\s*"\([^"]*\)".*/\1/p' "${PROFILE_PATH}/home.nix" | head -n 1)
+  fi
+
+  if [ -z "$user" ]; then
+    user="${USER:-$(whoami)}"
+  fi
+
+  printf '%s' "$user"
+}
+
+if [ -d "$PROFILE_PATH" ]; then
+  if command -v nix > /dev/null 2>&1; then
+    echo -e "${GREEN}Checking Nix...${RESET}"
+    pushd "$REPO_ROOT" > /dev/null || exit 1
+    nix flake update
+    nix run nix-darwin -- switch --flake ".#${HOSTNAME}"
+
+    if command -v home-manager > /dev/null 2>&1; then
+      user="$(resolvePrimaryUser)"
+      home-manager switch --flake ".#${user}@${HOSTNAME}"
+    else
+      echo -e "${YELLOW}home-manager not found; skipping home-manager switch.${RESET}"
+    fi
+
+    echo
+    popd > /dev/null || exit 1
+  else
+    echo -e "${YELLOW}nix command not found; skipping nix-darwin update.${RESET}"
+  fi
+else
+  echo -e "${YELLOW}No nix-darwin profile found for host ${HOSTNAME}; skipping nix-darwin update.${RESET}"
 fi
 
 if [ -d ~/.zsh/plugins ]; then
@@ -60,4 +92,3 @@ if hash ncu 2> /dev/null; then
 
   echo
 fi
-
