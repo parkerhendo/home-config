@@ -12,18 +12,21 @@
 
   # Phendo-specific packages
   home.packages = with pkgs; [
-    # Development tools specific to phendo
-    docker
-    go
-    k3d
-    nodePackages_latest.vercel
+    # programming languages
     python312
+    uv
     ocaml
     rustup
-    uv
+    go
+
+    # dev utilities
+    k3d
+    docker
+    nodePackages_latest.vercel
+
+    # utilities
     watchexec
 
-    # Media and utilities specific to phendo
   ];
 
   # File management - symlink essential dotfiles (paths are profile-specific)
