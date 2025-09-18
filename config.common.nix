@@ -75,11 +75,28 @@
     casks = [
       # Terminal and Development
       "ghostty"
+      "cursor"
+      "orbstack"
+
+      # Communcation & productivity
+      "beeper"
+      "notion-calendar"
       "thebrowsercompany-dia"
       "obsidian"
-      "beeper"
+      "mimestream"
+      "rescuetime"
+
+      # Media
+      "spotify"
+      "cleanshot"
+
+      # Utilities
+      "spaceman"
+      "dropbox"
+      "raycast"
     ];
     masApps = {
+      things3 = 904280696;
     };
     # Common taps
     taps = [
