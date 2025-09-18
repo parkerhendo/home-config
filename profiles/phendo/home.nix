@@ -20,6 +20,7 @@
     go
 
     # dev utilities
+    nodejs_latest
     k3d
     docker
     nodePackages_latest.vercel

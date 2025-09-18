@@ -1,13 +1,15 @@
 term = xterm-256color
-theme = GruvboxDark
+theme = Gruvbox Dark
 font-family = "Berkeley Mono"
 font-size = 16.0
 font-feature = -liga -calt
 adjust-cell-height = 20%
 mouse-hide-while-typing = true
 macos-titlebar-style = hidden
+
 window-padding-x = 12
 window-padding-y = 6
 window-save-state = always
 window-colorspace = "display-p3"
+
 keybind = shift+enter=text:\n
