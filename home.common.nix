@@ -3,6 +3,12 @@
 {
   # Common packages across all machines
   home.packages = with pkgs; [
+    # AI Stuff
+    amp-cli
+    codex
+    claude-code
+    gemini-cli
+
     # Shell and terminal utilities
     atuin
     bat
@@ -18,7 +24,6 @@
     git
     lazygit
     neovim
-    nixfmt-rfc-style
     parallel
     ripgrep
     tmux

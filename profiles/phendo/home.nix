@@ -13,20 +13,17 @@
   # Phendo-specific packages
   home.packages = with pkgs; [
     # Development tools specific to phendo
-    claude-code
     docker
     go
     k3d
     nodePackages_latest.vercel
     python312
-    codex
     ocaml
     rustup
     uv
     watchexec
 
     # Media and utilities specific to phendo
-    gemini-cli
   ];
 
   # File management - symlink essential dotfiles (paths are profile-specific)
