@@ -1,7 +1,6 @@
 {
     "workspace.library": [
         "/Users/parkerhenderson/.local/share/nvim/site/pack/packer/start/neodev.nvim/types/stable",
-        "/opt/homebrew/Cellar/neovim/0.9.1/share/nvim/runtime/lua",
         "/Users/parkerhenderson/.local/share/nvim/site/pack/packer/opt/nvim-treesitter-textobjects/lua",
         "/Users/parkerhenderson/.local/share/nvim/site/pack/packer/start/cmp-buffer/lua",
         "/Users/parkerhenderson/.local/share/nvim/site/pack/packer/start/cmp-cmdline/lua",
