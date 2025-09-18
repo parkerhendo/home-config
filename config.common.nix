@@ -1,9 +1,20 @@
 { config, pkgs, lib, inputs, ... }:
 
 {
-  imports = [
-    ./system.nix
-  ];
+
+  # macOS system configuration
+  system.defaults = {
+    # Global system settings
+    NSGlobalDomain = {
+      ApplePressAndHoldEnabled = false;       # Disable accents menu
+      NSDocumentSaveNewDocumentsToCloud = false; # Save to disk by default
+    };
+
+    # Dock settings
+    dock = {
+      tilesize = 48;              # Dock icon size
+    };
+  };
 
   # Disable nix-darwin's Nix management (using Determinate Nix)
   nix.enable = false;
@@ -17,7 +28,27 @@
   ];
 
   # Window management services
-  services.yabai.enable = true;
+  services.yabai = {
+    enable = true;
+    enableScriptingAddition = true;
+    config = {
+      layout = "bsp";
+      top_padding = 0;
+      bottom_padding = 0;
+      left_padding = 0;
+      right_padding = 0;
+      window_gap = 4;
+
+      # Mouse settings
+      mouse_follows_focus = "off";
+      mouse_modifier = "ctrl";
+      mouse_action1 = "move";
+      mouse_action2 = "resize";
+      mouse_drop_action = "stack";
+    };
+    extraConfig = ''
+    '';
+  };
   services.skhd.enable = true;
 
   # Enable Touch ID for sudo
