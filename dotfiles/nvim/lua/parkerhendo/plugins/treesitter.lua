@@ -1,7 +1,9 @@
 -- Install treesitter for better syntax highlighting
+
 return {
 	"nvim-treesitter/nvim-treesitter",
 	build = ":TSUpdate",
+	event = { "BufReadPost", "BufNewFile" },
 	opts = {
 		modules = {},
 		auto_install = true,
@@ -31,19 +33,13 @@ return {
 			enable = true,
 		},
 		playground = {
-			enable = true,
+			enable = false,
 		},
 		autotag = {
 			enable = true,
 		},
 		incremental_selection = {
-			enable = true,
-			keymaps = {
-				init_selection = "<c-space>",
-				node_incremental = "<c-space>",
-				scope_incremental = "<c-s>",
-				node_decremental = "<c-backspace>",
-			},
+			enable = false,
 		},
 		textobjects = {
 			select = {

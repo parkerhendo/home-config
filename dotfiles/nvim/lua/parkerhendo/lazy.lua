@@ -17,13 +17,17 @@ end
 
 vim.opt.rtp:prepend(lazypath)
 
-require("lazy").setup({
-	spec = {
-		{ import = "parkerhendo.plugins" },
-	},
-	-- Configure any other settings here. See the documentation for more details.
-	-- colorscheme that will be used when installing plugins.
-	install = { colorscheme = { "gruvbox-material" } },
-	-- automatically check for plugin updates
-	checker = { enabled = true },
-})
+	require("lazy").setup({
+		spec = {
+			{ import = "parkerhendo.plugins" },
+		},
+		-- Configure any other settings here. See the documentation for more details.
+		-- colorscheme that will be used when installing plugins.
+		install = { colorscheme = { "gruvbox-material" } },
+		checker = { enabled = false },
+		change_detection = { notify = false },
+	})
+
+	vim.api.nvim_create_user_command("LazyCheck", function()
+		require("lazy").check({ show = true })
+	end, { desc = "Run lazy.nvim plugin update check" })
