@@ -3,8 +3,6 @@
 {
   # Common packages across all machines
   home.packages = with pkgs; [
-    betterdisplay
-
     # AI Stuff
     amp-cli
     codex
