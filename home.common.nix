@@ -1,6 +1,16 @@
 { pkgs, inputs, ... }:
 
 {
+
+  home.stateVersion = "24.11";
+  # Essential programs
+  programs.home-manager.enable = true;
+
+  nixpkgs.config = {
+    # PROPRIETARY SOFTWARE
+    allowUnfree = true;
+  };
+
   # Common packages across all machines
   home.packages = with pkgs; [
     # AI Stuff
@@ -43,9 +53,6 @@
     enable = true;
     includes = [{ path = "~/.gitconfig"; }];
   };
-
-  # Essential programs
-  programs.home-manager.enable = true;
 
   programs.direnv = {
     enable = true;

@@ -8,7 +8,6 @@
   # User information (profile-specific)
   home.username = "parker";
   home.homeDirectory = "/Users/parker";
-  home.stateVersion = "22.11";
 
   # Zephyr-specific packages
   home.packages = with pkgs; [

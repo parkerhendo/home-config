@@ -1,3 +1,5 @@
+# Everything in here should go on all machines
+
 { pkgs, inputs, ... }:
 
 {
@@ -8,7 +10,6 @@
   # User information (profile-specific)
   home.username = "parkerhenderson";
   home.homeDirectory = "/Users/parkerhenderson";
-  home.stateVersion = "22.11";
 
   # Phendo-specific packages
   home.packages = with pkgs; [
