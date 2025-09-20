@@ -6,10 +6,10 @@
   # Essential programs
   programs.home-manager.enable = true;
 
-  nixpkgs.config = {
-    # PROPRIETARY SOFTWARE
-    allowUnfree = true;
-  };
+  # nixpkgs.config = {
+  #   # PROPRIETARY SOFTWARE
+  #   allowUnfree = true;
+  # };
 
   # Common packages across all machines
   home.packages = with pkgs; [
@@ -18,6 +18,7 @@
     codex
     claude-code
     gemini-cli
+    opencode
 
     # Shell and terminal utilities
     atuin
