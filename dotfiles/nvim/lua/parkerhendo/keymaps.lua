@@ -128,7 +128,21 @@ M.map_lsp_keybinds = function(buffer_number)
     { desc = "LSP: [P]roject [S]ymbols", buffer = buffer_number }
   )
 
-  nnoremap("K", vim.lsp.buf.hover, { desc = "LSP: Hover Documentation", buffer = buffer_number })
+  nnoremap("K", function()
+    -- First show diagnostics if available at cursor position
+    local diagnostics = vim.diagnostic.get(0, { lnum = vim.fn.line('.') - 1 })
+    if #diagnostics > 0 then
+      vim.diagnostic.open_float(0, {
+        scope = "cursor",
+        border = "rounded",
+        focusable = true,
+        close_events = { "BufLeave", "CursorMoved", "InsertEnter", "FocusLost" }
+      })
+    else
+      -- Fall back to hover documentation if no diagnostics
+      vim.lsp.buf.hover()
+    end
+  end, { desc = "LSP: Show Diagnostics or Hover Documentation", buffer = buffer_number })
   nnoremap("<leader>k", vim.lsp.buf.signature_help, { desc = "LSP: Signature Documentation", buffer = buffer_number })
   inoremap("<C-k>", vim.lsp.buf.signature_help, { desc = "LSP: Signature Documentation", buffer = buffer_number })
   nnoremap("td", vim.lsp.buf.type_definition, { desc = "LSP: [T]ype [D]efinition", buffer = buffer_number })
