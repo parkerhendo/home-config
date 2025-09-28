@@ -162,8 +162,12 @@ null_ls.setup({
 				return utils.root_has_file({ ".prettierrc", ".prettierrc.js", ".prettierrc.json" })
 			end,
 		}),
-		formatting.black,
-		formatting.isort,
+		formatting.black.with({
+			command = vim.fn.stdpath("data") .. "/mason/bin/black",
+		}),
+		formatting.isort.with({
+			command = vim.fn.stdpath("data") .. "/mason/bin/isort",
+		}),
 		formatting.rustfmt,
 		formatting.ocamlformat,
 

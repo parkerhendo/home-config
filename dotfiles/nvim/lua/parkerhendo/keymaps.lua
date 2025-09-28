@@ -10,9 +10,7 @@ vim.g.mapleader = ","
 vim.g.maplocalleader = ","
 
 -- init.lua management
-nnoremap("<leader>v", ":e $MYVIMRC<cr>")
-nnoremap("<leader>V", ":source $MYVIMRC<cr>")
-nnoremap("<leader>pi", ":source $MYVIMRC<cr>:PackerSync<cr>")
+nnoremap("<leader>v", ":update<cr> :source $MYVIMRC<cr>")
 
 -- clipboard management nicities
 nnoremap("<leader>p", '"_dP')
