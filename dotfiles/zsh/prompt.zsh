@@ -21,33 +21,31 @@ prompt_arrow() {
 ZSH_MAIN_PROMPT="$(prompt_arrow)"
 
 git_prompt_status() {
-  gitstatus_query -d $PWD "GITSTATUS"
-
-  if [ -z $VCS_STATUS_LOCAL_BRANCH ] && [ -z $VCS_STATUS_COMMIT ]; then
-    PROMPT='$(prompt_pwd)$ZSH_MAIN_PROMPT'
-    zle && zle reset-prompt
-    return
-  fi
-
-  if [ $VCS_STATUS_HAS_STAGED = 0 ] && [ $VCS_STATUS_HAS_UNSTAGED = 0 ] && [ $VCS_STATUS_HAS_CONFLICTED = 0 ] && [ $VCS_STATUS_HAS_UNTRACKED = 0 ]; then
-    branch_color="%{$fg[green]%}"
-  else
-    branch_color="%{$fg[red]%}"
-  fi
-
-  truncate_length=20
-
-  if [ -z $VCS_STATUS_LOCAL_BRANCH ]; then
-    git_branch_or_commit=" ${VCS_STATUS_COMMIT: -$truncate_length}"
-  else
-    if [ ${#VCS_STATUS_LOCAL_BRANCH} -gt $truncate_length ]; then
-      git_branch_or_commit=" ...${VCS_STATUS_LOCAL_BRANCH: -$truncate_length}"
+  # Simple git branch detection without external dependencies
+  if git rev-parse --git-dir > /dev/null 2>&1; then
+    local branch=$(git branch --show-current 2>/dev/null)
+    if [ -n "$branch" ]; then
+      local status=$(git status --porcelain 2>/dev/null)
+      if [ -n "$status" ]; then
+        branch_color="%{$fg[red]%}"  # Has changes
+      else
+        branch_color="%{$fg[green]%}"  # Clean
+      fi
+      
+      truncate_length=20
+      if [ ${#branch} -gt $truncate_length ]; then
+        git_branch=" ...${branch: -$truncate_length}"
+      else
+        git_branch=" $branch"
+      fi
+      
+      PROMPT='$(prompt_pwd)$branch_color$git_branch$ZSH_MAIN_PROMPT'
     else
-      git_branch_or_commit=" $VCS_STATUS_LOCAL_BRANCH"
+      PROMPT='$(prompt_pwd)$ZSH_MAIN_PROMPT'
     fi
+  else
+    PROMPT='$(prompt_pwd)$ZSH_MAIN_PROMPT'
   fi
-
-  PROMPT='$(prompt_pwd)$branch_color$git_branch_or_commit$ZSH_MAIN_PROMPT'
   zle && zle reset-prompt
 }
 
