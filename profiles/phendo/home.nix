@@ -21,7 +21,7 @@
     go
 
     # dev utilities
-    nodejs_latest
+    nodejs_22
     k3d
     docker
     nodePackages_latest.vercel
