@@ -1,3 +1,5 @@
+autoload -Uz add-zsh-hook
+
 if [ "$(uname)" = "Darwin" ]; then
   PROMPTCOLOR=blue
 else
@@ -52,8 +54,11 @@ git_prompt_status() {
 setup_git_prompt_status() {
   git_prompt_status
 
-  add-zsh-hook precmd  git_prompt_status
-  add-zsh-hook preexec git_prompt_status
+  # Add hooks if available
+  if command -v add-zsh-hook >/dev/null 2>&1; then
+    add-zsh-hook precmd  git_prompt_status
+    add-zsh-hook preexec git_prompt_status
+  fi
 }
 
 # single-quote comments are important here!
