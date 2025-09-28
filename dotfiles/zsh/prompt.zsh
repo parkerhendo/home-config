@@ -25,8 +25,8 @@ git_prompt_status() {
   if git rev-parse --git-dir > /dev/null 2>&1; then
     local branch=$(git branch --show-current 2>/dev/null)
     if [ -n "$branch" ]; then
-      local status=$(git status --porcelain 2>/dev/null)
-      if [ -n "$status" ]; then
+      local git_status=$(git status --porcelain 2>/dev/null)
+      if [ -n "$git_status" ]; then
         branch_color="%{$fg[red]%}"  # Has changes
       else
         branch_color="%{$fg[green]%}"  # Clean
