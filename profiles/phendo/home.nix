@@ -35,6 +35,8 @@
   home.file = {
     # Shell profile
     ".zprofile".source = ../../dotfiles/zprofile;
+    ".zsh".source = ../../dotfiles/zsh;
+    ".zshrc".source = ../../dotfiles/zshrc;
 
     # Git configuration
     ".gitconfig".source = ../../dotfiles/git/gitconfig;
