@@ -109,6 +109,9 @@
       "cursor"
       "orbstack"
 
+      # Development
+      "conductor"
+
       # Communcation & productivity
       "beeper"
       "notion-calendar"
