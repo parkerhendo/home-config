@@ -26,8 +26,15 @@ set.cursorline = true
 set.showcmd = true
 set.incsearch = true
 
-vim.cmd([[set list]])
-vim.cmd([[set listchars=tab:\|\ ,eol:¬,trail:•,extends:❯,precedes:❮]])
+set.list = true
+set.listchars = {
+	tab = "│ ",
+	eol = "¬",
+	trail = "•",
+	extends = "❯",
+	precedes = "❮",
+	leadmultispace = "│ ",
+}
 vim.cmd([[set termguicolors]])
 vim.cmd([[set nocompatible]])
 vim.cmd([[set breakindent]])

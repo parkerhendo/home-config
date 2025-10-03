@@ -110,7 +110,6 @@
       "orbstack"
 
       # Development
-      "conductor"
 
       # Communcation & productivity
       "beeper"

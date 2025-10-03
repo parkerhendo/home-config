@@ -29,6 +29,7 @@
     "discord"
     "slack"
     "loom"
+    "zoom"
   ];
 
   homebrew.masApps = {
