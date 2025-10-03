@@ -82,6 +82,9 @@ vim.opt.formatoptions = {
 vim.o.background = "dark" -- or "light" for light mode
 vim.cmd([[colorscheme gruvbox-material]])
 
+-- Lower contrast indent guides
+vim.api.nvim_set_hl(0, "Whitespace", { fg = "#3c3836" })
+
 function _theme_toggle()
 	if vim.o.background == "dark" then
 		vim.o.background = "light"
