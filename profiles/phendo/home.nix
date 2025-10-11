@@ -21,6 +21,7 @@
     go
 
     # dev utilities
+    bun
     nodejs_22
     k3d
     docker
