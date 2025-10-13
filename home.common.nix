@@ -18,7 +18,6 @@
     codex
     claude-code
     gemini-cli
-    opencode
 
     # Shell and terminal utilities
     atuin
