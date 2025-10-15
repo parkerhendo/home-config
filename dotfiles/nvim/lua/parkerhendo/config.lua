@@ -21,20 +21,20 @@ set.signcolumn = "yes"
 set.cindent = true
 set.history = 50
 set.ruler = true
-set.textwidth = 110
+set.textwidth = 100
+set.colorcolumn = "100"
 set.cursorline = true
 set.showcmd = true
 set.incsearch = true
 
-set.list = true
-set.listchars = {
-	tab = "│ ",
-	eol = "¬",
-	trail = "•",
-	extends = "❯",
-	precedes = "❮",
-	leadmultispace = "│ ",
-}
+-- set.list = true
+-- set.listchars = {
+-- 	eol = "¬",
+-- 	trail = "•",
+-- 	extends = "❯",
+-- 	precedes = "❮",
+-- }
+
 vim.cmd([[set termguicolors]])
 vim.cmd([[set nocompatible]])
 vim.cmd([[set breakindent]])

@@ -5,6 +5,13 @@ return {
   opts = {
     indent = {
       enabled = true,
+      indent = {
+        enabled = true,
+        hl = "SnacksIndent",
+      },
+      animate = {
+        enabled = false,
+      },
       chunk = {
         enabled = true,
         only_current = true,
