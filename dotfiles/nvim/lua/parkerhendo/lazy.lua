@@ -26,6 +26,8 @@ vim.opt.rtp:prepend(lazypath)
 		install = { colorscheme = { "gruvbox-material" } },
 		checker = { enabled = false },
 		change_detection = { notify = false },
+		-- Write lockfile to a writable location (Nix config dir is read-only)
+		lockfile = vim.fn.stdpath("state") .. "/lazy-lock.json",
 	})
 
 	vim.api.nvim_create_user_command("LazyCheck", function()
