@@ -1,39 +1,65 @@
 local set = vim.opt
 
-set.swapfile = false
-set.updatetime = 300
+-- enable relative line number
+set.number = true
+set.relativenumber = true
+set.numberWidth = 2
+
+-- set tab to 2 spaces
+set.tabstop = 2
+set.softtabstop = 2
+set.expandtab = true
+
+-- enable autoindent
+set.autoindent = true
+set.smartindent = true
+set.shiftwidth = 2
+set.breakindent = true
+
+-- Enable ignorecase + smartcase for better searching
+set.ignorecase = true
+set.smartcase = true
+
+-- decrease updatetime
+set.updatetime = 250
+
+-- enable undofile for persistent undo
+set.undofile = true
+
 set.encoding = "utf-8"
 set.fileencoding = "utf-8"
-set.smartindent = true
-set.autoindent = true
 set.iskeyword:append("-")
 set.clipboard = ""
 set.smarttab = true
-set.tabstop = 2
-set.softtabstop = 2
-set.shiftwidth = 2
-set.expandtab = true
-set.incsearch = true
-set.number = true
-set.relativenumber = true
 set.cmdheight = 1
 set.signcolumn = "yes"
 set.cindent = true
 set.history = 50
 set.ruler = true
 set.textwidth = 100
-set.colorcolumn = "100"
+set.colorcolumn = "80"
 set.cursorline = true
 set.showcmd = true
-set.incsearch = true
 
--- set.list = true
--- set.listchars = {
--- 	eol = "¬",
--- 	trail = "•",
--- 	extends = "❯",
--- 	precedes = "❮",
--- }
+-- break/wrap long lines of text
+set.linebreak = true
+set.list = true
+set.wrap = true
+set.listchars = {
+	eol = "¬",
+	trail = "•",
+	extends = "❯",
+	precedes = "❮",
+}
+
+-- incremental searching
+set.incsearch = true
+set.hlsearch = true
+
+-- better splitting
+set.splitbelow = true
+set.splitright = true
+set.splitkeep = "screen"
 
 vim.cmd([[set termguicolors]])
 vim.cmd([[set nocompatible]])
