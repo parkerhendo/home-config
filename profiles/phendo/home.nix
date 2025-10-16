@@ -57,6 +57,5 @@
     "nvim".source = ../../dotfiles/nvim;
     "atuin".source = ../../dotfiles/atuin;
     "ghostty".source = ../../dotfiles/ghostty;
-    "hammerspoon".source = ../../dotfiles/hammerspoon;
   };
 }
