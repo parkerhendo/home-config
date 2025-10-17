@@ -5,6 +5,9 @@
     ../../config.common.nix
   ];
 
+  networking.computerName = "phendo";
+  networking.hostName = "phendo";
+
   system.primaryUser = "parkerhenderson";
 
   system.defaults = {

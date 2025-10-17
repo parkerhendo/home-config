@@ -1,9 +1,12 @@
-{ config, pkgs, lib, inputs, ... }:
+{ ... }:
 
 {
   imports = [
     ../../config.common.nix
   ];
+
+  networking.computerName = "zephyr";
+  networking.hostName = "zephyr";
 
   # Set primary user for user-specific options
   system.primaryUser = "parker";

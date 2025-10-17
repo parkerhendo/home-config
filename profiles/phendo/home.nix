@@ -1,6 +1,4 @@
-# Everything in here should go on all machines
-
-{ pkgs, inputs, ... }:
+{ pkgs, ... }:
 
 {
   imports = [

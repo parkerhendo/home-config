@@ -2,17 +2,54 @@
 
 {
 
+# Keyboard configuration
+  system.keyboard = {
+    enableKeyMapping = true;
+    remapCapsLockToEscape = true;
+  };
+
   # macOS system configuration
   system.defaults = {
     # Global system settings
+    CustomSystemPreferences = {
+      NSGlobalDomain = {
+        NSRequiresAquaSystemAppearance = true;
+      };
+    };
+
     NSGlobalDomain = {
       ApplePressAndHoldEnabled = false;       # Disable accents menu
       NSDocumentSaveNewDocumentsToCloud = false; # Save to disk by default
+      NSUseAnimatedFocusRing = false; # disable focus ring animation
+      NSWindowResizeTime = 0.001; # increase window resize speed
+      InitialKeyRepeat = null; # disable key repeat
+      AppleFontSmoothing = 0; # force sub-pixel anti-aliasing
+    };
+
+    # accessibility settings
+    universalaccess = {
+      reduceTransparency = true;
     };
 
     # Dock settings
     dock = {
+      orientation = "right";
       tilesize = 48;              # Dock icon size
+      autohide = true;            # autohide dock
+      autohide-delay = 0.0;         # show/hide without delay
+    };
+
+    # Screenshot settings
+    screencapture = {
+      "include-date" = true; # include datetime in screenshot title
+      location = "~/Documents/Dropbox/Screenshots"; # save screenshots to dropbox
+    };
+
+    # Menubar clock settings
+    menuExtraClock = {
+      Show24Hour = true;
+      ShowDayOfMonth = true;
+      ShowDayOfWeek = false;
     };
   };
 
