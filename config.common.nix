@@ -26,11 +26,6 @@
       AppleFontSmoothing = 0; # force sub-pixel anti-aliasing
     };
 
-    # accessibility settings
-    universalaccess = {
-      reduceTransparency = true;
-    };
-
     # Dock settings
     dock = {
       orientation = "right";
