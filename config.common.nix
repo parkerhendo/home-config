@@ -34,6 +34,7 @@
       autohide-delay = 0.0;         # show/hide without delay
       launchanim = false; # disable launch animation
       show-recents = false; # don't show recently used apps
+      mru-spaces = false; # disable automatic rearranging of spaces (literally the most insane behavior to enable by default)
     };
 
     # Screenshot settings
