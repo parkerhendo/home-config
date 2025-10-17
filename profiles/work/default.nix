@@ -47,6 +47,9 @@
     "granola"
     "firefox"
     "google-chrome"
+
+    # Utilities
+    "betterdisplay"
   ];
 
   homebrew.masApps = {
