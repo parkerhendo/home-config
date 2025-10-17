@@ -35,7 +35,7 @@
     git
     lazygit
     neovim
-    nodejs_18
+    nodejs_20
     parallel
     ripgrep
     tmux
