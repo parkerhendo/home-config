@@ -32,6 +32,8 @@
       tilesize = 48;              # Dock icon size
       autohide = true;            # autohide dock
       autohide-delay = 0.0;         # show/hide without delay
+      launchanim = false; # disable launch animation
+      show-recents = false; # don't show recently used apps
     };
 
     # Screenshot settings
