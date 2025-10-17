@@ -23,7 +23,8 @@
     dock.persistent-apps = [
       "/Applications/Ghostty.app"
       "/Applications/Dia.app"
-      "/Applications/Beeper Desktop.app"
+      "/Applications/Slack.app"
+      "/Applications/Figma Beta.app"
     ];
   };
 
