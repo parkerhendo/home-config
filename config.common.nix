@@ -212,15 +212,6 @@
   # Enable home-manager environment integration
   environment.pathsToLink = [ "/etc/profile.d" ];
 
-  # Add home-manager packages to PATH (prepend to ensure they take precedence)
-  environment.systemPath = [ "/etc/profiles/per-user/parkerhenderson/bin" ];
-
-  # Environment variables to ensure proper nix integration
-  environment.variables = {
-    # Ensure nix-darwin profile is sourced
-    NIX_PROFILES = "/nix/var/nix/profiles/default /etc/profiles/per-user/parkerhenderson";
-  };
-
   # System activation script to refresh PATH in running terminals
   system.activationScripts.afterUserActivation.text = ''
     # Send SIGUSR1 to all zsh processes to reload environment

@@ -1,4 +1,4 @@
-{ ... }:
+{ config, ... }:
 
 {
   imports = [
@@ -9,6 +9,15 @@
   networking.hostName = "phendo";
 
   system.primaryUser = "parkerhenderson";
+
+  # Add home-manager packages to PATH (prepend to ensure they take precedence)
+  environment.systemPath = [ "/etc/profiles/per-user/${config.system.primaryUser}/bin" ];
+
+  # Environment variables to ensure proper nix integration
+  environment.variables = {
+    # Ensure nix-darwin profile is sourced
+    NIX_PROFILES = "/nix/var/nix/profiles/default /etc/profiles/per-user/${config.system.primaryUser}";
+  };
 
   system.defaults = {
     dock.persistent-apps = [
