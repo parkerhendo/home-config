@@ -5,8 +5,8 @@
     ../../config.common.nix
   ];
 
-  networking.computerName = "work";
-  networking.hostName = "work";
+  networking.computerName = "parker-work";
+  networking.hostName = "parker-work";
 
   system.primaryUser = "parker";
 
