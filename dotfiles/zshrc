@@ -1,9 +1,9 @@
+# zsh-defer is optional - configuration will work without it
 if [ -f ~/.zsh/plugins/zsh-defer/zsh-defer.plugin.zsh ]; then
   source ~/.zsh/plugins/zsh-defer/zsh-defer.plugin.zsh
+  ZSH_DEFER_AVAILABLE=true
 else
-  echo "zsh-defer is missing! run \`setup.sh\`"
-  echo "you'll get some errors below..."
-  echo
+  ZSH_DEFER_AVAILABLE=false
 fi
 
 files=(
@@ -15,8 +15,8 @@ files=(
   history
   locale
   options
-  plugins
   prompt
+  plugins
 )
 
 for file in $files; do
@@ -32,14 +32,3 @@ if [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
   . '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
 fi
 # End Nix
-
-alias dev="/Users/parker/Developer/mono/dev"
-
-
-. "$HOME/.atuin/bin/env"
-
-eval "$(atuin init zsh)"
-
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
-[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion

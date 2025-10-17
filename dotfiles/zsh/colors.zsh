@@ -13,7 +13,13 @@ load_dircolors() {
     eval $(dircolors -b ~/.dircolors)
   fi
 }
-zsh-defer -t 1.0 +1 load_dircolors
+
+# Load dircolors with or without defer
+if [ "$ZSH_DEFER_AVAILABLE" = "true" ]; then
+  zsh-defer -t 1.0 +1 load_dircolors
+else
+  load_dircolors
+fi
 
 # grc for commands
 if hash grc 2> /dev/null; then

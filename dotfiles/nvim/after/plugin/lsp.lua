@@ -110,39 +110,45 @@ local default_capabilities = require("cmp_nvim_lsp").default_capabilities(capabi
 -- Create an augroup for format on save
 local format_on_save_augroup = vim.api.nvim_create_augroup("format_on_save", { clear = true })
 
-local on_attach = function(_client, buffer_number)
-	-- Pass the current buffer to map lsp keybinds
-	map_lsp_keybinds(buffer_number)
-
-	-- Create a command `:Format` local to the LSP buffer
-	vim.api.nvim_buf_create_user_command(buffer_number, "Format", function(_)
-		vim.lsp.buf.format({
-			filter = function(format_client)
-				-- Use Prettier to format TS/JS if it's available
-				return format_client.name ~= "ts_ls" or not null_ls.is_registered("prettier")
-			end,
-		})
-	end, { desc = "LSP: Format current buffer with LSP" })
-
-	vim.api.nvim_create_autocmd("BufWritePre", {
-		group = format_on_save_augroup,
-		buffer = buffer_number,
-		desc = "Run LSP formatting on a file on save",
-		callback = function()
-			vim.cmd.Format()
-		end,
-	})
-end
-
--- Iterate over our servers and set them up
+-- Configure and enable LSP servers using new vim.lsp.config API
 for name, config in pairs(servers) do
-	require("lspconfig")[name].setup({
-		on_attach = on_attach,
+	vim.lsp.config(name, {
 		capabilities = default_capabilities,
 		settings = config.settings,
 		handlers = vim.tbl_deep_extend("force", {}, default_handlers, config.handlers or {}),
 	})
+	vim.lsp.enable(name)
 end
+
+-- Set up LspAttach autocmd to configure keybindings and format-on-save
+-- This replaces the old on_attach callback
+vim.api.nvim_create_autocmd("LspAttach", {
+	callback = function(ev)
+		local buffer_number = ev.buf
+
+		-- Pass the current buffer to map lsp keybinds
+		map_lsp_keybinds(buffer_number)
+
+		-- Create a command `:Format` local to the LSP buffer
+		vim.api.nvim_buf_create_user_command(buffer_number, "Format", function(_)
+			vim.lsp.buf.format({
+				filter = function(format_client)
+					-- Use Prettier to format TS/JS if it's available
+					return format_client.name ~= "ts_ls" or not null_ls.is_registered("prettier")
+				end,
+			})
+		end, { desc = "LSP: Format current buffer with LSP" })
+
+		vim.api.nvim_create_autocmd("BufWritePre", {
+			group = format_on_save_augroup,
+			buffer = buffer_number,
+			desc = "Run LSP formatting on a file on save",
+			callback = function()
+				vim.cmd.Format()
+			end,
+		})
+	end,
+})
 
 -- Configure LSP linting, formatting, diagnostics, and code actions
 local formatting = null_ls.builtins.formatting
@@ -162,8 +168,12 @@ null_ls.setup({
 				return utils.root_has_file({ ".prettierrc", ".prettierrc.js", ".prettierrc.json" })
 			end,
 		}),
-		formatting.black,
-		formatting.isort,
+		formatting.black.with({
+			command = vim.fn.stdpath("data") .. "/mason/bin/black",
+		}),
+		formatting.isort.with({
+			command = vim.fn.stdpath("data") .. "/mason/bin/isort",
+		}),
 		formatting.rustfmt,
 		formatting.ocamlformat,
 
@@ -185,9 +195,6 @@ null_ls.setup({
 		code_actions.gitsigns,
 	},
 })
-
--- Configure borderd for LspInfo ui
-require("lspconfig.ui.windows").default_options.border = "rounded"
 
 -- Configure diagostics border
 vim.diagnostic.config({

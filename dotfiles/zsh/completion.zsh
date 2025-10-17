@@ -1,7 +1,3 @@
-if [ -d $HOME/.nix-profile/share/zsh/site-functions ]; then
-  export FPATH="$HOME/.nix-profile/share/zsh/site-functions:$FPATH"
-fi
-
 typeset -gU fpath     # clean fpaths
 autoload -Uz compinit # load completions
 compinit -C

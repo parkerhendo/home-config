@@ -23,7 +23,7 @@ return {
 			},
 		},
 		view = {
-			width = 40,
+			width = 32,
 			float = {
 				enable = false,
 				quit_on_focus_loss = true,
