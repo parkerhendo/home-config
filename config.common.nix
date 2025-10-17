@@ -1,4 +1,4 @@
-{ config, pkgs, lib, inputs, ... }:
+{  pkgs, inputs, ... }:
 
 {
 
@@ -213,26 +213,27 @@
     casks = [
       # Terminal and Development
       "ghostty"
-      "cursor"
-      "orbstack"
-
-      # Development
 
       # Communcation & productivity
       "beeper"
+      "claude"
       "notion-calendar"
       "thebrowsercompany-dia"
       "obsidian"
       "mimestream"
       "rescuetime"
+      "1password"
 
       # Media
+      "dropbox"
       "spotify"
       "cleanshot"
+      "ogdesign-eagle"
+      "zotero"
 
       # Utilities
+      "bartender"
       "spaceman"
-      "dropbox"
       "raycast"
     ];
     masApps = {

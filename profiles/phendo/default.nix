@@ -1,4 +1,4 @@
-{ config, pkgs, lib, inputs, ... }:
+{ ... }:
 
 {
   imports = [
@@ -24,12 +24,17 @@
   homebrew.casks = [
     # Development tools
     "figma@beta"
+    "cursor"
+    "orbstack"
 
     # Communication and productivity
     "discord"
     "slack"
     "loom"
     "zoom"
+    "granola"
+    "firefox"
+    "google-chrome"
   ];
 
   homebrew.masApps = {
