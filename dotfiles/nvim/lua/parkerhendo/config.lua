@@ -44,6 +44,12 @@ set.showcmd = true
 set.linebreak = true
 set.list = true
 set.wrap = true
+set.listchars = {
+	eol = "¬",
+	trail = "•",
+	extends = "❯",
+	precedes = "❮",
+}
 
 -- incremental searching
 set.incsearch = true
