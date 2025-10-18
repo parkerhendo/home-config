@@ -27,8 +27,8 @@ nnoremap("<leader>w", ":w<cr>")
 nnoremap("<leader>q", ":q<cr>")
 nnoremap("<leader>Q", ":q!<cr>")
 
--- nvim-tree
-nnoremap("<leader>e", ":NvimTreeToggle<cr>")
+-- oil.nvim
+nnoremap("<leader>e", ":Oil --float<cr>")
 
 -- navigating splits
 nnoremap("<M-j>", "<C-w>j")
