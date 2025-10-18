@@ -46,8 +46,8 @@ These keymaps are only available when Oil is open:
 | Keymap | Action | Description |
 |--------|--------|-------------|
 | `<CR>` | Select | Open file or enter directory |
-| `<C-j>` | Select split | Open in horizontal split |
-| `<C-l>` | Select vsplit | Open in vertical split |
+| `<C-h>` | Select split | Open in horizontal split |
+| `<C-v>` | Select vsplit | Open in vertical split |
 | `<C-t>` | Select tab | Open in new tab |
 | `<C-p>` | Preview | Preview file |
 | `<C-c>` | Close | Close Oil |
