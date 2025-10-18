@@ -75,6 +75,9 @@ return {
 				},
 			},
 
+			-- Disable column display for a cleaner look
+			columns = {},
+
 			keymaps = {
 				["g?"] = "actions.show_help",
 				["<CR>"] = "actions.select",
@@ -112,5 +115,17 @@ return {
 				end,
 			},
 		})
+
+		-- Gruvbox-themed highlights for oil.nvim
+		vim.api.nvim_set_hl(0, "OilDir", { link = "GruvboxAqua" })
+		vim.api.nvim_set_hl(0, "OilDirIcon", { link = "GruvboxAqua" })
+		vim.api.nvim_set_hl(0, "OilLink", { link = "GruvboxPurple" })
+		vim.api.nvim_set_hl(0, "OilLinkTarget", { link = "Comment" })
+		vim.api.nvim_set_hl(0, "OilFile", { link = "GruvboxFg1" })
+		vim.api.nvim_set_hl(0, "OilCreate", { link = "GruvboxGreen" })
+		vim.api.nvim_set_hl(0, "OilDelete", { link = "GruvboxRed" })
+		vim.api.nvim_set_hl(0, "OilMove", { link = "GruvboxYellow" })
+		vim.api.nvim_set_hl(0, "OilCopy", { link = "GruvboxBlue" })
+		vim.api.nvim_set_hl(0, "OilChange", { link = "GruvboxOrange" })
 	end,
 }

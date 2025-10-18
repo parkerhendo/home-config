@@ -34,10 +34,33 @@
 
 | Mode | Keymap | Action | Description |
 |------|--------|--------|-------------|
-| n | `<leader>e` | `:NvimTreeToggle<cr>` | Toggle file explorer |
+| n | `<leader>e` | `:Oil --float<cr>` | Open Oil file explorer |
 | n | `<leader>f` | `telescope.builtin.find_files()` | Find files |
 | n | `<leader>g` | `telescope.builtin.live_grep()` | Search in files (live grep) |
 | n | `<space>` | `telescope.builtin.buffers()` | List open buffers |
+
+### Oil.nvim (File Explorer)
+
+These keymaps are only available when Oil is open:
+
+| Keymap | Action | Description |
+|--------|--------|-------------|
+| `<CR>` | Select | Open file or enter directory |
+| `<C-j>` | Select split | Open in horizontal split |
+| `<C-l>` | Select vsplit | Open in vertical split |
+| `<C-t>` | Select tab | Open in new tab |
+| `<C-p>` | Preview | Preview file |
+| `<C-c>` | Close | Close Oil |
+| `<C-r>` | Refresh | Refresh directory listing |
+| `-` | Parent | Go to parent directory |
+| `_` | Open cwd | Open current working directory |
+| `` ` `` | Change directory | Change Vim's working directory |
+| `~` | Change tab directory | Change tab's working directory |
+| `gs` | Change sort | Change sort order |
+| `gx` | Open external | Open file with system default |
+| `g.` | Toggle hidden | Toggle hidden files (dotfiles/gitignored) |
+| `g?` | Show help | Show help |
+| `q` | Close | Close Oil |
 
 ## Window Management
 
