@@ -90,7 +90,7 @@ return {
       keymaps = {
         ["g?"] = "actions.show_help",
         ["<CR>"] = "actions.select",
-        ["<C-h>"] = "actions.select_split",
+        ["<C-s>"] = "actions.select_split",
         ["<C-v>"] = "actions.select_vsplit",
         ["<C-t>"] = "actions.select_tab",
         ["<C-p>"] = "actions.preview",
