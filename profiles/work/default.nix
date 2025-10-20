@@ -33,12 +33,17 @@
     name = "parker";
     home = "/Users/parker";
   };
+
+  homebrew.brews = [
+    "docker"
+    "cargo-binstall"
+  ];
   # Phendo-specific homebrew packages (additional to common ones)
   homebrew.casks = [
     # Development tools
     "figma@beta"
     "cursor"
-    "orbstack"
+    "docker-desktop"
 
     # Communication and productivity
     "linear-linear"
