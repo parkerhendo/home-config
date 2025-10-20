@@ -19,6 +19,7 @@
     go
 
     # dev utilities
+    duckdb
     wasm-pack
     mise
     bun
