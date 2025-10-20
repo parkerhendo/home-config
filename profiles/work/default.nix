@@ -36,6 +36,7 @@
 
   homebrew.brews = [
     "docker"
+    "wasm-bindgen"
     "cargo-binstall"
   ];
   # Phendo-specific homebrew packages (additional to common ones)

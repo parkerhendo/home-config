@@ -37,6 +37,10 @@
       mru-spaces = false; # disable automatic rearranging of spaces (literally the most insane behavior to enable by default)
     };
 
+    finder = {
+      CreateDesktop = false;
+    };
+
     # Screenshot settings
     screencapture = {
       "include-date" = true; # include datetime in screenshot title
