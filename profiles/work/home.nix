@@ -19,6 +19,7 @@
     go
 
     # dev utilities
+    mise
     bun
     k3d
     docker
