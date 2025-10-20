@@ -19,6 +19,7 @@
     go
 
     # dev utilities
+    wasm-pack
     mise
     bun
     k3d

@@ -43,7 +43,6 @@
     # Development tools
     "figma@beta"
     "cursor"
-    "docker-desktop"
 
     # Communication and productivity
     "linear-linear"
