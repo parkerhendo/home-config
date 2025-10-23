@@ -19,6 +19,7 @@
     go
 
     # dev utilities
+    nodejs_20
     duckdb
     wasm-pack
     mise
