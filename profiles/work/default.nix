@@ -56,7 +56,6 @@
     "google-chrome"
 
     # Utilities
-    "betterdisplay"
   ];
 
   homebrew.masApps = {
