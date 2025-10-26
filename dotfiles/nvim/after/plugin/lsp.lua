@@ -164,6 +164,7 @@ null_ls.setup({
     -- Formatting
     formatting.stylua,
     formatting.prettier.with({
+      prefer_local = "node_modules/.bin",
       condition = function(utils)
         return utils.root_has_file({ ".prettierrc", ".prettierrc.js", ".prettierrc.json" })
       end,
@@ -179,6 +180,7 @@ null_ls.setup({
 
     -- Diagnostics
     eslint_diagnostics.with({
+      prefer_local = "node_modules/.bin",
       condition = function(utils)
         return utils.root_has_file({ ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json" })
       end,
@@ -188,6 +190,7 @@ null_ls.setup({
 
     -- Code Actions
     eslint_code_actions.with({
+      prefer_local = "node_modules/.bin",
       condition = function(utils)
         return utils.root_has_file({ ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json" })
       end,
