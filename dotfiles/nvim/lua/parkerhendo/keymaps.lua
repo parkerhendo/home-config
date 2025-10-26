@@ -30,6 +30,9 @@ nnoremap("<leader>Q", ":q!<cr>")
 -- oil.nvim
 nnoremap("<leader>e", ":Oil --float<cr>")
 
+-- nvim-tree.nvim
+nnoremap("<leader>E", ":NvimTreeToggle<cr>")
+
 -- navigating splits
 nnoremap("<M-j>", "<C-w>j")
 nnoremap("<M-k>", "<C-w>k")
@@ -95,34 +98,34 @@ keymap("n", "<leader>o", "<cmd>OpenInGHFile<CR>", { silent = true })
 -- LSP
 
 M.map_lsp_keybinds = function(buffer_number)
-  nnoremap("<leader>rn", vim.lsp.buf.rename, { desc = "LSP: [R]e[n]ame", buffer = buffer_number })
-  nnoremap("<leader>ca", vim.lsp.buf.code_action, { desc = "LSP: [C]ode [A]ction", buffer = buffer_number })
-  nnoremap("gd", vim.lsp.buf.definition, { desc = "LSP: [G]o to [D]efinition", buffer = buffer_number })
+	nnoremap("<leader>rn", vim.lsp.buf.rename, { desc = "LSP: [R]e[n]ame", buffer = buffer_number })
+	nnoremap("<leader>ca", vim.lsp.buf.code_action, { desc = "LSP: [C]ode [A]ction", buffer = buffer_number })
+	nnoremap("gd", vim.lsp.buf.definition, { desc = "LSP: [G]o to [D]efinition", buffer = buffer_number })
 
-  -- Telescope LSP keybinds --
-  nnoremap(
-    "gr",
-    require("telescope.builtin").lsp_references,
-    { desc = "LSP: [G]oto [R]eferences", buffer = buffer_number }
-  )
+	-- Telescope LSP keybinds --
+	nnoremap(
+		"gr",
+		require("telescope.builtin").lsp_references,
+		{ desc = "LSP: [G]oto [R]eferences", buffer = buffer_number }
+	)
 
-  nnoremap(
-    "gi",
-    require("telescope.builtin").lsp_implementations,
-    { desc = "LSP: [G]oto [I]mplementation", buffer = buffer_number }
-  )
+	nnoremap(
+		"gi",
+		require("telescope.builtin").lsp_implementations,
+		{ desc = "LSP: [G]oto [I]mplementation", buffer = buffer_number }
+	)
 
-  nnoremap(
-    "<leader>bs",
-    require("telescope.builtin").lsp_document_symbols,
-    { desc = "LSP: [B]uffer [S]ymbols", buffer = buffer_number }
-  )
+	nnoremap(
+		"<leader>bs",
+		require("telescope.builtin").lsp_document_symbols,
+		{ desc = "LSP: [B]uffer [S]ymbols", buffer = buffer_number }
+	)
 
-  nnoremap(
-    "<leader>ps",
-    require("telescope.builtin").lsp_workspace_symbols,
-    { desc = "LSP: [P]roject [S]ymbols", buffer = buffer_number }
-  )
+	nnoremap(
+		"<leader>ps",
+		require("telescope.builtin").lsp_workspace_symbols,
+		{ desc = "LSP: [P]roject [S]ymbols", buffer = buffer_number }
+	)
 
   nnoremap("K", function()
     -- First show diagnostics if available at cursor position
