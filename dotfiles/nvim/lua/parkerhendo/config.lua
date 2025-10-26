@@ -42,13 +42,15 @@ set.showcmd = true
 
 -- break/wrap long lines of text
 set.linebreak = true
-set.list = true
 set.wrap = true
+
+-- show invisible chars
+set.list = false
 set.listchars = {
-	eol = "¬",
-	trail = "•",
-	extends = "❯",
-	precedes = "❮",
+  eol = "¬",
+  trail = "•",
+  extends = "❯",
+  precedes = "❮",
 }
 
 -- incremental searching
@@ -93,12 +95,12 @@ vim.cmd([[autocmd FileType * setlocal formatoptions-=c formatoptions-=r formatop
 vim.opt.formatoptions = {
   ["1"] = true,
   ["2"] = true, -- Use indent from 2nd line of a paragraph
-  q = true,    -- continue comments with gq"
-  c = false,   -- Auto-wrap comments using textwidth
-  r = false,   -- Continue comments when pressing Enter
-  n = true,    -- Recognize numbered lists
-  t = false,   -- autowrap lines using text width value
-  j = true,    -- remove a comment leader when joining lines.
+  q = true, -- continue comments with gq"
+  c = false, -- Auto-wrap comments using textwidth
+  r = false, -- Continue comments when pressing Enter
+  n = true, -- Recognize numbered lists
+  t = false, -- autowrap lines using text width value
+  j = true, -- remove a comment leader when joining lines.
   l = true,
   v = true,
 }

@@ -65,8 +65,6 @@ nnoremap("<leader>T", "<cmd>lua _theme_toggle()<CR>", { silent = true })
 -- toggleterm
 nnoremap("<leader>t", "<cmd>lua _lazygit_toggle()<CR>", { silent = true })
 
-
-
 -- Harpoon
 vim.cmd([[
   nnoremap <silent><leader>m :lua require("harpoon.mark").add_file()<CR>
@@ -128,13 +126,13 @@ M.map_lsp_keybinds = function(buffer_number)
 
   nnoremap("K", function()
     -- First show diagnostics if available at cursor position
-    local diagnostics = vim.diagnostic.get(0, { lnum = vim.fn.line('.') - 1 })
+    local diagnostics = vim.diagnostic.get(0, { lnum = vim.fn.line(".") - 1 })
     if #diagnostics > 0 then
       vim.diagnostic.open_float(0, {
         scope = "cursor",
         border = "rounded",
         focusable = true,
-        close_events = { "BufLeave", "CursorMoved", "InsertEnter", "FocusLost" }
+        close_events = { "BufLeave", "CursorMoved", "InsertEnter", "FocusLost" },
       })
     else
       -- Fall back to hover documentation if no diagnostics

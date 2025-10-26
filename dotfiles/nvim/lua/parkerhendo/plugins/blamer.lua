@@ -1,10 +1,10 @@
 return {
-	"APZelos/blamer.nvim",
-	event = { "BufReadPost", "BufNewFile" },
-	config = function()
-		vim.g.blamer_show = 1
-		vim.g.blamer_delay = 500
-		vim.g.blamer_show_in_visual_modes = 1
-		vim.g.blamer_show_in_insert_modes = 0
-	end,
+  "APZelos/blamer.nvim",
+  event = { "BufReadPost", "BufNewFile" },
+  config = function()
+    vim.g.blamer_show = 1
+    vim.g.blamer_delay = 500
+    vim.g.blamer_show_in_visual_modes = 1
+    vim.g.blamer_show_in_insert_modes = 0
+  end,
 }

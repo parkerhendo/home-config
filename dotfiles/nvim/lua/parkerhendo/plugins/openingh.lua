@@ -1,4 +1,4 @@
 return {
-	"almo7aya/openingh.nvim",
-	cmd = { "OpenInGHFileLines", "OpenInGHFile" },
+  "almo7aya/openingh.nvim",
+  cmd = { "OpenInGHFileLines", "OpenInGHFile" },
 }
