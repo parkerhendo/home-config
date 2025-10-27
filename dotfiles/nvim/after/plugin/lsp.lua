@@ -162,33 +162,40 @@ local eslint_code_actions = require("none-ls.code_actions.eslint")
 null_ls.setup({
   sources = {
     -- Formatting
+    -- stylua automatically looks for stylua.toml or .stylua.toml in project root
     formatting.stylua,
+    -- Prettier prefers local installation and automatically detects config files
     formatting.prettier.with({
       prefer_local = "node_modules/.bin",
-      condition = function(utils)
-        return utils.root_has_file({ ".prettierrc", ".prettierrc.js", ".prettierrc.json" })
-      end,
     }),
+    -- Black prefers local installation and uses project-specific pyproject.toml or setup.cfg
     formatting.black.with({
-      command = vim.fn.stdpath("data") .. "/mason/bin/black",
+      prefer_local = "node_modules/.bin",
     }),
+    -- isort prefers local installation and uses project-specific .isort.cfg or pyproject.toml
     formatting.isort.with({
-      command = vim.fn.stdpath("data") .. "/mason/bin/isort",
+      prefer_local = "node_modules/.bin",
     }),
+    -- rustfmt automatically looks for rustfmt.toml or .rustfmt.toml in project root
     formatting.rustfmt,
+    -- ocamlformat automatically looks for .ocamlformat in project root
     formatting.ocamlformat,
 
     -- Diagnostics
+    -- ESLint only runs when a config file exists (intentional - prevents unwanted linting)
     eslint_diagnostics.with({
       prefer_local = "node_modules/.bin",
       condition = function(utils)
         return utils.root_has_file({ ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json" })
       end,
     }),
+    -- flake8 automatically looks for .flake8, setup.cfg, or tox.ini in project root
     diagnostics.flake8,
+    -- mypy automatically looks for mypy.ini, pyproject.toml, or setup.cfg in project root
     diagnostics.mypy,
 
     -- Code Actions
+    -- ESLint code actions only when a config file exists (matches diagnostics behavior)
     eslint_code_actions.with({
       prefer_local = "node_modules/.bin",
       condition = function(utils)
