@@ -9,8 +9,9 @@ return {
       disable_diagnostics = false,
       list_opener = "copen",
       highlights = {
-        incoming = "DiffAdd",
-        current = "DiffText",
+        incoming = "Visual",
+        current = "CursorLine",
+        ancestor = "Normal",
       },
     })
   end,
