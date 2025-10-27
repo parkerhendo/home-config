@@ -20,6 +20,7 @@
 
     # dev utilities
     nodejs_20
+    wasm-bindgen-cli_0_2_100
     duckdb
     wasm-pack
     mise
