@@ -31,6 +31,7 @@ require("mason-null-ls").setup({
     "black", -- Python formatter
     "isort", -- Python import sorter
     "prettier", -- Web formatter
+    "rustywind", -- Tailwind class sorter
     -- Linters
     "flake8", -- Python linter
     "mypy", -- Python type checker
@@ -180,6 +181,8 @@ null_ls.setup({
     formatting.rustfmt,
     -- ocamlformat automatically looks for .ocamlformat in project root
     formatting.ocamlformat,
+    -- rustywind sorts Tailwind CSS classes
+    formatting.rustywind,
 
     -- Diagnostics
     -- ESLint only runs when a config file exists (intentional - prevents unwanted linting)
