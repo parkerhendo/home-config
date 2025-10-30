@@ -26,6 +26,18 @@ git_prompt_status() {
   # Simple git branch detection without external dependencies
   if git rev-parse --git-dir > /dev/null 2>&1; then
     local branch=$(git branch --show-current 2>/dev/null)
+    local git_dir=$(git rev-parse --git-dir 2>/dev/null)
+    rebase_info=""
+
+    # Check if we're in a rebase state
+    if [ -d "$git_dir/rebase-merge" ] || [ -d "$git_dir/rebase-apply" ]; then
+      # Get the short hash of the commit being applied
+      local commit_hash=$(git rev-parse --short HEAD 2>/dev/null)
+      if [ -n "$commit_hash" ]; then
+        rebase_info=" %{$fg[yellow]%}($commit_hash)"
+      fi
+    fi
+
     if [ -n "$branch" ]; then
       # Use a different variable name to avoid conflicts
       local git_changes=$(git status --porcelain 2>/dev/null)
@@ -34,17 +46,17 @@ git_prompt_status() {
       else
         branch_color="%{$fg[green]%}"  # Clean
       fi
-      
+
       truncate_length=20
       if [ ${#branch} -gt $truncate_length ]; then
         git_branch=" ...${branch: -$truncate_length}"
       else
         git_branch=" $branch"
       fi
-      
-      PROMPT='$(prompt_pwd)$branch_color$git_branch$ZSH_MAIN_PROMPT'
+
+      PROMPT='$(prompt_pwd)$branch_color$git_branch$rebase_info$ZSH_MAIN_PROMPT'
     else
-      PROMPT='$(prompt_pwd)$ZSH_MAIN_PROMPT'
+      PROMPT='$(prompt_pwd)$rebase_info$ZSH_MAIN_PROMPT'
     fi
   else
     PROMPT='$(prompt_pwd)$ZSH_MAIN_PROMPT'
