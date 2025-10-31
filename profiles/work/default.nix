@@ -55,6 +55,7 @@
     "google-chrome"
 
     # Utilities
+    "keycastr"
   ];
 
   homebrew.masApps = {
