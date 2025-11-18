@@ -12,6 +12,7 @@
   # Zephyr-specific packages
   home.packages = with pkgs; [
     # Add zephyr-specific packages here
+    go
   ];
 
   # File management - symlink essential dotfiles (paths are profile-specific)

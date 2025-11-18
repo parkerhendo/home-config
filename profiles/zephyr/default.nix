@@ -38,6 +38,7 @@
   homebrew.casks = [
     # Add zephyr-specific casks here
     "selfcontrol"
+    "google-chrome"
   ];
 
   homebrew.masApps = {
