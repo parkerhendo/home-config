@@ -24,7 +24,6 @@
       "/Applications/Ghostty.app"
       "/Applications/Dia.app"
       "/Applications/Slack.app"
-      "/Applications/Figma Beta.app"
     ];
   };
 
@@ -43,6 +42,7 @@
     # Development tools
     "figma@beta"
     "cursor"
+    "orbstack"
 
     # Communication and productivity
     "linear-linear"
