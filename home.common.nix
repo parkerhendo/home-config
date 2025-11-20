@@ -40,6 +40,13 @@
     ripgrep
     tmux
 
+    # rust stuff
+    rustc
+    cargo
+    rust-analyzer
+    rustfmt
+    clippy
+
     # Media and utilities
     ffmpeg
     neofetch
