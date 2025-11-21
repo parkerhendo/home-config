@@ -31,4 +31,9 @@ bindkey '^Xe' edit-command-line
 if [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
   . '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
 fi
+
+# Home Manager session variables
+if [ -e '/etc/profiles/per-user/parker/etc/profile.d/hm-session-vars.sh' ]; then
+  . '/etc/profiles/per-user/parker/etc/profile.d/hm-session-vars.sh'
+fi
 # End Nix

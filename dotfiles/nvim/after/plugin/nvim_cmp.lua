@@ -17,11 +17,35 @@ cmp.setup({
     completion = {
       border = "rounded",
       winhighlight = "Normal:NormalFloat,FloatBorder:FloatBorder,CursorLine:PmenuSel,Search:None",
+      max_width = 50,
+      max_height = 15,
     },
     documentation = {
       border = "rounded",
       winhighlight = "Normal:NormalFloat,FloatBorder:FloatBorder,CursorLine:Visual,Search:None",
+      max_width = 80,
+      max_height = 20,
     },
+  },
+  formatting = {
+    fields = { "abbr", "kind", "menu" },
+    format = function(entry, vim_item)
+      -- Limit the width of the completion text
+      local max_abbr_width = 30
+      if #vim_item.abbr > max_abbr_width then
+        vim_item.abbr = string.sub(vim_item.abbr, 1, max_abbr_width - 1) .. "..."
+      end
+
+      -- Set the source name
+      vim_item.menu = ({
+        nvim_lsp = "[LSP]",
+        luasnip = "[Snip]",
+        buffer = "[Buf]",
+        path = "[Path]",
+      })[entry.source.name]
+
+      return vim_item
+    end,
   },
   mapping = cmp.mapping.preset.insert({
     ["<C-b>"] = cmp.mapping.scroll_docs(-4),

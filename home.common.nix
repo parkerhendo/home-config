@@ -43,7 +43,6 @@
     # rust stuff
     rustc
     cargo
-    rust-analyzer
     rustfmt
     clippy
 
@@ -65,5 +64,10 @@
   programs.direnv = {
     enable = true;
     nix-direnv.enable = true;
+  };
+
+  # Set RUST_SRC_PATH for rust-analyzer to find standard library source
+  home.sessionVariables = {
+    RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
   };
 }

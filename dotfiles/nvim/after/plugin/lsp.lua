@@ -94,7 +94,49 @@ local servers = {
       ["textDocument/publishDiagnostics"] = vim.lsp.with(tsserver_on_publish_diagnostics_override, {}),
     },
   },
-  rust_analyzer = {},
+  rust_analyzer = {
+    settings = {
+      ["rust-analyzer"] = {
+        cargo = {
+          allFeatures = true,
+          loadOutDirsFromCheck = true,
+        },
+        check = {
+          command = "clippy",
+        },
+        procMacro = {
+          enable = true,
+        },
+        rustcSource = vim.env.RUST_SRC_PATH or "discover",
+        inlayHints = {
+          bindingModeHints = {
+            enable = true,
+          },
+          chainingHints = {
+            enable = true,
+          },
+          closingBraceHints = {
+            minLines = 25,
+          },
+          closureReturnTypeHints = {
+            enable = "always",
+          },
+          lifetimeElisionHints = {
+            enable = "always",
+            useParameterNames = true,
+          },
+          parameterHints = {
+            enable = true,
+          },
+          typeHints = {
+            enable = true,
+            hideClosureInitialization = false,
+            hideNamedConstructor = false,
+          },
+        },
+      },
+    },
+  },
   yamlls = {},
 }
 
@@ -112,14 +154,25 @@ local default_capabilities = require("cmp_nvim_lsp").default_capabilities(capabi
 local format_on_save_augroup = vim.api.nvim_create_augroup("format_on_save", { clear = true })
 
 -- Configure and enable LSP servers using new vim.lsp.config API
+-- (except rust_analyzer which needs special handling)
 for name, config in pairs(servers) do
-  vim.lsp.config(name, {
-    capabilities = default_capabilities,
-    settings = config.settings,
-    handlers = vim.tbl_deep_extend("force", {}, default_handlers, config.handlers or {}),
-  })
-  vim.lsp.enable(name)
+  if name ~= "rust_analyzer" then
+    vim.lsp.config(name, {
+      capabilities = default_capabilities,
+      settings = config.settings,
+      handlers = vim.tbl_deep_extend("force", {}, default_handlers, config.handlers or {}),
+    })
+    vim.lsp.enable(name)
+  end
 end
+
+-- Configure rust-analyzer using lspconfig to ensure initializationOptions are set correctly
+-- (vim.lsp.config doesn't auto-transfer settings to init_options like lspconfig does)
+require("lspconfig").rust_analyzer.setup({
+  capabilities = default_capabilities,
+  settings = servers.rust_analyzer.settings,
+  handlers = vim.tbl_deep_extend("force", {}, default_handlers),
+})
 
 -- Set up LspAttach autocmd to configure keybindings and format-on-save
 -- This replaces the old on_attach callback
