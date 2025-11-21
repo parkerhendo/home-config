@@ -26,7 +26,6 @@
     bun
     k3d
     docker
-    orbstack
     nodePackages_latest.vercel
 
     # utilities
