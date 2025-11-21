@@ -42,7 +42,6 @@
     # Development tools
     "figma@beta"
     "cursor"
-    "orbstack"
 
     # Communication and productivity
     "linear-linear"

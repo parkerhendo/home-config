@@ -15,7 +15,6 @@
     python312
     uv
     ocaml
-    rustup
     go
 
     # dev utilities
