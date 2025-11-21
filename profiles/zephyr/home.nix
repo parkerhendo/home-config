@@ -14,6 +14,12 @@
     # Add zephyr-specific packages here
     railway
     go
+
+    # rust stuff
+    rustc
+    cargo
+    rustfmt
+    clippy
   ];
 
   # File management - symlink essential dotfiles (paths are profile-specific)

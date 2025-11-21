@@ -14,8 +14,8 @@
     # programming languages
     python312
     uv
-    ocaml
     go
+    rustup
 
     # dev utilities
     nodejs_20

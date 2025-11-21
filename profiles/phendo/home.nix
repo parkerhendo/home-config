@@ -23,6 +23,12 @@
     docker
     nodePackages_latest.vercel
 
+    # rust stuff
+    rustc
+    cargo
+    rustfmt
+    clippy
+
     # utilities
     watchexec
 
