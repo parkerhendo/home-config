@@ -18,6 +18,7 @@
     rustup
 
     # dev utilities
+    graphite-cli
     nodejs_20
     wasm-bindgen-cli_0_2_100
     duckdb
