@@ -68,14 +68,6 @@ nnoremap("<leader>T", "<cmd>lua _theme_toggle()<CR>", { silent = true })
 -- toggleterm
 nnoremap("<leader>t", "<cmd>lua _lazygit_toggle()<CR>", { silent = true })
 
--- Harpoon
-vim.cmd([[
-  nnoremap <silent><leader>m :lua require("harpoon.mark").add_file()<CR>
-  nnoremap <silent><left> :lua require("harpoon.ui").toggle_quick_menu()<CR>
-  nnoremap <silent><up> :lua require("harpoon.ui").nav_next()<CR>
-  nnoremap <silent><down> :lua require("harpoon.ui").nav_prev()<CR>
-]])
-
 -- Trouble
 nnoremap("<leader>xx", "<cmd>Trouble<cr>", { silent = true })
 nnoremap("<leader>xw", "<cmd>Trouble workspace_diagnostics<cr>", { silent = true })

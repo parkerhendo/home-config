@@ -11,7 +11,6 @@
 - [Telescope (Fuzzy Finder)](#telescope-fuzzy-finder)
 - [LSP (Language Server)](#lsp-language-server)
 - [Git](#git)
-- [Harpoon (File Navigation)](#harpoon-file-navigation)
 - [Trouble (Diagnostics)](#trouble-diagnostics)
 - [Code Completion (nvim-cmp)](#code-completion-nvim-cmp)
 - [Comments](#comments)
@@ -170,15 +169,6 @@ Default mappings are enabled:
 - `c0` - Choose none
 - `cn` - Next conflict
 - `cp` - Previous conflict
-
-## Harpoon (File Navigation)
-
-| Mode | Keymap | Action | Description |
-|------|--------|--------|-------------|
-| n | `<leader>m` | Mark file | Add current file to Harpoon |
-| n | `<left>` | Toggle menu | Toggle Harpoon quick menu |
-| n | `<up>` | Next file | Navigate to next Harpoon file |
-| n | `<down>` | Previous file | Navigate to previous Harpoon file |
 
 ## Trouble (Diagnostics)
 

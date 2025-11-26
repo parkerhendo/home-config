@@ -58,7 +58,6 @@
   ];
 
   homebrew.masApps = {
-    goodnotes = 1444383602;
   };
   # Phendo-specific system configuration
   # Any other phendo-specific darwin/system settings go here
