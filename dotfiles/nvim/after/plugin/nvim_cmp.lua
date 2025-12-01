@@ -81,4 +81,9 @@ cmp.setup({
   }, {
     { name = "buffer" },
   }),
+  view = {
+    docs = {
+      auto_open = true,
+    },
+  },
 })

@@ -268,3 +268,30 @@ vim.diagnostic.config({
     border = "rounded",
   },
 })
+
+-- Add keybinds to scroll hover and diagnostic floating windows
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = { "lspinfo", "null-ls-info" },
+  callback = function(event)
+    vim.keymap.set("n", "<C-f>", "<C-f>", { buffer = event.buf, desc = "Scroll down" })
+    vim.keymap.set("n", "<C-b>", "<C-b>", { buffer = event.buf, desc = "Scroll up" })
+  end,
+})
+
+-- Set up keybinds for LSP floating windows (hover, signature help, etc.)
+vim.api.nvim_create_autocmd("BufEnter", {
+  callback = function(event)
+    local buftype = vim.api.nvim_get_option_value("buftype", { buf = event.buf })
+    if buftype == "nofile" then
+      local winconfig = vim.api.nvim_win_get_config(0)
+      if winconfig.relative ~= "" then -- It's a floating window
+        vim.keymap.set("n", "<C-f>", function()
+          vim.api.nvim_input("<C-f>")
+        end, { buffer = event.buf, desc = "Scroll down in floating window" })
+        vim.keymap.set("n", "<C-b>", function()
+          vim.api.nvim_input("<C-b>")
+        end, { buffer = event.buf, desc = "Scroll up in floating window" })
+      end
+    end
+  end,
+})
