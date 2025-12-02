@@ -12,7 +12,6 @@
   # Zephyr-specific packages
   home.packages = with pkgs; [
     # Add zephyr-specific packages here
-    perf
     railway
     go
 

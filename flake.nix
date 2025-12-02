@@ -17,16 +17,6 @@
     nix-homebrew = {
       url = "github:zhaofengli-wip/nix-homebrew";
     };
-    
-    homebrew-core = {
-      url = "github:homebrew/homebrew-core";
-      flake = false;
-    };
-    
-    homebrew-cask = {
-      url = "github:homebrew/homebrew-cask";
-      flake = false;
-    };
 
     nix-index-database = {
       url = "github:Mic92/nix-index-database";
@@ -34,16 +24,14 @@
     };
   };
 
-  outputs = inputs@{ 
-    self, 
-    nixpkgs, 
-    nix-darwin, 
-    home-manager, 
-    nix-homebrew, 
-    homebrew-core, 
-    homebrew-cask, 
+  outputs = inputs@{
+    self,
+    nixpkgs,
+    nix-darwin,
+    home-manager,
+    nix-homebrew,
     nix-index-database,
-    ... 
+    ...
   }: {
     formatter.aarch64-darwin = nixpkgs.legacyPackages.aarch64-darwin.nixfmt-rfc-style;
 
@@ -69,10 +57,6 @@
                   enable = true;
                   enableRosetta = true;
                   user = userName;
-                  taps = {
-                    "homebrew/homebrew-core" = homebrew-core;
-                    "homebrew/homebrew-cask" = homebrew-cask;
-                  };
                   mutableTaps = true;
                 };
               }
