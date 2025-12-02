@@ -270,9 +270,5 @@
     masApps = {
       things3 = 904280696;
     };
-    # Common taps
-    taps = [
-      "homebrew/cask"
-    ];
   };
 }
