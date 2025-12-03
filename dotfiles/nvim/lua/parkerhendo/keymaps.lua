@@ -86,38 +86,56 @@ nnoremap("dp", "<cmd>lua vim.diagnostic.goto_next<cr>", { silent = true })
 keymap("n", "<leader>X", "<cmd>!chmod +x %<CR>", { silent = true })
 keymap("n", "<leader>O", "<cmd>OpenInGHFileLines<CR>", { silent = true })
 keymap("n", "<leader>o", "<cmd>OpenInGHFile<CR>", { silent = true })
+vim.keymap.set({ "n", "v" }, "<leader>ys", function()
+  local filepath = vim.fn.expand("%")
+  local start_line = vim.fn.line(".")
+  local end_line = vim.fn.line("v")
+
+  local text
+  if vim.fn.mode() == "v" or vim.fn.mode() == "V" or vim.fn.mode() == "\22" then
+    start_line = vim.fn.line("v")
+    end_line = vim.fn.line(".")
+    if start_line > end_line then
+      start_line, end_line = end_line, start_line
+    end
+    text = string.format("%s:%d-%d", filepath, start_line, end_line)
+  else
+    text = string.format("%s:%d", filepath, start_line)
+  end
+  vim.fn.setreg("+", text)
+  vim.notify("Copied: " .. text, vim.log.levels.INFO)
+end, { desc = "Copy file path with line number/range" })
 
 -- LSP
-
 M.map_lsp_keybinds = function(buffer_number)
-	nnoremap("<leader>rn", vim.lsp.buf.rename, { desc = "LSP: [R]e[n]ame", buffer = buffer_number })
-	nnoremap("<leader>ca", vim.lsp.buf.code_action, { desc = "LSP: [C]ode [A]ction", buffer = buffer_number })
-	nnoremap("gd", vim.lsp.buf.definition, { desc = "LSP: [G]o to [D]efinition", buffer = buffer_number })
+  nnoremap("<leader>rn", vim.lsp.buf.rename, { desc = "LSP: [R]e[n]ame", buffer = buffer_number })
+  nnoremap("<leader>ca", vim.lsp.buf.code_action, { desc = "LSP: [C]ode [A]ction", buffer = buffer_number })
+  nnoremap("gd", vim.lsp.buf.definition, { desc = "LSP: [G]o to [D]efinition", buffer = buffer_number })
 
-	-- Telescope LSP keybinds --
-	nnoremap(
-		"gr",
-		require("telescope.builtin").lsp_references,
-		{ desc = "LSP: [G]oto [R]eferences", buffer = buffer_number }
-	)
+  -- Telescope LSP keybinds --
+  nnoremap(
+    "gr",
+    require("telescope.builtin").lsp_references,
+    { desc = "LSP: [G]oto [R]eferences", buffer = buffer_number }
+  )
 
-	nnoremap(
-		"gi",
-		require("telescope.builtin").lsp_implementations,
-		{ desc = "LSP: [G]oto [I]mplementation", buffer = buffer_number }
-	)
+  nnoremap(
+    "gi",
+    require("telescope.builtin").lsp_implementations,
+    { desc = "LSP: [G]oto [I]mplementation", buffer = buffer_number }
+  )
 
-	nnoremap(
-		"<leader>bs",
-		require("telescope.builtin").lsp_document_symbols,
-		{ desc = "LSP: [B]uffer [S]ymbols", buffer = buffer_number }
-	)
+  nnoremap(
+    "<leader>bs",
+    require("telescope.builtin").lsp_document_symbols,
+    { desc = "LSP: [B]uffer [S]ymbols", buffer = buffer_number }
+  )
 
-	nnoremap(
-		"<leader>ps",
-		require("telescope.builtin").lsp_workspace_symbols,
-		{ desc = "LSP: [P]roject [S]ymbols", buffer = buffer_number }
-	)
+  nnoremap(
+    "<leader>ps",
+    require("telescope.builtin").lsp_workspace_symbols,
+    { desc = "LSP: [P]roject [S]ymbols", buffer = buffer_number }
+  )
 
   nnoremap("K", function()
     -- First show diagnostics if available at cursor position
