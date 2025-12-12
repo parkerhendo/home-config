@@ -34,7 +34,6 @@
   };
 
   homebrew.brews = [
-    "docker"
     "cargo-binstall"
   ];
   # Phendo-specific homebrew packages (additional to common ones)
@@ -42,6 +41,7 @@
     # Development tools
     "figma@beta"
     "cursor"
+    "orbstack"
 
     # Communication and productivity
     "linear-linear"
