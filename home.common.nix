@@ -16,6 +16,7 @@
     # AI Stuff
     amp-cli
     codex
+    opencode
     claude-code
     gemini-cli
 
