@@ -239,6 +239,9 @@
       cleanup = "zap";
       upgrade = true;
     };
+    brews = {
+      "opencode"
+    }
     # Common GUI Applications (Casks) across all machines
     casks = [
       # Terminal and Development
