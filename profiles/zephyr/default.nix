@@ -39,6 +39,7 @@
     # Add zephyr-specific casks here
     "selfcontrol"
     "google-chrome"
+    "orbstack"
   ];
 
   homebrew.brews = [
