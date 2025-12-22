@@ -1,5 +1,4 @@
 { pkgs, ... }:
-
 {
 
   home.stateVersion = "24.11";
@@ -35,6 +34,7 @@
     gh
     git
     lazygit
+    mise
     neovim
     nodejs_20
     parallel
