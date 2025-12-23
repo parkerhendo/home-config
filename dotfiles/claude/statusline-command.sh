@@ -29,7 +29,7 @@ for ((i=0; i<empty; i++)); do bar+="░"; done
 
 # Extract cost information
 session_cost=$(echo "$input" | jq -r '.cost.total_cost_usd // empty')
-[ "$session_cost" != "empty" ] && session_cost=$(printf "%.4f" "$session_cost") || session_cost=""
+[ -n "$session_cost" ] && session_cost=$(printf "%.4f" "$session_cost") || session_cost=""
 
 # Get directory name (basename)
 dir_name=$(basename "$current_dir")
