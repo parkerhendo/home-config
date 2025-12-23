@@ -53,6 +53,11 @@
 
     # Development tools
     ".vale.ini".source = ../../dotfiles/vale.ini;
+
+    # Claude
+    ".claude/CLAUDE.md".source = ../../dotfiles/claude/CLAUDE.md;
+    ".claude/settings.json".source = ../../dotfiles/claude/settings.json;
+    ".claude/statusline-command.sh".source = ../../dotfiles/claude/statusline-command.sh;
   };
 
   # XDG config files (paths are profile-specific)

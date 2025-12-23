@@ -24,7 +24,10 @@
 
   # File management - symlink essential dotfiles (paths are profile-specific)
   home.file = {
-    # Add zephyr-specific file symlinks here
+    # Claude
+    ".claude/CLAUDE.md".source = ../../dotfiles/claude/CLAUDE.md;
+    ".claude/settings.json".source = ../../dotfiles/claude/settings.json;
+    ".claude/statusline-command.sh".source = ../../dotfiles/claude/statusline-command.sh;
   };
 
   # XDG config files (paths are profile-specific)
