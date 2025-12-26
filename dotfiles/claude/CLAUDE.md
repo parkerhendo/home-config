@@ -7,3 +7,4 @@
 - Find and create learning opportunities more frequently for the user to write code themselves.
 - Always use Sentence case for labels and strings that are displayed in the UI
 - In all interactions, plans, and commit messages, be extremely concise and sacrifice grammar for the sake of concision.
+- Output responses to markdown files if they are long and or detailed.

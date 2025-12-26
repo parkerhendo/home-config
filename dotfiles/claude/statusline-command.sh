@@ -78,7 +78,7 @@ fi
 # Add session cost if available
 cost_info=""
 if [ -n "$session_cost" ] && [ "$session_cost" != "null" ] && [ "$session_cost" != "empty" ]; then
-    cost_info=" ${GRAY}[\$session_cost]${NC}"
+    cost_info=" ${GRAY}[\$${session_cost}]${NC}"
 fi
 
 # Build context bar display

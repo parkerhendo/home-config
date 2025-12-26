@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ config, pkgs, ... }:
 
 {
   imports = [
@@ -24,10 +24,10 @@
 
   # File management - symlink essential dotfiles (paths are profile-specific)
   home.file = {
-    # Claude
-    ".claude/CLAUDE.md".source = ../../dotfiles/claude/CLAUDE.md;
-    ".claude/settings.json".source = ../../dotfiles/claude/settings.json;
-    ".claude/statusline-command.sh".source = ../../dotfiles/claude/statusline-command.sh;
+    # Claude (mkOutOfStoreSymlink for editable files)
+    ".claude/CLAUDE.md".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/claude/CLAUDE.md";
+    ".claude/settings.json".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/claude/settings.json";
+    ".claude/statusline-command.sh".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/claude/statusline-command.sh";
   };
 
   # XDG config files (paths are profile-specific)
