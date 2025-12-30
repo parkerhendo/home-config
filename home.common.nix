@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ pkgs, config, ... }:
 {
 
   home.stateVersion = "24.11";
@@ -33,7 +33,6 @@
     # Development tools
     gh
     git
-    lazygit
     mise
     neovim
     nodejs_20
@@ -61,8 +60,34 @@
     nix-direnv.enable = true;
   };
 
-  # Set RUST_SRC_PATH for rust-analyzer to find standard library source
+  xdg.enable = true;
+
   home.sessionVariables = {
     RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+  };
+
+  programs.lazygit = {
+    enable = true;
+    settings = {
+      customCommands = [
+        {
+          key = "<c-l>";
+          context = "files";
+          command = "lumen draft | tee >(pbcopy)";
+          loadingText = "Generating message...";
+        }
+        {
+          key = "<c-k>";
+          context = "files";
+          command = "lumen draft -c {{.Form.Context | quote}} | tee >(pbcopy)";
+          loadingText = "Generating message...";
+          prompts = [{
+            type = "input";
+            title = "Context";
+            key = "Context";
+          }];
+        }
+      ];
+    };
   };
 }
