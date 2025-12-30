@@ -107,7 +107,6 @@ local servers = {
         procMacro = {
           enable = true,
         },
-        rustcSource = vim.env.RUST_SRC_PATH or "discover",
         inlayHints = {
           bindingModeHints = {
             enable = true,
