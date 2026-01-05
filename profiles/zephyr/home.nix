@@ -33,6 +33,9 @@
 
   # XDG config files (paths are profile-specific)
   xdg.configFile = {
-    # Add zephyr-specific XDG config files here
+    "nvim".source = ../../dotfiles/nvim;
+    "atuin".source = ../../dotfiles/atuin;
+    "ghostty".source = ../../dotfiles/ghostty;
+    ".prompts".source = ../../prompts;
   };
 }

@@ -37,3 +37,4 @@ if [ -e '/etc/profiles/per-user/parker/etc/profile.d/hm-session-vars.sh' ]; then
   . '/etc/profiles/per-user/parker/etc/profile.d/hm-session-vars.sh'
 fi
 # End Nix
+export XDG_CONFIG_HOME="$HOME/.config"
