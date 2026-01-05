@@ -66,6 +66,7 @@
     "nvim".source = ../../dotfiles/nvim;
     "atuin".source = ../../dotfiles/atuin;
     "ghostty".source = ../../dotfiles/ghostty;
+    "lumen".source = ../../dotfiles/lumen;
     ".prompts".source = ../../prompts;
   };
 }

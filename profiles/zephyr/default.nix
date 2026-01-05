@@ -42,13 +42,8 @@
     "orbstack"
   ];
 
-  homebrew.taps = [
-    "jnsahaj/lumen"
-  ];
-
   homebrew.brews = [
     "steveyegge/beads/bd"
-    "jnsahaj/lumen/lumen"
   ];
 
   homebrew.masApps = {
