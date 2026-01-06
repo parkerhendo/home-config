@@ -33,8 +33,13 @@
     home = "/Users/parker";
   };
 
+  homebrew.taps = [
+    "jnsahaj/lumen"
+  ];
+
   homebrew.brews = [
     "cargo-binstall"
+    "jnsahaj/lumen/lumen"
   ];
   # Phendo-specific homebrew packages (additional to common ones)
   homebrew.casks = [

@@ -18,7 +18,6 @@
     opencode
     claude-code
     gemini-cli
-    lumen
 
     # Shell and terminal utilities
     atuin

@@ -1,8 +1,25 @@
-{ config, ... }:
+{ config, inputs, ... }:
 
 {
   imports = [
     ../../config.common.nix
+  ];
+
+  nixpkgs.overlays = [
+    (final: prev: {
+      lumen = final.rustPlatform.buildRustPackage {
+        pname = "lumen";
+        version = "2.8.1";
+        src = inputs.lumen;
+        cargoHash = "sha256-40PPq06tyYs6m/8OHCZ8PSaeiTR/22Q5Vdq7YD1YUbY=";
+        doCheck = false;
+        nativeBuildInputs = [ final.pkg-config ];
+        buildInputs = final.lib.optionals final.stdenv.isDarwin [
+          final.apple-sdk_15
+        ];
+        meta.mainProgram = "lumen";
+      };
+    })
   ];
 
   networking.computerName = "zephyr";

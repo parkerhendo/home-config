@@ -38,22 +38,7 @@
     nix-index-database,
     lumen,
     ...
-  }: let
-    lumenOverlay = final: prev: {
-      lumen = final.rustPlatform.buildRustPackage {
-        pname = "lumen";
-        version = "2.8.1";
-        src = lumen;
-        cargoHash = "sha256-Igr9x8bPsWU2ykF0WaiEAQEO6/UfA7eTVvjb66A38vU=";
-        doCheck = false;
-        nativeBuildInputs = [ final.pkg-config ];
-        buildInputs = final.lib.optionals final.stdenv.isDarwin [
-          final.apple-sdk_15
-        ];
-        meta.mainProgram = "lumen";
-      };
-    };
-  in {
+  }: {
     formatter.aarch64-darwin = nixpkgs.legacyPackages.aarch64-darwin.nixfmt-rfc-style;
 
     darwinConfigurations =
@@ -70,7 +55,6 @@
           nix-darwin.lib.darwinSystem {
             system = "aarch64-darwin";
             modules = [
-              { nixpkgs.overlays = [ lumenOverlay ]; }
               (profilePath + "/default.nix")
 
               nix-homebrew.darwinModules.nix-homebrew
