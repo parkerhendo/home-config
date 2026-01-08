@@ -30,6 +30,13 @@
 
 [diff]
   colorMoved = default
+  tool = lumen
+
+[difftool "lumen"]
+  cmd = lumen diff "$LOCAL" "$REMOTE"
+
+[difftool]
+  prompt = false
 [init]
 	defaultBranch = main
 [submodule]

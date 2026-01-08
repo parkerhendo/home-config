@@ -17,6 +17,7 @@ alias gp="git pull"
 alias gpu="git push"
 alias gc="git commit"
 alias gd="git diff"
+alias ldw="lumen diff --watch"
 
 
 alias rm="rm -iv"
