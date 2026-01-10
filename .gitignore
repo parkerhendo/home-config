@@ -9,3 +9,6 @@
 # NVIM
 packer_compiled.lua
 lazy-lock.json
+
+# Lumen (contains API keys)
+dotfiles/lumen/lumen.config.json
