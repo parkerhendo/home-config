@@ -152,26 +152,15 @@ local default_capabilities = require("cmp_nvim_lsp").default_capabilities(capabi
 -- Create an augroup for format on save
 local format_on_save_augroup = vim.api.nvim_create_augroup("format_on_save", { clear = true })
 
--- Configure and enable LSP servers using new vim.lsp.config API
--- (except rust_analyzer which needs special handling)
+-- Configure and enable LSP servers using vim.lsp.config API (Neovim 0.11+)
 for name, config in pairs(servers) do
-  if name ~= "rust_analyzer" then
-    vim.lsp.config(name, {
-      capabilities = default_capabilities,
-      settings = config.settings,
-      handlers = vim.tbl_deep_extend("force", {}, default_handlers, config.handlers or {}),
-    })
-    vim.lsp.enable(name)
-  end
+  vim.lsp.config(name, {
+    capabilities = default_capabilities,
+    settings = config.settings,
+    handlers = vim.tbl_deep_extend("force", {}, default_handlers, config.handlers or {}),
+  })
+  vim.lsp.enable(name)
 end
-
--- Configure rust-analyzer using lspconfig to ensure initializationOptions are set correctly
--- (vim.lsp.config doesn't auto-transfer settings to init_options like lspconfig does)
-require("lspconfig").rust_analyzer.setup({
-  capabilities = default_capabilities,
-  settings = servers.rust_analyzer.settings,
-  handlers = vim.tbl_deep_extend("force", {}, default_handlers),
-})
 
 -- Set up LspAttach autocmd to configure keybindings and format-on-save
 -- This replaces the old on_attach callback

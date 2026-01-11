@@ -16,11 +16,8 @@
     railway
     go
 
-    # rust stuff
-    rustc
-    cargo
-    rustfmt
-    clippy
+    # rust - use rustup to manage toolchain
+    rustup
   ];
 
   # File management - symlink essential dotfiles (paths are profile-specific)
