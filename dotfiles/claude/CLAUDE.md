@@ -9,3 +9,4 @@
 - In all interactions, plans, and commit messages, be extremely concise and sacrifice grammar for the sake of concision.
 - Output responses to markdown files if they are long and or detailed.
 - When committing changes or creating PRs, NEVER say it was authored by Claude
+- At the end of each plan, list unresolved questions. Ask about edge cases, error handling, and unclear requirements before proceeding.
