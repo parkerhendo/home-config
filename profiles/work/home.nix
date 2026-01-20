@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, pkgs, lib, ... }:
 
 {
   imports = [
@@ -8,6 +8,11 @@
   # User information (profile-specific)
   home.username = "parker";
   home.homeDirectory = "/Users/parker";
+
+  # Global npm packages via bun
+  home.activation.installGlobalNpmPackages = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    ${pkgs.bun}/bin/bun install -g agent-browser 2>/dev/null || true
+  '';
 
   # Phendo-specific packages
   home.packages = with pkgs; [
@@ -31,7 +36,6 @@
 
     # utilities
     watchexec
-
   ];
 
   # File management - symlink essential dotfiles (paths are profile-specific)
