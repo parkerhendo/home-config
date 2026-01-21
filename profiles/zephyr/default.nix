@@ -57,6 +57,7 @@
     "selfcontrol"
     "google-chrome"
     "orbstack"
+    "figma@beta"
   ];
 
   homebrew.brews = [
