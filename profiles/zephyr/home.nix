@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, pkgs, lib, ... }:
 
 {
   imports = [
@@ -9,12 +9,18 @@
   home.username = "parker";
   home.homeDirectory = "/Users/parker";
 
+  # Global npm packages via bun
+  home.activation.installGlobalNpmPackages = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    ${pkgs.bun}/bin/bun install -g agent-browser 2>/dev/null || true
+  '';
+
   # Zephyr-specific packages
   home.packages = with pkgs; [
     # Add zephyr-specific packages here
     lumen
     railway
     go
+    bun
 
     # rust - use rustup to manage toolchain
     rustup
@@ -27,6 +33,7 @@
     ".claude/settings.json".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/claude/settings.json";
     ".claude/statusline-command.sh".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/claude/statusline-command.sh";
     ".claude/commands".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/claude/commands";
+    ".claude/skills".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/claude/skills";
   };
 
   # XDG config files (paths are profile-specific)

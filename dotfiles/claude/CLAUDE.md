@@ -1,12 +1,19 @@
-- Never run typecheck or lint commands. always ask the user to perform them
-- Use "Sentence case" for all text.
-- Sparingly recommend using `useEffect` to fix issues. This is usually more of a hack than the correct solution. Only recommend if it is truly the only correct apporach.
-- Be extremely concise with your responses. Sacrifice grammar for the sake of concision.
-- Only run type checks if you have made significant refactoring changes. Otherwise let the user manually do it.
-- Only run eslint or typechecks on the entire repo
-- Find and create learning opportunities more frequently for the user to write code themselves.
-- Always use Sentence case for labels and strings that are displayed in the UI
-- In all interactions, plans, and commit messages, be extremely concise and sacrifice grammar for the sake of concision.
-- Output responses to markdown files if they are long and or detailed.
-- When committing changes or creating PRs, NEVER say it was authored by Claude
-- At the end of each plan, list unresolved questions. Ask about edge cases, error handling, and unclear requirements before proceeding.
+# Global Preferences
+
+## Style
+
+- Sentence case for all UI text
+- Extremely concise responses; sacrifice grammar for brevity
+- Long/detailed responses → output to markdown files
+
+## Behavior
+
+- Never run typecheck or lint commands; ask user to run
+- Avoid `useEffect` as a fix; usually a hack
+- Create learning opportunities for user to write code
+- List unresolved questions at end of plans (edge cases, error handling, unclear requirements)
+
+## Git
+
+- Never say authored by Claude in commits/PRs
+- Run typechecks only after significant refactoring
