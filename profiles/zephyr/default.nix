@@ -58,6 +58,7 @@
     "google-chrome"
     "orbstack"
     "figma@beta"
+    "conductor"
   ];
 
   homebrew.brews = [
