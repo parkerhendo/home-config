@@ -7,3 +7,4 @@ require("parkerhendo.config")
 -- helpers
 require("parkerhendo.highlight_yank")
 require("parkerhendo.toggle_eslint")
+require("parkerhendo.toggle_inlay_hints")
