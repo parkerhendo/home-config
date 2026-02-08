@@ -1,23 +1,25 @@
 autoload -Uz add-zsh-hook
 
-if [ "$(uname)" = "Darwin" ]; then
-  PROMPTCOLOR=blue
-else
-  PROMPTCOLOR=magenta
-fi
-
-if [ "$(whoami)" = "root" ]; then
-  PROMPTCOLOR=red
-fi
+# gruvbox colors (muted variants)
+GRV_AQUA=$'\e[38;2;131;165;152m'      # #83a598
+GRV_GREEN=$'\e[38;2;152;151;26m'      # #98971a
+GRV_ORANGE=$'\e[38;2;214;93;14m'      # #d65d0e
+GRV_GRAY=$'\e[38;2;146;131;116m'      # #928374
 
 prompt_pwd() {
-  print -n "%{$fg[$PROMPTCOLOR]%}"
-  print -n "%50<...<%3~"
+  print -n "%{$GRV_AQUA%}%1~"
+}
+
+prompt_timer() {
+  local timer_out=$(timer status 2>/dev/null)
+  if [[ "$timer_out" != "Not tracking" && -n "$timer_out" ]]; then
+    print -n "%{$GRV_GRAY%}[$timer_out] %{$reset_color%}"
+  fi
 }
 
 prompt_arrow() {
   # first space here is non-breaking, so we can search for it with tmux easily
-  print "%{$reset_color%} > "
+  print "%{$GRV_GRAY%} | %{$reset_color%}"
 }
 
 ZSH_MAIN_PROMPT="$(prompt_arrow)"
@@ -34,7 +36,7 @@ git_prompt_status() {
       # Get the short hash of the commit being applied
       local commit_hash=$(git rev-parse --short HEAD 2>/dev/null)
       if [ -n "$commit_hash" ]; then
-        rebase_info=" %{$fg[yellow]%}($commit_hash)"
+        rebase_info=" %{$GRV_ORANGE%}($commit_hash)"
       fi
     fi
 
@@ -42,24 +44,19 @@ git_prompt_status() {
       # Use a different variable name to avoid conflicts
       local git_changes=$(git status --porcelain 2>/dev/null)
       if [ -n "$git_changes" ]; then
-        branch_color="%{$fg[red]%}"  # Has changes
+        branch_color="%{$GRV_ORANGE%}"
       else
-        branch_color="%{$fg[green]%}"  # Clean
+        branch_color="%{$GRV_GREEN%}"
       fi
 
-      truncate_length=20
-      if [ ${#branch} -gt $truncate_length ]; then
-        git_branch=" ...${branch: -$truncate_length}"
-      else
-        git_branch=" $branch"
-      fi
+      git_branch=" $branch"
 
-      PROMPT='$(prompt_pwd)$branch_color$git_branch$rebase_info$ZSH_MAIN_PROMPT'
+      PROMPT='$(prompt_timer)$(prompt_pwd)$branch_color$git_branch$rebase_info$ZSH_MAIN_PROMPT'
     else
-      PROMPT='$(prompt_pwd)$rebase_info$ZSH_MAIN_PROMPT'
+      PROMPT='$(prompt_timer)$(prompt_pwd)$rebase_info$ZSH_MAIN_PROMPT'
     fi
   else
-    PROMPT='$(prompt_pwd)$ZSH_MAIN_PROMPT'
+    PROMPT='$(prompt_timer)$(prompt_pwd)$ZSH_MAIN_PROMPT'
   fi
   zle && zle reset-prompt
 }
@@ -75,7 +72,7 @@ setup_git_prompt_status() {
 }
 
 # single-quote comments are important here!
-PROMPT='$(prompt_pwd)$ZSH_MAIN_PROMPT'
-PROMPT2='%{$fg[yellow]%}%_%{$reset_color%} > '
+PROMPT='$(prompt_timer)$(prompt_pwd)$ZSH_MAIN_PROMPT'
+PROMPT2='%{$GRV_ORANGE%}%_%{$reset_color%}%{$GRV_GRAY%} | %{$reset_color%}'
 SPROMPT="correct "%R" to "%r' ? ([Y]es/[N]o/[E]dit/[A]bort) '
 
