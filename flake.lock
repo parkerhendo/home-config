@@ -134,7 +134,24 @@
         "nix-darwin": "nix-darwin",
         "nix-homebrew": "nix-homebrew",
         "nix-index-database": "nix-index-database",
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "timer-cli": "timer-cli"
+      }
+    },
+    "timer-cli": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1770522040,
+        "narHash": "sha256-KJCCxyar1SGSzD4zQtjVTpzry7MyMk85GEgX3bKBa8g=",
+        "owner": "parkerhendo",
+        "repo": "timer-cli",
+        "rev": "3d62afca2cf96a4ed8bf470d10616d83b9853689",
+        "type": "github"
+      },
+      "original": {
+        "owner": "parkerhendo",
+        "repo": "timer-cli",
+        "type": "github"
       }
     }
   },

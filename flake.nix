@@ -27,6 +27,11 @@
       url = "github:parkerhendo/lumen";
       flake = false;
     };
+
+    timer-cli = {
+      url = "github:parkerhendo/timer-cli";
+      flake = false;
+    };
   };
 
   outputs = inputs@{
@@ -37,6 +42,7 @@
     nix-homebrew,
     nix-index-database,
     lumen,
+    timer-cli,
     ...
   }: {
     formatter.aarch64-darwin = nixpkgs.legacyPackages.aarch64-darwin.nixfmt-rfc-style;

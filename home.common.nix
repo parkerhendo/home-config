@@ -12,6 +12,9 @@
 
   # Common packages across all machines
   home.packages = with pkgs; [
+    # Custom packages
+    timer-cli
+
     # AI Stuff
     amp-cli
     codex

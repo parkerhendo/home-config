@@ -2,6 +2,23 @@
 
 {
 
+  nixpkgs.overlays = [
+    (final: prev: {
+      timer-cli = final.rustPlatform.buildRustPackage {
+        pname = "timer-cli";
+        version = "0.1.0";
+        src = inputs.timer-cli;
+        cargoHash = "sha256-GUdfwVL0p3h68WRZZ5yLqMGMdd4Sz+/yjIgTWdqTP7Y=";
+        doCheck = false;
+        nativeBuildInputs = [ final.pkg-config ];
+        buildInputs = final.lib.optionals final.stdenv.isDarwin [
+          final.apple-sdk_15
+        ];
+        meta.mainProgram = "timer";
+      };
+    })
+  ];
+
 # Keyboard configuration
   system.keyboard = {
     enableKeyMapping = true;
