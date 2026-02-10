@@ -17,6 +17,25 @@
         meta.mainProgram = "timer";
       };
     })
+    (final: prev: {
+      timer-bar = final.stdenv.mkDerivation {
+        pname = "TimerBar";
+        version = "0.1.0";
+        src = final.fetchurl {
+          url = "https://github.com/parkerhendo/timer-cli/releases/download/v0.1.0/TimerBar-arm64.zip";
+          hash = "sha256-1ZwaSwkoKs5FKONqbPJ2GOnW2GwMYy30QzauHyDw3oY=";
+        };
+        sourceRoot = ".";
+        nativeBuildInputs = [ final.unzip ];
+        unpackPhase = ''
+          unzip $src
+        '';
+        installPhase = ''
+          mkdir -p $out/Applications
+          cp -r TimerBar.app $out/Applications/
+        '';
+      };
+    })
   ];
 
 # Keyboard configuration

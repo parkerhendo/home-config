@@ -14,6 +14,7 @@
   home.packages = with pkgs; [
     # Custom packages
     timer-cli
+    timer-bar
 
     # AI Stuff
     amp-cli
