@@ -12,6 +12,7 @@
   # Global npm packages via bun
   home.activation.installGlobalNpmPackages = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
     ${pkgs.bun}/bin/bun install -g agent-browser 2>/dev/null || true
+    ${pkgs.nodejs_22}/bin/npm install -g @tobilu/qmd 2>/dev/null || true
   '';
 
   # Phendo-specific packages
@@ -24,7 +25,7 @@
 
     # dev utilities
     graphite-cli
-    nodejs_20
+    nodejs_22
     wasm-bindgen-cli_0_2_100
     duckdb
     wasm-pack
