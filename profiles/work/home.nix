@@ -33,7 +33,6 @@
     bun
     k3d
     docker
-    nodePackages_latest.vercel
 
     # utilities
     watchexec

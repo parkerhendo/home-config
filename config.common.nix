@@ -4,6 +4,9 @@
 
   nixpkgs.overlays = [
     (final: prev: {
+      codex = inputs.codex-cli-nix.packages.${final.system}.default;
+    })
+    (final: prev: {
       timer-cli = final.rustPlatform.buildRustPackage {
         pname = "timer-cli";
         version = "0.1.0";
