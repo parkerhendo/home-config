@@ -9,9 +9,9 @@ outer.top = 0
 outer.bottom = 0
 
 [mode.main.binding]
-# Window focus
-alt-ctrl-j = 'focus down'
-alt-ctrl-k = 'focus up'
+# Window focus (cycle through all windows)
+alt-ctrl-j = 'focus --boundaries-action wrap-around-the-workspace dfs-next'
+alt-ctrl-k = 'focus --boundaries-action wrap-around-the-workspace dfs-prev'
 
 # Swap windows
 alt-ctrl-cmd-j = 'swap down'
