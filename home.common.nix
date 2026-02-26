@@ -47,8 +47,6 @@
     # Media and utilities
     ffmpeg
     neofetch
-    yt-dlp
-
     # nix
     niv
   ];
