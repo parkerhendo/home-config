@@ -1,6 +1,0 @@
-#!/usr/bin/env sh
-
-# yabai is now configured via nix-darwin's `services.yabai.extraConfig`
-# (see config.common.nix). This stub remains so legacy setup scripts that
-# symlink `~/.yabairc` continue to succeed without creating duplicate rules.
-exit 0

@@ -1,5 +1,0 @@
-#!/usr/bin/env sh
-
-# skhd is managed by nix-darwin (`services.skhd.skhdConfig` in config.common.nix).
-# This stub remains so legacy setup scripts that symlink ~/.skhdrc keep working.
-exit 0

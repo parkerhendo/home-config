@@ -1,0 +1,153 @@
+start-at-login = true
+
+[gaps]
+inner.horizontal = 4
+inner.vertical = 4
+outer.left = 0
+outer.right = 0
+outer.top = 0
+outer.bottom = 0
+
+[mode.main.binding]
+# Window focus
+alt-ctrl-j = 'focus down'
+alt-ctrl-k = 'focus up'
+
+# Swap windows
+alt-ctrl-cmd-j = 'swap down'
+alt-ctrl-cmd-k = 'swap up'
+
+# Focus workspaces
+alt-ctrl-p = 'workspace prev'
+alt-ctrl-n = 'workspace next'
+alt-ctrl-tab = 'workspace-back-and-forth'
+alt-ctrl-1 = 'workspace 1'
+alt-ctrl-2 = 'workspace 2'
+alt-ctrl-3 = 'workspace 3'
+alt-ctrl-4 = 'workspace 4'
+alt-ctrl-5 = 'workspace 5'
+alt-ctrl-6 = 'workspace 6'
+alt-ctrl-7 = 'workspace 7'
+alt-ctrl-8 = 'workspace 8'
+alt-ctrl-9 = 'workspace 9'
+
+# Move window to workspace and follow
+ctrl-shift-1 = ['move-node-to-workspace 1', 'workspace 1']
+ctrl-shift-2 = ['move-node-to-workspace 2', 'workspace 2']
+ctrl-shift-3 = ['move-node-to-workspace 3', 'workspace 3']
+ctrl-shift-4 = ['move-node-to-workspace 4', 'workspace 4']
+ctrl-shift-5 = ['move-node-to-workspace 5', 'workspace 5']
+ctrl-shift-6 = ['move-node-to-workspace 6', 'workspace 6']
+ctrl-shift-7 = ['move-node-to-workspace 7', 'workspace 7']
+ctrl-shift-8 = ['move-node-to-workspace 8', 'workspace 8']
+ctrl-shift-9 = ['move-node-to-workspace 9', 'workspace 9']
+
+# Resize
+alt-ctrl-h = 'resize width -60'
+alt-ctrl-l = 'resize width +60'
+
+# Balance
+alt-ctrl-shift-backspace = 'balance-sizes'
+
+# Fullscreen
+alt-ctrl-f = 'fullscreen'
+
+# Split toggle
+alt-ctrl-r = 'layout horizontal vertical'
+
+# Toggle float
+alt-ctrl-space = 'layout floating tiling'
+
+# Layout switching
+alt-ctrl-cmd-shift-b = 'layout tiles horizontal vertical'
+alt-ctrl-cmd-shift-f = 'layout floating'
+alt-ctrl-cmd-shift-s = 'layout accordion horizontal vertical'
+
+# Reset layout and reload config
+alt-ctrl-cmd-r = ['flatten-workspace-tree', 'balance-sizes', 'reload-config']
+
+# Float-only apps
+[[on-window-detected]]
+if.app-name-regex-substring = 'System Settings'
+run = 'layout floating'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'System Preferences'
+run = 'layout floating'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'About This Mac'
+run = 'layout floating'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'App Store'
+run = 'layout floating'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Activity Monitor'
+run = 'layout floating'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Preview'
+run = 'layout floating'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'zoom.us'
+run = 'layout floating'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Spotify'
+run = 'layout floating'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'CleanShot X'
+run = 'layout floating'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Loom'
+run = 'layout floating'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Things 3'
+run = 'layout floating'
+
+# App-to-workspace assignments
+[[on-window-detected]]
+if.app-name-regex-substring = 'Ghostty'
+run = 'move-node-to-workspace 1'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Dia'
+run = 'move-node-to-workspace 2'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Linear'
+run = 'move-node-to-workspace 2'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Discord'
+run = 'move-node-to-workspace 3'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Amie'
+run = 'move-node-to-workspace 3'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Slack'
+run = 'move-node-to-workspace 3'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Mimestream'
+run = 'move-node-to-workspace 3'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Texts'
+run = 'move-node-to-workspace 3'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Obsidian'
+run = 'move-node-to-workspace 3'
+
+[[on-window-detected]]
+if.app-name-regex-substring = 'Figma Beta'
+run = 'move-node-to-workspace 4'
