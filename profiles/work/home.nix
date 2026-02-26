@@ -35,6 +35,7 @@
     docker
 
     # utilities
+    hyperfine
     watchexec
   ];
 
