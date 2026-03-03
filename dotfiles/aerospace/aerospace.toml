@@ -16,6 +16,7 @@ alt-ctrl-k = 'focus --boundaries-action wrap-around-the-workspace dfs-prev'
 # Swap windows
 alt-ctrl-cmd-j = 'swap down'
 alt-ctrl-cmd-k = 'swap up'
+alt-ctrl-v = 'swap --wrap-around dfs-next'
 
 # Focus workspaces
 alt-ctrl-p = 'workspace prev'
