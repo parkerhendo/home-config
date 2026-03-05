@@ -46,7 +46,6 @@
 
     # Media and utilities
     ffmpeg
-    neofetch
     # nix
     niv
   ];
