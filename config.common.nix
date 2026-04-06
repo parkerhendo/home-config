@@ -175,8 +175,6 @@
       "raycast"
       "betterdisplay"
     ];
-    masApps = {
-      things3 = 904280696;
-    };
+    masApps = {};
   };
 }
