@@ -33,6 +33,7 @@
     bun
     k3d
     docker
+    actionlint
 
     # utilities
     hyperfine
