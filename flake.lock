@@ -74,22 +74,6 @@
         "type": "github"
       }
     },
-    "lumen": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1773339417,
-        "narHash": "sha256-2XW6YAFEkXsKP4d3agLdpp2yt/bw/bd1Bi/qYeLj4G4=",
-        "owner": "parkerhendo",
-        "repo": "lumen",
-        "rev": "c0797c589484e50636ab7cfb32e7c4bd2cacebd8",
-        "type": "github"
-      },
-      "original": {
-        "owner": "parkerhendo",
-        "repo": "lumen",
-        "type": "github"
-      }
-    },
     "nix-darwin": {
       "inputs": {
         "nixpkgs": [
@@ -184,7 +168,6 @@
       "inputs": {
         "codex-cli-nix": "codex-cli-nix",
         "home-manager": "home-manager",
-        "lumen": "lumen",
         "nix-darwin": "nix-darwin",
         "nix-homebrew": "nix-homebrew",
         "nix-index-database": "nix-index-database",

@@ -62,6 +62,7 @@
   };
 
   xdg.enable = true;
+  xdg.configFile."lumen".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/lumen";
 
   home.sessionVariables = {
     RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";

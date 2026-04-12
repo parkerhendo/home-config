@@ -23,11 +23,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    lumen = {
-      url = "github:parkerhendo/lumen";
-      flake = false;
-    };
-
     timer-cli = {
       url = "github:parkerhendo/timer-cli";
       flake = false;
@@ -45,7 +40,6 @@
     home-manager,
     nix-homebrew,
     nix-index-database,
-    lumen,
     timer-cli,
     codex-cli-nix,
     ...

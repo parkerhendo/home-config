@@ -147,6 +147,12 @@
       cleanup = "zap";
       upgrade = true;
     };
+    taps = [
+      "jnsahaj/lumen"
+    ];
+    brews = [
+      "jnsahaj/lumen/lumen"
+    ];
     # Common GUI Applications (Casks) across all machines
     casks = [
       # Terminal and Development
