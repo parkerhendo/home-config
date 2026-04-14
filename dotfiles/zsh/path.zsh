@@ -1,3 +1,4 @@
+export PATH="$HOME/.local/bin:$PATH"
 export NINJA_DIR=$HOME/ninja/ninja
 export PATH=$PATH:$NINJA_DIR
 export CKIT_DIR=$HOME/ckit
