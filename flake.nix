@@ -28,10 +28,7 @@
       flake = false;
     };
 
-    codex-cli-nix = {
-      url = "github:sadjow/codex-cli-nix";
-    };
-  };
+};
 
   outputs = inputs@{
     self,
@@ -41,7 +38,6 @@
     nix-homebrew,
     nix-index-database,
     timer-cli,
-    codex-cli-nix,
     ...
   }: {
     formatter.aarch64-darwin = nixpkgs.legacyPackages.aarch64-darwin.nixfmt-rfc-style;
