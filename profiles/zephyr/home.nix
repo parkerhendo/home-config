@@ -9,11 +9,11 @@
   home.username = "parker";
   home.homeDirectory = "/Users/parker";
 
-  # Global npm packages via bun
-  home.activation.installGlobalNpmPackages = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+  # Global packages via bun
+  home.activation.installGlobalPackages = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
     ${pkgs.bun}/bin/bun install -g agent-browser 2>/dev/null || true
-    ${pkgs.nodejs_24}/bin/npm install -g @tobilu/qmd 2>/dev/null || true
-    ${pkgs.nodejs_24}/bin/npm install -g @readwise/cli 2>/dev/null || true
+    ${pkgs.bun}/bin/bun install -g @tobilu/qmd 2>/dev/null || true
+    ${pkgs.bun}/bin/bun install -g @readwise/cli 2>/dev/null || true
   '';
 
   # Zephyr-specific packages
