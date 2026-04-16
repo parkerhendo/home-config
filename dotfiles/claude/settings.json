@@ -4,6 +4,10 @@
     "type": "command",
     "command": "bash ~/.claude/statusline-command.sh"
   },
+  "permissions": {
+    "allow": ["Bash(*)", "Read", "Write", "Edit", "Glob", "Grep"],
+    "deny": ["Bash(git push *), Bash(git commit *)"]
+  },
   "enabledPlugins": {
     "typescript-lsp@claude-plugins-official": true,
     "rust-analyzer-lsp@claude-plugins-official": true,
