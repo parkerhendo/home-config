@@ -39,7 +39,7 @@
     git
     mise
     neovim
-    nodejs_22
+    nodejs_24
     parallel
     ripgrep
     tmux
