@@ -63,8 +63,13 @@
   xdg.enable = true;
   xdg.configFile."lumen".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/lumen";
 
+  home.sessionPath = [
+    "$HOME/.npm-global/bin"
+  ];
+
   home.sessionVariables = {
     RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+    NPM_CONFIG_PREFIX = "$HOME/.npm-global";
   };
 
   programs.lazygit = {
