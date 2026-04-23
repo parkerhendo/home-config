@@ -21,6 +21,7 @@
     opencode
     claude-code
     gemini-cli
+    pi-coding-agent
 
     # Shell and terminal utilities
     atuin
@@ -59,6 +60,9 @@
     enable = true;
     nix-direnv.enable = true;
   };
+
+  # Pi coding agent (mkOutOfStoreSymlink for editable files)
+  home.file.".pi/agent".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/pi/agent";
 
   xdg.enable = true;
   xdg.configFile."lumen".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/lumen";

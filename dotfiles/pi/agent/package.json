@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "dependencies": {
+    "diff": "^7.0.0"
+  }
+}

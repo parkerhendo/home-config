@@ -1,0 +1,11 @@
+{
+  "theme": "gruvbox-dark",
+  "lastChangelogVersion": "0.66.1",
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-opus-4-6",
+  "hideThinkingBlock": false,
+  "defaultThinkingLevel": "xhigh",
+  "packages": [
+    "https://github.com/davebcn87/pi-autoresearch"
+  ]
+}

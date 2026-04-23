@@ -10,5 +10,13 @@
 packer_compiled.lua
 lazy-lock.json
 
+# Pi
+dotfiles/pi/agent/node_modules
+dotfiles/pi/agent/sessions
+dotfiles/pi/agent/auth.json
+
 # Lumen (contains API keys)
 dotfiles/lumen/lumen.config.json
+
+# Nix build artifacts
+result
