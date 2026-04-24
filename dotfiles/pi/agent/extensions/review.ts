@@ -32,6 +32,8 @@ import type {
   ExtensionContext,
   ExtensionCommandContext,
 } from "@mariozechner/pi-coding-agent";
+import type { Model, Api } from "@mariozechner/pi-ai";
+import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import { DynamicBorder, BorderedLoader } from "@mariozechner/pi-coding-agent";
 import {
   Container,
@@ -53,6 +55,9 @@ let endReviewInProgress = false;
 let reviewLoopFixingEnabled = false;
 let reviewCustomInstructions: string | undefined = undefined;
 let reviewLoopInProgress = false;
+let pendingModelRestore:
+  | { model: Model<Api> | undefined; thinkingLevel: ThinkingLevel }
+  | undefined = undefined;
 
 const REVIEW_STATE_TYPE = "review-session";
 const REVIEW_ANCHOR_TYPE = "review-anchor";
@@ -1006,6 +1011,22 @@ export default function reviewExtension(pi: ExtensionAPI) {
     applyAllReviewState(ctx);
   });
 
+  // Restore model + thinking level after a review turn completes
+  pi.on("agent_end", async (_event, ctx) => {
+    const restore = pendingModelRestore;
+    if (!restore) return;
+    pendingModelRestore = undefined;
+
+    if (restore.model) {
+      await pi.setModel(restore.model);
+    }
+    pi.setThinkingLevel(restore.thinkingLevel);
+    ctx.ui.notify(
+      `Restored ${restore.model?.name ?? "previous model"} (${restore.thinkingLevel} thinking)`,
+      "info",
+    );
+  });
+
   /**
    * Determine the smart default review type based on git state
    */
@@ -1669,6 +1690,22 @@ export default function reviewExtension(pi: ExtensionAPI) {
 
     const modeHint = useFreshSession ? " (fresh session)" : "";
     ctx.ui.notify(`Starting review: ${hint}${modeHint}`, "info");
+
+    // Switch to GPT-5.4 with max thinking for reviews, save previous settings
+    const reviewModel = ctx.modelRegistry.find("openai", "gpt-5.4");
+    if (reviewModel) {
+      pendingModelRestore = {
+        model: ctx.model,
+        thinkingLevel: pi.getThinkingLevel(),
+      };
+      const switched = await pi.setModel(reviewModel);
+      if (switched) {
+        pi.setThinkingLevel("xhigh");
+        ctx.ui.notify("Switched to GPT-5.4 (xhigh thinking) for review", "info");
+      } else {
+        pendingModelRestore = undefined;
+      }
+    }
 
     // Send as a user message that triggers a turn
     pi.sendUserMessage(fullPrompt);

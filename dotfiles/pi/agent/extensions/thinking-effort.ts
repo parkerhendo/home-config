@@ -3,7 +3,7 @@
  *
  * Adjust the thinking effort level the model uses via:
  * - `/thinking` command — show a selector or set directly (e.g., `/thinking high`)
- * - `Ctrl+Shift+T` — cycle through levels
+ * - `Ctrl+T` — cycle through levels
  *
  * Usage: auto-discovered from ~/.pi/agent/extensions/
  */
@@ -34,7 +34,7 @@ const LEVEL_ICONS: Record<ThinkingLevel, string> = {
 
 export default function (pi: ExtensionAPI) {
 	// Cycle through thinking levels with Ctrl+Shift+T
-	pi.registerShortcut(Key.ctrlShift("t"), {
+	pi.registerShortcut(Key.ctrl("t"), {
 		description: "Cycle thinking effort level",
 		handler: async (ctx) => {
 			const current = pi.getThinkingLevel() as ThinkingLevel;
