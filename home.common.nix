@@ -39,7 +39,7 @@
     git
     mise
     neovim
-    nodejs_24
+
     parallel
     ripgrep
     tmux
@@ -54,6 +54,7 @@
   programs.git = {
     enable = true;
     includes = [{ path = "~/.gitconfig"; }];
+    signing.format = "openpgp";
   };
 
   programs.direnv = {

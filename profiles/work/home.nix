@@ -13,8 +13,8 @@
   home.activation.installGlobalPackages = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
     export NPM_CONFIG_PREFIX="$HOME/.npm-global"
     export NPM_CONFIG_IGNORE_SCRIPTS=false
-    ${pkgs.nodejs_24}/bin/npm install -g agent-browser 2>/dev/null || true
-    ${pkgs.nodejs_24}/bin/npm install -g @tobilu/qmd 2>/dev/null || true
+    ${pkgs.nodejs_22}/bin/npm install -g agent-browser 2>/dev/null || true
+    ${pkgs.nodejs_22}/bin/npm install -g @tobilu/qmd 2>/dev/null || true
   '';
 
   # Phendo-specific packages
@@ -27,7 +27,7 @@
 
     # dev utilities
     graphite-cli
-    nodejs_24
+    nodejs_22
     wasm-bindgen-cli_0_2_100
     duckdb
     wasm-pack

@@ -21,6 +21,7 @@
   # Zephyr-specific packages
   home.packages = with pkgs; [
     # Add zephyr-specific packages here
+    nodejs_24
     railway
     go
     bun

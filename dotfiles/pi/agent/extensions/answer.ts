@@ -76,35 +76,22 @@ Example output:
   ]
 }`;
 
-const CODEX_MODEL_ID = "gpt-5.1-codex-mini";
-const HAIKU_MODEL_ID = "claude-haiku-4-5";
+const CHEAP_MODELS: [provider: string, id: string][] = [
+  ["openai", "gpt-5-nano"],
+  ["anthropic", "claude-haiku-4-5"],
+];
 
-/**
- * Prefer Codex mini for extraction when available, otherwise fallback to haiku or the current model.
- */
 async function selectExtractionModel(
   currentModel: Model<Api>,
   modelRegistry: ModelRegistry,
 ): Promise<Model<Api>> {
-  const codexModel = modelRegistry.find("openai-codex", CODEX_MODEL_ID);
-  if (codexModel) {
-    const auth = await modelRegistry.getApiKeyAndHeaders(codexModel);
-    if (auth.ok) {
-      return codexModel;
-    }
+  for (const [provider, id] of CHEAP_MODELS) {
+    const model = modelRegistry.find(provider, id);
+    if (!model) continue;
+    const auth = await modelRegistry.getApiKeyAndHeaders(model);
+    if (auth.ok) return model;
   }
-
-  const haikuModel = modelRegistry.find("anthropic", HAIKU_MODEL_ID);
-  if (!haikuModel) {
-    return currentModel;
-  }
-
-  const auth = await modelRegistry.getApiKeyAndHeaders(haikuModel);
-  if (!auth.ok) {
-    return currentModel;
-  }
-
-  return haikuModel;
+  return currentModel;
 }
 
 /**
@@ -446,7 +433,8 @@ export default function (pi: ExtensionAPI) {
       if (entry.type === "message") {
         const msg = entry.message;
         if ("role" in msg && msg.role === "assistant") {
-          if (msg.stopReason !== "stop") {
+          if (msg.stopReason === "toolUse") continue;
+          if (msg.stopReason === "error" || msg.stopReason === "aborted") {
             ctx.ui.notify(
               `Last assistant message incomplete (${msg.stopReason})`,
               "error",
@@ -471,13 +459,13 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
-    // Select the best model for extraction (prefer Codex mini, then haiku)
     const extractionModel = await selectExtractionModel(
       ctx.model,
       ctx.modelRegistry,
     );
 
     // Run extraction with loader UI
+    let extractionError: string | null = null;
     const extractionResult = await ctx.ui.custom<ExtractionResult | null>(
       (tui, theme, _kb, done) => {
         const loader = new BorderedLoader(
@@ -506,10 +494,12 @@ export default function (pi: ExtensionAPI) {
               apiKey: auth.apiKey,
               headers: auth.headers,
               signal: loader.signal,
+              reasoningEffort: extractionModel.reasoning ? "minimal" : undefined,
             },
           );
 
           if (response.stopReason === "aborted") {
+            extractionError = "Request was aborted";
             return null;
           }
 
@@ -520,19 +510,32 @@ export default function (pi: ExtensionAPI) {
             .map((c) => c.text)
             .join("\n");
 
-          return parseExtractionResult(responseText);
+          if (!responseText) {
+            extractionError = `${extractionModel.id}: ${response.stopReason}${response.errorMessage ? ` - ${response.errorMessage}` : " (no text returned)"}`;
+            return null;
+          }
+
+          const parsed = parseExtractionResult(responseText);
+          if (!parsed) {
+            extractionError = `Failed to parse response: ${responseText.slice(0, 200)}`;
+            return null;
+          }
+          return parsed;
         };
 
         doExtract()
           .then(done)
-          .catch(() => done(null));
+          .catch((err) => {
+            extractionError = err instanceof Error ? err.message : String(err);
+            done(null);
+          });
 
         return loader;
       },
     );
 
     if (extractionResult === null) {
-      ctx.ui.notify("Cancelled", "info");
+      ctx.ui.notify(extractionError ?? "Cancelled", extractionError ? "error" : "info");
       return;
     }
 
