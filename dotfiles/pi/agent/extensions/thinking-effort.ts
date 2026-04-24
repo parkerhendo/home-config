@@ -9,7 +9,6 @@
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Key } from "@mariozechner/pi-tui";
 
 const LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 type ThinkingLevel = (typeof LEVELS)[number];
@@ -34,7 +33,7 @@ const LEVEL_ICONS: Record<ThinkingLevel, string> = {
 
 export default function (pi: ExtensionAPI) {
 	// Cycle through thinking levels with Ctrl+Shift+T
-	pi.registerShortcut(Key.ctrl("t"), {
+	pi.registerShortcut("ctrl+t", {
 		description: "Cycle thinking effort level",
 		handler: async (ctx) => {
 			const current = pi.getThinkingLevel() as ThinkingLevel;

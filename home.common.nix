@@ -81,13 +81,13 @@
     settings = {
       customCommands = [
         {
-          key = "<c-l>";
+          key = "L";
           context = "files";
           command = "lumen draft | tee >(pbcopy)";
           loadingText = "Generating message...";
         }
         {
-          key = "<c-k>";
+          key = "K";
           context = "files";
           command = "lumen draft -c {{.Form.Context | quote}} | tee >(pbcopy)";
           loadingText = "Generating message...";
