@@ -44,10 +44,6 @@
     "conductor"
   ];
 
-  homebrew.brews = [
-    "steveyegge/beads/bd"
-  ];
-
   homebrew.masApps = {
     # Add zephyr-specific Mac App Store apps here
   };
