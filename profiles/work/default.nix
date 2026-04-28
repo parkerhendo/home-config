@@ -33,8 +33,13 @@
     home = "/Users/parker";
   };
 
+  homebrew.taps = [
+    "datadog-labs/pack"
+  ];
+
   homebrew.brews = [
     "cargo-binstall"
+    "datadog-labs/pack/pup"
   ];
   # Phendo-specific homebrew packages (additional to common ones)
   homebrew.casks = [

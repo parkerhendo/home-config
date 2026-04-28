@@ -36,6 +36,7 @@
     k3d
     docker
     actionlint
+    sentry-cli
 
     # utilities
     hyperfine

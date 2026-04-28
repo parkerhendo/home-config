@@ -6,6 +6,7 @@
  * - Model name + thinking level
  * - Context window usage bar
  * - Git branch + file changes (+added/-removed)
+ * - Turn duration
  * - Session cost
  */
 
@@ -16,6 +17,24 @@ import { basename } from "node:path";
 
 export default function (pi: ExtensionAPI) {
   let cachedGitInfo: string | null = null;
+  let activeTurnStartedAt: number | null = null;
+  let lastTurnDurationMs: number | null = null;
+
+  function formatDuration(ms: number): string {
+    const clamped = Math.max(0, Math.floor(ms));
+    if (clamped < 1000) return `${clamped}ms`;
+
+    const totalSeconds = Math.floor(clamped / 1000);
+    if (totalSeconds < 60) return `${totalSeconds}s`;
+
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    if (minutes < 60) return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+
+    const hours = Math.floor(minutes / 60);
+    const remMinutes = minutes % 60;
+    return `${hours}h ${remMinutes.toString().padStart(2, "0")}m`;
+  }
 
   async function refreshGit(cwd: string) {
     try {
@@ -125,6 +144,16 @@ export default function (pi: ExtensionAPI) {
             }
           }
 
+          // Durations
+          const turnDuration = theme.fg(
+            "muted",
+            lastTurnDurationMs !== null
+              ? `turn ${formatDuration(lastTurnDurationMs)}`
+              : activeTurnStartedAt !== null
+                ? "turn running…"
+              : "turn --",
+          );
+
           // Git info
           const gitBranch = footerData.getGitBranch() ?? cachedGitInfo;
           let gitStr = "";
@@ -166,6 +195,7 @@ export default function (pi: ExtensionAPI) {
 
           const right = [
             gitStr,
+            turnDuration,
             totalCost > 0 ? theme.fg("muted", `$${totalCost.toFixed(4)}`) : "",
           ]
             .filter(Boolean)
@@ -186,12 +216,23 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     if (!ctx.hasUI) return;
+    activeTurnStartedAt = null;
+    lastTurnDurationMs = null;
     await refreshGit(ctx.cwd);
     installFooter(ctx);
   });
 
+  pi.on("turn_start", async (event, ctx) => {
+    if (!ctx.hasUI) return;
+    activeTurnStartedAt = event.timestamp ?? Date.now();
+  });
+
   pi.on("turn_end", async (_event, ctx) => {
     if (!ctx.hasUI) return;
+    if (activeTurnStartedAt !== null) {
+      lastTurnDurationMs = Date.now() - activeTurnStartedAt;
+      activeTurnStartedAt = null;
+    }
     await refreshGit(ctx.cwd);
   });
 
