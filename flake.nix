@@ -16,6 +16,14 @@
     
     nix-homebrew = {
       url = "github:zhaofengli-wip/nix-homebrew";
+      inputs.brew-src.follows = "homebrew-brew";
+    };
+
+    # Pin brew-src to latest master which fixes process_depends_on crash
+    # with empty `depends_on: { macos: {} }` casks (Homebrew/brew#22166)
+    homebrew-brew = {
+      url = "github:Homebrew/brew";
+      flake = false;
     };
 
     nix-index-database = {

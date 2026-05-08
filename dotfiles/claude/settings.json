@@ -34,5 +34,7 @@
     "compound-engineering@every-marketplace": true
   },
   "skipDangerousModePermissionPrompt": true,
-  "skipAutoPermissionPrompt": true
+  "editorMode": "vim",
+  "skipAutoPermissionPrompt": true,
+  "effortLevel": "xhigh"
 }

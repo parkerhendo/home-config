@@ -1,22 +1,5 @@
 {
   "nodes": {
-    "brew-src": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1776478798,
-        "narHash": "sha256-ERStG27tf83VbCfYMxtDSs+sa8FUMJ/3jSu/QfX9rKE=",
-        "owner": "Homebrew",
-        "repo": "brew",
-        "rev": "3aae056b8d072624255bc8fd27febb7f327b2265",
-        "type": "github"
-      },
-      "original": {
-        "owner": "Homebrew",
-        "ref": "5.1.7",
-        "repo": "brew",
-        "type": "github"
-      }
-    },
     "home-manager": {
       "inputs": {
         "nixpkgs": [
@@ -34,6 +17,22 @@
       "original": {
         "owner": "nix-community",
         "repo": "home-manager",
+        "type": "github"
+      }
+    },
+    "homebrew-brew": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1778263932,
+        "narHash": "sha256-f1Qnk2qwoYdOaKk1a14HeqplWFs6c7pJiFG4kZ49XE4=",
+        "owner": "Homebrew",
+        "repo": "brew",
+        "rev": "2b422bebcb8156d0ad5f8cfd3c78495f6430aec4",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Homebrew",
+        "repo": "brew",
         "type": "github"
       }
     },
@@ -59,7 +58,9 @@
     },
     "nix-homebrew": {
       "inputs": {
-        "brew-src": "brew-src"
+        "brew-src": [
+          "homebrew-brew"
+        ]
       },
       "locked": {
         "lastModified": 1777250621,
@@ -114,6 +115,7 @@
     "root": {
       "inputs": {
         "home-manager": "home-manager",
+        "homebrew-brew": "homebrew-brew",
         "nix-darwin": "nix-darwin",
         "nix-homebrew": "nix-homebrew",
         "nix-index-database": "nix-index-database",

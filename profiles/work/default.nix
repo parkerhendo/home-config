@@ -49,7 +49,7 @@
     "orbstack"
 
     # Communication and productivity
-    "linear-linear"
+    "linear"
     "discord"
     "slack"
     "loom"

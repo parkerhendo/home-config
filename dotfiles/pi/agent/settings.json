@@ -2,9 +2,9 @@
   "theme": "gruvbox-dark",
   "lastChangelogVersion": "0.70.5",
   "defaultProvider": "anthropic",
-  "defaultModel": "claude-opus-4-6",
+  "defaultModel": "claude-opus-4-7",
   "hideThinkingBlock": false,
-  "defaultThinkingLevel": "xhigh",
+  "defaultThinkingLevel": "high",
   "packages": [
     "https://github.com/davebcn87/pi-autoresearch"
   ],
