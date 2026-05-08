@@ -1,5 +1,11 @@
 start-at-login = true
 
+# Start JankyBorders for focused window highlight
+# Color format: 0xAARRGGBB — subtle semi-transparent white border
+after-startup-command = [
+    'exec-and-forget borders active_color=0x77ffffff inactive_color=0x00000000 width=3.0 style=round'
+]
+
 [gaps]
 inner.horizontal = 4
 inner.vertical = 4
