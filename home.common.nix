@@ -44,6 +44,9 @@
     ripgrep
     tmux
 
+    # Networking
+    ngrok
+
     # Media and utilities
     ffmpeg
     # nix
