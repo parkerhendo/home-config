@@ -31,10 +31,11 @@
     "playwright@claude-plugins-official": true,
     "feature-dev@claude-plugins-official": true,
     "code-simplifier@claude-plugins-official": true,
-    "compound-engineering@every-marketplace": true
+    "compound-engineering@every-marketplace": true,
+    "slack@claude-plugins-official": true
   },
+  "effortLevel": "xhigh",
   "skipDangerousModePermissionPrompt": true,
   "editorMode": "vim",
-  "skipAutoPermissionPrompt": true,
-  "effortLevel": "xhigh"
+  "skipAutoPermissionPrompt": true
 }

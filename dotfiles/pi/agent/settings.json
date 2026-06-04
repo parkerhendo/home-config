@@ -1,12 +1,13 @@
 {
   "theme": "gruvbox-dark",
-  "lastChangelogVersion": "0.75.4",
+  "lastChangelogVersion": "0.78.0",
   "defaultProvider": "openai",
   "defaultModel": "gpt-5.5",
   "hideThinkingBlock": false,
-  "defaultThinkingLevel": "xhigh",
+  "defaultThinkingLevel": "high",
   "packages": [
-    "https://github.com/davebcn87/pi-autoresearch"
+    "https://github.com/davebcn87/pi-autoresearch",
+    "npm:@spences10/pi-mcp"
   ],
   "enabledModels": [
     "anthropic/claude-opus-4-7",
