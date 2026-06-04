@@ -2,15 +2,26 @@
   "mcpServers": {
     "sentry": {
       "command": "npx",
-      "args": ["-y", "mcp-remote@latest", "https://mcp.sentry.dev/mcp"]
+      "args": [
+        "-y",
+        "mcp-remote@latest",
+        "https://mcp.sentry.dev/mcp"
+      ],
+      "directTools": true
     },
     "vercel": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "https://mcp.vercel.com"]
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://mcp.vercel.com"
+      ],
+      "directTools": true
     },
     "braintrust": {
       "url": "https://api.braintrust.dev/mcp",
-      "bearer_token_env_var": "BRAINTRUST_API_KEY"
+      "auth": "bearer",
+      "bearerTokenEnv": "BRAINTRUST_API_KEY"
     }
   }
 }

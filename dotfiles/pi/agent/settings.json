@@ -7,7 +7,7 @@
   "defaultThinkingLevel": "high",
   "packages": [
     "https://github.com/davebcn87/pi-autoresearch",
-    "npm:@spences10/pi-mcp"
+    "npm:pi-mcp-adapter"
   ],
   "enabledModels": [
     "anthropic/claude-opus-4-7",
