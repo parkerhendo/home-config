@@ -1,5 +1,14 @@
 # Global Pi Instructions
 
+## Minimal Change Rule
+
+Make only the smallest change needed for the stated objective.
+
+- Re-read the file before editing. Don't edit from memory or an earlier diff.
+- If the user removed something, leave it removed. Ask before reintroducing it.
+- No opportunistic cleanup, reformatting, or renaming outside the change.
+- When scope is unclear, ask.
+
 ## Git Safety Rule
 
 **Do not run any `git` commands unless the user's most recent message contains the literal token `/git`.**

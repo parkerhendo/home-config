@@ -62,6 +62,9 @@ let pendingModelRestore:
 const REVIEW_STATE_TYPE = "review-session";
 const REVIEW_ANCHOR_TYPE = "review-anchor";
 const REVIEW_SETTINGS_TYPE = "review-settings";
+const REVIEW_MODEL_PROVIDER = "openai";
+const REVIEW_MODEL_ID = "gpt-5.5";
+const REVIEW_THINKING_LEVEL: ThinkingLevel = "xhigh";
 const REVIEW_LOOP_MAX_ITERATIONS = 10;
 const REVIEW_LOOP_START_TIMEOUT_MS = 15000;
 const REVIEW_LOOP_START_POLL_MS = 50;
@@ -885,10 +888,10 @@ function extractAssistantTextContent(content: unknown): string {
     .filter((part): part is { type: "text"; text: string } =>
       Boolean(
         part &&
-          typeof part === "object" &&
-          "type" in part &&
-          part.type === "text" &&
-          "text" in part,
+        typeof part === "object" &&
+        "type" in part &&
+        part.type === "text" &&
+        "text" in part,
       ),
     )
     .map((part) => part.text);
@@ -1691,20 +1694,30 @@ export default function reviewExtension(pi: ExtensionAPI) {
     const modeHint = useFreshSession ? " (fresh session)" : "";
     ctx.ui.notify(`Starting review: ${hint}${modeHint}`, "info");
 
-    // Switch to GPT-5.4 with max thinking for reviews, save previous settings
-    const reviewModel = ctx.modelRegistry.find("openai", "gpt-5.4");
-    if (reviewModel) {
-      pendingModelRestore = {
-        model: ctx.model,
-        thinkingLevel: pi.getThinkingLevel(),
-      };
-      const switched = await pi.setModel(reviewModel);
-      if (switched) {
-        pi.setThinkingLevel("xhigh");
-        ctx.ui.notify("Switched to GPT-5.4 (xhigh thinking) for review", "info");
-      } else {
-        pendingModelRestore = undefined;
-      }
+    // Switch to GPT-5.5 with xhigh thinking effort for reviews, save previous settings
+    pendingModelRestore = {
+      model: ctx.model,
+      thinkingLevel: pi.getThinkingLevel(),
+    };
+
+    const reviewModel = ctx.modelRegistry.find(
+      REVIEW_MODEL_PROVIDER,
+      REVIEW_MODEL_ID,
+    );
+    const switched = reviewModel ? await pi.setModel(reviewModel) : false;
+    pi.setThinkingLevel(REVIEW_THINKING_LEVEL);
+
+    const activeThinkingLevel = pi.getThinkingLevel();
+    if (switched && reviewModel) {
+      ctx.ui.notify(
+        `Switched to ${reviewModel.name} (${activeThinkingLevel} thinking effort) for review`,
+        "info",
+      );
+    } else {
+      ctx.ui.notify(
+        `Using ${activeThinkingLevel} thinking effort for review`,
+        "info",
+      );
     }
 
     // Send as a user message that triggers a turn
