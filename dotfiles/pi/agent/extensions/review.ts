@@ -5,7 +5,7 @@
  * Supports multiple review modes:
  * - Review a GitHub pull request (checks out the PR locally)
  * - Review against a base branch (PR style)
- * - Review uncommitted changes
+ * - Review staged changes (`/review uncommitted`)
  * - Review a specific commit
  * - Shared custom review instructions (applied to all review modes when configured)
  *
@@ -13,7 +13,7 @@
  * - `/review` - show interactive selector
  * - `/review pr 123` - review PR #123 (checks out locally)
  * - `/review pr https://github.com/owner/repo/pull/123` - review PR from URL
- * - `/review uncommitted` - review uncommitted changes directly
+ * - `/review uncommitted` - review staged changes directly
  * - `/review branch main` - review against main branch
  * - `/review commit abc123` - review specific commit
  * - `/review folder src docs` - review specific folders/files (snapshot, not diff)
@@ -399,16 +399,16 @@ type ReviewTarget =
 
 // Prompts (adapted from Codex)
 const UNCOMMITTED_PROMPT =
-  "Review the current code changes (staged, unstaged, and untracked files) and provide prioritized findings.";
+  "Review only the staged code changes. Run `git diff --staged` to inspect the diff; ignore unstaged and untracked files. Provide prioritized findings.";
 
 const LOCAL_CHANGES_REVIEW_INSTRUCTIONS =
   "Also include local working-tree changes (staged, unstaged, and untracked files) from this branch. Use `git status --porcelain`, `git diff`, `git diff --staged`, and `git ls-files --others --exclude-standard` so local fixes are part of this review cycle.";
 
 const BASE_BRANCH_PROMPT_WITH_MERGE_BASE =
-  "Review the code changes against the base branch '{baseBranch}'. The merge base commit for this comparison is {mergeBaseSha}. Run `git diff {mergeBaseSha}` to inspect the changes relative to {baseBranch}. Provide prioritized, actionable findings.";
+  "Review the code changes against the base branch '{baseBranch}'. The merge base commit for this comparison is {mergeBaseSha}. Run `git diff {mergeBaseSha} HEAD` to inspect the committed changes relative to {baseBranch}. Provide prioritized, actionable findings.";
 
 const BASE_BRANCH_PROMPT_FALLBACK =
-  'Review the code changes against the base branch \'{branch}\'. Start by finding the merge diff between the current branch and {branch}\'s upstream e.g. (`git merge-base HEAD "$(git rev-parse --abbrev-ref "{branch}@{upstream}")"`), then run `git diff` against that SHA to see what changes we would merge into the {branch} branch. Provide prioritized, actionable findings.';
+  'Review the code changes against the base branch \'{branch}\'. Start by finding the merge diff between the current branch and {branch}\'s upstream e.g. (`git merge-base HEAD "$(git rev-parse --abbrev-ref "{branch}@{upstream}")"`), then run `git diff <merge-base-sha> HEAD` to see the committed changes we would merge into the {branch} branch. Provide prioritized, actionable findings.';
 
 const COMMIT_PROMPT_WITH_TITLE =
   'Review the code changes introduced by commit {sha} ("{title}"). Provide prioritized, actionable findings.';
@@ -417,10 +417,10 @@ const COMMIT_PROMPT =
   "Review the code changes introduced by commit {sha}. Provide prioritized, actionable findings.";
 
 const PULL_REQUEST_PROMPT =
-  "Review pull request #{prNumber} (\"{title}\") against the base branch '{baseBranch}'. The merge base commit for this comparison is {mergeBaseSha}. Run `git diff {mergeBaseSha}` to inspect the changes that would be merged. Provide prioritized, actionable findings.";
+  "Review pull request #{prNumber} (\"{title}\") against the base branch '{baseBranch}'. The merge base commit for this comparison is {mergeBaseSha}. Run `git diff {mergeBaseSha} HEAD` to inspect the committed changes that would be merged. Provide prioritized, actionable findings.";
 
 const PULL_REQUEST_PROMPT_FALLBACK =
-  "Review pull request #{prNumber} (\"{title}\") against the base branch '{baseBranch}'. Start by finding the merge base between the current branch and {baseBranch} (e.g., `git merge-base HEAD {baseBranch}`), then run `git diff` against that SHA to see the changes that would be merged. Provide prioritized, actionable findings.";
+  "Review pull request #{prNumber} (\"{title}\") against the base branch '{baseBranch}'. Start by finding the merge base between the current branch and {baseBranch} (e.g., `git merge-base HEAD {baseBranch}`), then run `git diff <merge-base-sha> HEAD` to see the committed changes that would be merged. Provide prioritized, actionable findings.";
 
 const FOLDER_REVIEW_PROMPT =
   "Review the code in the following paths: {paths}. This is a snapshot review (not a diff). Read the files directly in these paths and provide prioritized, actionable findings.";
@@ -644,11 +644,11 @@ async function getRecentCommits(
 }
 
 /**
- * Check if there are uncommitted changes (staged, unstaged, or untracked)
+ * Check if there are staged changes to review
  */
-async function hasUncommittedChanges(pi: ExtensionAPI): Promise<boolean> {
-  const { stdout, code } = await pi.exec("git", ["status", "--porcelain"]);
-  return code === 0 && stdout.trim().length > 0;
+async function hasStagedChanges(pi: ExtensionAPI): Promise<boolean> {
+  const { code } = await pi.exec("git", ["diff", "--staged", "--quiet"]);
+  return code === 1;
 }
 
 /**
@@ -842,7 +842,7 @@ async function buildReviewPrompt(
 function getUserFacingHint(target: ReviewTarget): string {
   switch (target.type) {
     case "uncommitted":
-      return "current changes";
+      return "staged changes";
     case "baseBranch":
       return `changes against '${target.branch}'`;
     case "commit": {
@@ -951,7 +951,7 @@ async function waitForLoopTurnToStart(
 const REVIEW_PRESETS = [
   {
     value: "uncommitted",
-    label: "Review uncommitted changes",
+    label: "Review staged changes",
     description: "",
   },
   {
@@ -1036,8 +1036,8 @@ export default function reviewExtension(pi: ExtensionAPI) {
   async function getSmartDefault(): Promise<
     "uncommitted" | "baseBranch" | "commit"
   > {
-    // Priority 1: If there are uncommitted changes, default to reviewing them
-    if (await hasUncommittedChanges(pi)) {
+    // Priority 1: If there are staged changes, default to reviewing them
+    if (await hasStagedChanges(pi)) {
       return "uncommitted";
     }
 
@@ -2086,7 +2086,7 @@ export default function reviewExtension(pi: ExtensionAPI) {
   // Register the /review command
   pi.registerCommand("review", {
     description:
-      "Review code changes (PR, uncommitted, branch, commit, or folder)",
+      "Review code changes (PR, staged, branch, commit, or folder)",
     handler: async (args, ctx) => {
       if (!ctx.hasUI) {
         ctx.ui.notify("Review requires interactive mode", "error");
