@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "entries": {
+    "[\"npx\",\"-y\",\"mcp-remote@latest\",\"https://mcp.sentry.dev/mcp\"]": {
+      "resolvedBin": "/Users/parker/.npm/_npx/1a3c4333f3a90708/node_modules/mcp-remote/dist/proxy.js",
+      "resolvedAt": 1780606526081,
+      "packageVersion": "0.1.38",
+      "isJs": true
+    },
+    "[\"npx\",\"-y\",\"mcp-remote\",\"https://mcp.vercel.com\"]": {
+      "resolvedBin": "/Users/parker/.npm/_npx/1a3c4333f3a90708/node_modules/mcp-remote/dist/proxy.js",
+      "resolvedAt": 1780606526082,
+      "packageVersion": "0.1.38",
+      "isJs": true
+    }
+  }
+}

@@ -1,6 +1,10 @@
 {
   "private": true,
   "dependencies": {
-    "diff": "^7.0.0"
+    "diff": "^7.0.0",
+    "html-to-text": "^9.0.5",
+    "linkedom": "^0.18.12",
+    "turndown": "^7.2.4",
+    "turndown-plugin-gfm": "^1.0.2"
   }
 }

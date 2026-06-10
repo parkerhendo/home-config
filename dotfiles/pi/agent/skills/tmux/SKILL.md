@@ -1,66 +1,99 @@
 ---
 name: tmux
-description: "Remote control tmux sessions for interactive CLIs (python, gdb, etc.) by sending keystrokes and scraping pane output."
+description: "Remote control tmux sessions for interactive CLIs (dev servers, node, gdb, etc.) by sending keystrokes and scraping pane output."
 license: Vibecoded
 ---
 
 # tmux Skill
 
+Source: <https://github.com/mitsuhiko/agent-stuff/blob/main/skills/tmux/SKILL.md>
+
 Use tmux as a programmable terminal multiplexer for interactive work. Works on Linux and macOS with stock tmux; avoid custom config by using a private socket.
 
-## Quickstart (isolated socket)
+Agent-facing commands in this skill intentionally use bash because Pi executes shell tool calls through bash. User-facing copy/paste commands, especially monitor/attach instructions, MUST use fish syntax (or fully expanded commands with no shell-specific syntax).
+
+## Quickstart (isolated socket, agent/bash)
 
 ```bash
-SOCKET_DIR=${TMPDIR:-/tmp}/claude-tmux-sockets  # well-known dir for all agent sockets
+SOCKET_DIR=${TMPDIR:-/tmp}/pi-tmux-sockets  # well-known dir for all agent sockets
 mkdir -p "$SOCKET_DIR"
-SOCKET="$SOCKET_DIR/claude.sock"                # keep agent sessions separate from your personal tmux
-SESSION=claude-python                           # slug-like names; avoid spaces
+SOCKET="$SOCKET_DIR/pi.sock"                # keep agent sessions separate from your personal tmux
+SESSION=app-name-command                       # slug-like names; avoid spaces
 tmux -S "$SOCKET" new -d -s "$SESSION" -n shell
-tmux -S "$SOCKET" send-keys -t "$SESSION":0.0 -- 'python3 -q' Enter
-tmux -S "$SOCKET" capture-pane -p -J -t "$SESSION":0.0 -S -200  # watch output
-tmux -S "$SOCKET" kill-session -t "$SESSION"                   # clean up
+TARGET=$(tmux -S "$SOCKET" list-panes -t "$SESSION" -F '#S:#I.#P' | head -n1)
+tmux -S "$SOCKET" send-keys -t "$TARGET" -- 'pnpm run dev' Enter
+tmux -S "$SOCKET" capture-pane -p -J -t "$TARGET" -S -200  # watch output
+tmux -S "$SOCKET" kill-session -t "$SESSION"               # clean up
 ```
 
-After starting a session ALWAYS tell the user how to monitor the session by giving them a command to copy paste:
+After starting a session ALWAYS tell the user how to monitor the session by giving them a fish-compatible command to copy paste. Prefer fully expanded socket/session values when possible. If you need to show variables, use fish syntax.
 
-```
 To monitor this session yourself:
-  tmux -S "$SOCKET" attach -t claude-lldb
+
+```fish
+set -l socket_dir
+if set -q PI_TMUX_SOCKET_DIR
+    set socket_dir $PI_TMUX_SOCKET_DIR
+else if set -q TMPDIR
+    set socket_dir "$TMPDIR/pi-tmux-sockets"
+else
+    set socket_dir /tmp/pi-tmux-sockets
+end
+set -l socket "$socket_dir/pi.sock"
+tmux -S "$socket" attach -t pi-lldb
+```
 
 Or to capture the output once:
-  tmux -S "$SOCKET" capture-pane -p -J -t claude-lldb:0.0 -S -200
+
+```fish
+set -l socket_dir
+if set -q PI_TMUX_SOCKET_DIR
+    set socket_dir $PI_TMUX_SOCKET_DIR
+else if set -q TMPDIR
+    set socket_dir "$TMPDIR/pi-tmux-sockets"
+else
+    set socket_dir /tmp/pi-tmux-sockets
+end
+set -l socket "$socket_dir/pi.sock"
+set -l target (tmux -S "$socket" list-panes -t pi-lldb -F '#S:#I.#P' | head -n1)
+tmux -S "$socket" capture-pane -p -J -t "$target" -S -200
 ```
 
 This must ALWAYS be printed right after a session was started and once again at the end of the tool loop. But the earlier you send it, the happier the user will be.
 
 ## Socket convention
 
-- Agents MUST place tmux sockets under `CLAUDE_TMUX_SOCKET_DIR` (defaults to `${TMPDIR:-/tmp}/claude-tmux-sockets`) and use `tmux -S "$SOCKET"` so we can enumerate/clean them. Create the dir first: `mkdir -p "$CLAUDE_TMUX_SOCKET_DIR"`.
-- Default socket path to use unless you must isolate further: `SOCKET="$CLAUDE_TMUX_SOCKET_DIR/claude.sock"`.
+- Agents MUST place tmux sockets under `PI_TMUX_SOCKET_DIR` (defaults to `${TMPDIR:-/tmp}/pi-tmux-sockets`) and use `tmux -S "$SOCKET"` so we can enumerate/clean them. Create the dir first: `mkdir -p "$PI_TMUX_SOCKET_DIR"`. This is agent-side bash syntax; translate any user-facing snippets to fish.
+- Default socket path to use unless you must isolate further: `SOCKET="$PI_TMUX_SOCKET_DIR/pi.sock"`.
+- tmux reads the user's config when a server starts. If you connect to an already-running server on that socket, its existing options (like `base-index`/`pane-base-index`) stay in effect even if the user's config is different now.
+- If you need deterministic fresh tmux state, use a unique socket path or kill the existing server on that socket first. Use `-f /dev/null` only when you explicitly want stock tmux behavior.
+- The `PI_TMUX_SOCKET_DIR` name is preserved for upstream compatibility; using it from Pi is fine.
 
 ## Targeting panes and naming
 
-- Target format: `{session}:{window}.{pane}`, defaults to `:0.0` if omitted. Keep names short (e.g., `claude-py`, `claude-gdb`).
-- Use `-S "$SOCKET"` consistently to stay on the private socket path. If you need user config, drop `-f /dev/null`; otherwise `-f /dev/null` gives a clean config.
-- Inspect: `tmux -S "$SOCKET" list-sessions`, `tmux -S "$SOCKET" list-panes -a`.
+- Target format: `{session}:{window}.{pane}`. Examples like `:0.0` and `:1.1` are both valid depending on tmux server options.
+- Never hardcode pane indices from an example. Always discover the real target after creating a session: `TARGET=$(tmux -S "$SOCKET" list-panes -t "$SESSION" -F '#S:#I.#P' | head -n1)`.
+- User tmux config can change numbering via `base-index` and `pane-base-index`, but only for freshly started servers. Reused sockets may still be using older/default numbering.
+- Use `-S "$SOCKET"` consistently to stay on the private socket path.
+- Inspect: `tmux -S "$SOCKET" list-sessions`, `tmux -S "$SOCKET" list-panes -a`, `tmux -S "$SOCKET" show-options -g | rg '^base-index'`, `tmux -S "$SOCKET" show-window-options -g | rg '^pane-base-index'`.
 
 ## Finding sessions
 
-- List sessions on your active socket with metadata: `./resources/find-session.sh -S "$SOCKET"`; add `-q partial-name` to filter.
-- Scan all sockets under the shared directory: `./resources/find-session.sh --all` (uses `CLAUDE_TMUX_SOCKET_DIR` or `${TMPDIR:-/tmp}/claude-tmux-sockets`).
+- List sessions on your active socket with metadata: `./scripts/find-sessions.sh -S "$SOCKET"`; add `-q partial-name` to filter.
+- Scan all sockets under the shared directory: `./scripts/find-sessions.sh --all` (uses `PI_TMUX_SOCKET_DIR` or `${TMPDIR:-/tmp}/pi-tmux-sockets`).
 
 ## Sending input safely
 
-- Prefer literal sends to avoid shell splitting: `tmux -L "$SOCKET" send-keys -t target -l -- "$cmd"`
+- Prefer literal sends to avoid shell splitting: `tmux -S "$SOCKET" send-keys -t target -l -- "$cmd"`.
 - When composing inline commands, use single quotes or ANSI C quoting to avoid expansion: `tmux ... send-keys -t target -- $'python3 -m http.server 8000'`.
 - To send control keys: `tmux ... send-keys -t target C-c`, `C-d`, `C-z`, `Escape`, etc.
 
 ## Watching output
 
-- Capture recent history (joined lines to avoid wrapping artifacts): `tmux -L "$SOCKET" capture-pane -p -J -t target -S -200`.
+- Capture recent history (joined lines to avoid wrapping artifacts): `tmux -S "$SOCKET" capture-pane -p -J -t target -S -200`.
 - For continuous monitoring, poll with the helper script (below) instead of `tmux wait-for` (which does not watch pane output).
-- You can also temporarily attach to observe: `tmux -L "$SOCKET" attach -t "$SESSION"`; detach with `Ctrl+b d`.
-- When giving instructions to a user, **explicitly print a copy/paste monitor command** alongside the action don't assume they remembered the command.
+- You can also temporarily attach to observe. Agent-side bash: `tmux -S "$SOCKET" attach -t "$SESSION"`; user-facing instructions must be fish-compatible or use fully expanded values. Detach with `Ctrl+b d`.
+- When giving instructions to a user, **explicitly print a fish-compatible copy/paste monitor command** alongside the action; don't assume they remembered the command.
 
 ## Spawning Processes
 
@@ -73,7 +106,8 @@ Some special rules for processes:
 
 - Use timed polling to avoid races with interactive tools. Example: wait for a Python prompt before sending code:
   ```bash
-  ./resources/wait-for-text.sh -t "$SESSION":0.0 -p '^>>>' -T 15 -l 4000
+  TARGET=$(tmux -S "$SOCKET" list-panes -t "$SESSION" -F '#S:#I.#P' | head -n1)
+  ./scripts/wait-for-text.sh -S "$SOCKET" -t "$TARGET" -p '^>>>' -T 15 -l 4000
   ```
 - For long-running commands, poll for completion text (`"Type quit to exit"`, `"Program exited"`, etc.) before proceeding.
 
@@ -81,7 +115,7 @@ Some special rules for processes:
 
 - **Python REPL**: `tmux ... send-keys -- 'python3 -q' Enter`; wait for `^>>>`; send code with `-l`; interrupt with `C-c`. Always with `PYTHON_BASIC_REPL`.
 - **gdb**: `tmux ... send-keys -- 'gdb --quiet ./a.out' Enter`; disable paging `tmux ... send-keys -- 'set pagination off' Enter`; break with `C-c`; issue `bt`, `info locals`, etc.; exit via `quit` then confirm `y`.
-- **Other TTY apps** (ipdb, psql, mysql, node, bash): same pattern—start the program, poll for its prompt, then send literal text and Enter.
+- **Other TTY apps** (ipdb, psql, mysql, node, fish): same pattern—start the program, poll for its prompt, then send literal text and Enter.
 
 ## Cleanup
 
@@ -91,12 +125,14 @@ Some special rules for processes:
 
 ## Helper: wait-for-text.sh
 
-`./resources/wait-for-text.sh` polls a pane for a regex (or fixed string) with a timeout. Works on Linux/macOS with bash + tmux + grep.
+`./scripts/wait-for-text.sh` polls a pane for a regex (or fixed string) with a timeout. Works on Linux/macOS with bash + tmux + grep.
 
 ```bash
-./resources/wait-for-text.sh -t session:0.0 -p 'pattern' [-F] [-T 20] [-i 0.5] [-l 2000]
+./scripts/wait-for-text.sh [-L socket-name|-S socket-path] -t session:window.pane -p 'pattern' [-F] [-T 20] [-i 0.5] [-l 2000]
 ```
 
+- `-L`/`--socket` tmux socket name passed to `tmux -L`
+- `-S`/`--socket-path` tmux socket path passed to `tmux -S`
 - `-t`/`--target` pane target (required)
 - `-p`/`--pattern` regex to match (required); add `-F` for fixed string
 - `-T` timeout seconds (integer, default 15)

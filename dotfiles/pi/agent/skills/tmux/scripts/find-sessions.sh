@@ -51,6 +51,7 @@ fi
 list_sessions() {
   local label="$1"; shift
   local tmux_cmd=(tmux "$@")
+  local sessions=""
 
   if ! sessions="$("${tmux_cmd[@]}" list-sessions -F '#{session_name}\t#{session_attached}\t#{session_created_string}' 2>/dev/null)"; then
     echo "No tmux server found on $label" >&2
