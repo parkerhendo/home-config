@@ -11,9 +11,51 @@ packer_compiled.lua
 lazy-lock.json
 
 # Pi
-dotfiles/pi/agent/node_modules
-dotfiles/pi/agent/sessions
+# pi agent runtime/state (keep settings + customization resources tracked)
+dotfiles/pi/agent/*
+dotfiles/pi/todos/*
+dotfiles/pi/.pi/todos/*
+dotfiles/pi/agent/.pi/todos/*
+.pi/todos/*
+
+!dotfiles/pi/agent/AGENTS.md
+!dotfiles/pi/agent/APPEND_SYSTEM.md
+!dotfiles/pi/agent/tsconfig.json
+!dotfiles/pi/agent/package.json
+!dotfiles/pi/agent/package-lock.json
+!dotfiles/pi/agent/cloak.json
+!dotfiles/pi/agent/keybindings.json
+!dotfiles/pi/agent/settings.json
+!dotfiles/pi/agent/themes/
+!dotfiles/pi/agent/themes/*.json
+!dotfiles/pi/agent/extensions/
+!dotfiles/pi/agent/extensions/**
+!dotfiles/pi/agent/mcp.json
+!dotfiles/pi/agent/prompts/
+!dotfiles/pi/agent/prompts/**
+!dotfiles/pi/agent/skills/
+!dotfiles/pi/agent/skills/**
+!dotfiles/pi/agent/git/
+dotfiles/pi/agent/git/*
+!dotfiles/pi/agent/git/.gitignore
+!dotfiles/pi/agent/npm/
+dotfiles/pi/agent/npm/*
+!dotfiles/pi/agent/npm/.gitignore
+
+# pi MCP adapter runtime/secrets
 dotfiles/pi/agent/auth.json
+dotfiles/pi/agent/mcp-oauth/
+dotfiles/pi/agent/mcp-cache.json
+dotfiles/pi/agent/mcp-npx-cache.json
+dotfiles/pi/agent/mcp-auth.json
+dotfiles/pi/agent/trust.json
+
+# pi extensions node_modules
+dotfiles/pi/agent/node_modules/
+dotfiles/pi/agent/extensions/**/node_modules/
+
+# pi generated/shared skills
+dotfiles/pi/agent/skills/braintrust-*/
 
 # Lumen (contains API keys)
 dotfiles/lumen/lumen.config.json
