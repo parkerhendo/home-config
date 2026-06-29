@@ -36,6 +36,9 @@
         '';
       };
     })
+    (final: prev: {
+      mise = prev.mise.overrideAttrs { doCheck = false; };
+    })
   ];
 
 # Keyboard configuration
@@ -155,6 +158,7 @@
       # Terminal and Development
       "ghostty"
       "codex"
+      "codex-app"
 
       # Communcation & productivity
       "beeper"

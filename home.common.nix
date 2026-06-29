@@ -73,6 +73,7 @@
 
   home.sessionPath = [
     "$HOME/.npm-global/bin"
+    "$HOME/home-config/scripts"
   ];
 
   home.sessionVariables = {

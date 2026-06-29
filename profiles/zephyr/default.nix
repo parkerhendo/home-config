@@ -24,7 +24,6 @@
     dock.persistent-apps = [
       "/Applications/Ghostty.app"
       "/Applications/Dia.app"
-      "/Applications/Reader.app"
       "/Applications/Obsidian.app"
     ];
   };
