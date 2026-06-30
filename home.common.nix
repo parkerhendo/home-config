@@ -36,6 +36,7 @@
 
     # Development tools
     gh
+    ghui
     git
     mise
     neovim

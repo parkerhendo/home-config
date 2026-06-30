@@ -1,18 +1,21 @@
 {
   "theme": "gruvbox-dark",
   "lastChangelogVersion": "0.79.8",
-  "defaultProvider": "anthropic",
+  "defaultProvider": "openai",
   "defaultModel": "gpt-5.5",
   "hideThinkingBlock": false,
   "defaultThinkingLevel": "high",
   "packages": [
     "https://github.com/davebcn87/pi-autoresearch",
-    "npm:pi-mcp-adapter"
+    "npm:pi-mcp-adapter",
+    "npm:@plannotator/pi-extension"
   ],
   "enabledModels": [
     "anthropic/claude-opus-4-7",
     "anthropic/claude-sonnet-4-6",
     "openai/gpt-5.3-codex",
-    "openai/gpt-5.5"
+    "openai/gpt-5.5",
+    "openai/gpt-5-mini",
+    "openai/gpt-5.1-codex-mini"
   ]
 }
