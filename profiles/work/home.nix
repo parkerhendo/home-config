@@ -26,7 +26,12 @@
     rustup
 
     # dev utilities
-    graphite-cli
+    # Upstream darwin package fails while generating an empty bash completion;
+    # fixup also corrupts the pkg-embedded binary.
+    (graphite-cli.overrideAttrs (_: {
+      dontFixup = true;
+      postInstall = "";
+    }))
     nodejs_22
     wasm-bindgen-cli_0_2_100
     duckdb

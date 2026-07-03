@@ -1,6 +1,6 @@
 {
   "theme": "gruvbox-dark",
-  "lastChangelogVersion": "0.79.8",
+  "lastChangelogVersion": "0.80.2",
   "defaultProvider": "openai",
   "defaultModel": "gpt-5.5",
   "hideThinkingBlock": false,
@@ -16,6 +16,7 @@
     "openai/gpt-5.3-codex",
     "openai/gpt-5.5",
     "openai/gpt-5-mini",
-    "openai/gpt-5.1-codex-mini"
+    "openai/gpt-5.1-codex-mini",
+    "anthropic/claude-fable-5"
   ]
 }

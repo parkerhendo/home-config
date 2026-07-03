@@ -21,6 +21,7 @@
  * - `/review default branch main` - review using the default review prompt
  * - `/review --prompt aggro branch main` - choose review prompt source explicitly
  * - `/review` selector includes Add/Remove custom review instructions (applies to all modes)
+ * - `/review` selector includes a review model override selector
  * - `/review --extra "focus on performance regressions"` - add extra review instruction (works with any mode)
  *
  * Project-specific review guidelines:
@@ -37,7 +38,12 @@ import type {
 } from "@mariozechner/pi-coding-agent";
 import type { Model, Api } from "@mariozechner/pi-ai";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
-import { DynamicBorder, BorderedLoader } from "@mariozechner/pi-coding-agent";
+import {
+  DynamicBorder,
+  BorderedLoader,
+  ModelSelectorComponent,
+  SettingsManager,
+} from "@mariozechner/pi-coding-agent";
 import {
   Container,
   fuzzyFilter,
@@ -51,6 +57,7 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 
 type ReviewPromptSource = "default" | "aggroReview";
+type ReviewModelOverride = { provider: string; modelId: string };
 
 // State to track fresh session review (where we branched from).
 // Module-level state means only one review can be active at a time.
@@ -60,6 +67,7 @@ let endReviewInProgress = false;
 let reviewLoopFixingEnabled = false;
 let reviewCustomInstructions: string | undefined = undefined;
 let reviewPromptSource: ReviewPromptSource = "default";
+let reviewModelOverride: ReviewModelOverride | undefined = undefined;
 let reviewLoopInProgress = false;
 let pendingModelRestore:
   | { model: Model<Api> | undefined; thinkingLevel: ThinkingLevel }
@@ -85,6 +93,7 @@ type ReviewSettingsState = {
   loopFixingEnabled?: boolean;
   customInstructions?: string;
   promptSource?: ReviewPromptSource;
+  modelOverride?: ReviewModelOverride;
 };
 
 function setReviewWidget(ctx: ExtensionContext, active: boolean) {
@@ -144,11 +153,21 @@ function getReviewSettings(ctx: ExtensionContext): ReviewSettingsState {
     }
   }
 
+  const modelOverride =
+    typeof state?.modelOverride?.provider === "string" &&
+    typeof state.modelOverride.modelId === "string"
+      ? {
+          provider: state.modelOverride.provider,
+          modelId: state.modelOverride.modelId,
+        }
+      : undefined;
+
   return {
     loopFixingEnabled: state?.loopFixingEnabled === true,
     customInstructions: state?.customInstructions?.trim() || undefined,
     promptSource:
       state?.promptSource === "aggroReview" ? "aggroReview" : "default",
+    modelOverride,
   };
 }
 
@@ -157,12 +176,26 @@ function applyReviewSettings(ctx: ExtensionContext) {
   reviewLoopFixingEnabled = state.loopFixingEnabled === true;
   reviewCustomInstructions = state.customInstructions?.trim() || undefined;
   reviewPromptSource = state.promptSource ?? "default";
+  reviewModelOverride = state.modelOverride;
 }
 
 function getReviewPromptSourceLabel(source: ReviewPromptSource): string {
   return source === "aggroReview"
     ? "aggro-review skill"
     : "default review prompt";
+}
+
+function getReviewModelSpec(): ReviewModelOverride {
+  return (
+    reviewModelOverride ?? {
+      provider: REVIEW_MODEL_PROVIDER,
+      modelId: REVIEW_MODEL_ID,
+    }
+  );
+}
+
+function getReviewModelLabel(spec: ReviewModelOverride): string {
+  return `${spec.provider}/${spec.modelId}`;
 }
 
 function parseReviewPromptSource(value: string): ReviewPromptSource | null {
@@ -1133,11 +1166,13 @@ const REVIEW_PRESETS = [
 const TOGGLE_LOOP_FIXING_VALUE = "toggleLoopFixing" as const;
 const TOGGLE_CUSTOM_INSTRUCTIONS_VALUE = "toggleCustomInstructions" as const;
 const TOGGLE_PROMPT_SOURCE_VALUE = "togglePromptSource" as const;
+const SELECT_MODEL_OVERRIDE_VALUE = "selectModelOverride" as const;
 type ReviewPresetValue =
   | (typeof REVIEW_PRESETS)[number]["value"]
   | typeof TOGGLE_LOOP_FIXING_VALUE
   | typeof TOGGLE_CUSTOM_INSTRUCTIONS_VALUE
-  | typeof TOGGLE_PROMPT_SOURCE_VALUE;
+  | typeof TOGGLE_PROMPT_SOURCE_VALUE
+  | typeof SELECT_MODEL_OVERRIDE_VALUE;
 
 export default function reviewExtension(pi: ExtensionAPI) {
   function persistReviewSettings() {
@@ -1145,6 +1180,7 @@ export default function reviewExtension(pi: ExtensionAPI) {
       loopFixingEnabled: reviewLoopFixingEnabled,
       customInstructions: reviewCustomInstructions,
       promptSource: reviewPromptSource,
+      modelOverride: reviewModelOverride,
     });
   }
 
@@ -1160,6 +1196,13 @@ export default function reviewExtension(pi: ExtensionAPI) {
 
   function setReviewPromptSource(source: ReviewPromptSource) {
     reviewPromptSource = source;
+    persistReviewSettings();
+  }
+
+  function setReviewModelOverride(
+    modelOverride: ReviewModelOverride | undefined,
+  ) {
+    reviewModelOverride = modelOverride;
     persistReviewSettings();
   }
 
@@ -1218,6 +1261,71 @@ export default function reviewExtension(pi: ExtensionAPI) {
     return "commit";
   }
 
+  async function pickReviewModelOverride(
+    ctx: ExtensionContext,
+  ): Promise<ReviewModelOverride | undefined> {
+    const settingsManager = SettingsManager.inMemory();
+    const configuredModel = reviewModelOverride
+      ? ctx.modelRegistry.find(
+          reviewModelOverride.provider,
+          reviewModelOverride.modelId,
+        )
+      : ctx.modelRegistry.find(REVIEW_MODEL_PROVIDER, REVIEW_MODEL_ID);
+    const currentModel = configuredModel ?? ctx.model;
+    const scopedModels: Array<{ model: Model<Api>; thinkingLevel?: string }> =
+      [];
+
+    return ctx.ui.custom<ReviewModelOverride | undefined>(
+      (tui, _theme, _keybindings, done) => {
+        const selector = new ModelSelectorComponent(
+          tui,
+          currentModel,
+          settingsManager,
+          ctx.modelRegistry,
+          scopedModels,
+          (model) => done({ provider: model.provider, modelId: model.id }),
+          () => done(undefined),
+        );
+        return selector;
+      },
+    );
+  }
+
+  async function showModelOverrideSelector(
+    ctx: ExtensionContext,
+  ): Promise<void> {
+    if (reviewModelOverride) {
+      const choice = await ctx.ui.select(
+        `Review model override: ${getReviewModelLabel(reviewModelOverride)}`,
+        ["Change override", "Clear override"],
+      );
+      if (!choice) return;
+
+      if (choice === "Clear override") {
+        setReviewModelOverride(undefined);
+        ctx.ui.notify(
+          `Review model override cleared; using ${getReviewModelLabel(
+            getReviewModelSpec(),
+          )}`,
+          "info",
+        );
+        return;
+      }
+    }
+
+    const selected = await pickReviewModelOverride(ctx);
+    if (!selected) {
+      ctx.ui.notify("Review model override not changed", "info");
+      return;
+    }
+
+    setReviewModelOverride(selected);
+    ctx.ui.notify(
+      `Review model override set to ${getReviewModelLabel(selected)}`,
+      "info",
+    );
+  }
+
   /**
    * Show the review preset selector
    */
@@ -1255,12 +1363,20 @@ export default function reviewExtension(pi: ExtensionAPI) {
       const promptSourceDescription = `(currently ${getReviewPromptSourceLabel(
         reviewPromptSource,
       )})`;
+      const modelOverrideDescription = reviewModelOverride
+        ? `(currently ${getReviewModelLabel(reviewModelOverride)})`
+        : `(default ${getReviewModelLabel(getReviewModelSpec())})`;
       const items: SelectItem[] = [
         ...presetItems,
         {
           value: TOGGLE_PROMPT_SOURCE_VALUE,
           label: promptSourceLabel,
           description: promptSourceDescription,
+        },
+        {
+          value: SELECT_MODEL_OVERRIDE_VALUE,
+          label: "Set review model override",
+          description: modelOverrideDescription,
         },
         {
           value: TOGGLE_CUSTOM_INSTRUCTIONS_VALUE,
@@ -1345,6 +1461,11 @@ export default function reviewExtension(pi: ExtensionAPI) {
           `Using ${getReviewPromptSourceLabel(nextSource)} for reviews`,
           "info",
         );
+        continue;
+      }
+
+      if (result === SELECT_MODEL_OVERRIDE_VALUE) {
+        await showModelOverrideSelector(ctx);
         continue;
       }
 
@@ -1903,15 +2024,16 @@ export default function reviewExtension(pi: ExtensionAPI) {
       "info",
     );
 
-    // Switch to GPT-5.5 with xhigh thinking effort for reviews, save previous settings
+    // Switch to the configured review model with xhigh thinking effort for reviews.
     pendingModelRestore = {
       model: ctx.model,
       thinkingLevel: pi.getThinkingLevel(),
     };
 
+    const reviewModelSpec = getReviewModelSpec();
     const reviewModel = ctx.modelRegistry.find(
-      REVIEW_MODEL_PROVIDER,
-      REVIEW_MODEL_ID,
+      reviewModelSpec.provider,
+      reviewModelSpec.modelId,
     );
     const switched = reviewModel ? await pi.setModel(reviewModel) : false;
     pi.setThinkingLevel(REVIEW_THINKING_LEVEL);
@@ -1924,7 +2046,9 @@ export default function reviewExtension(pi: ExtensionAPI) {
       );
     } else {
       ctx.ui.notify(
-        `Using ${activeThinkingLevel} thinking effort for review`,
+        `Using ${activeThinkingLevel} thinking effort for review (could not switch to ${getReviewModelLabel(
+          reviewModelSpec,
+        )})`,
         "info",
       );
     }
