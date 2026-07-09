@@ -135,6 +135,17 @@
   nixpkgs.hostPlatform = "aarch64-darwin";
   nixpkgs.config.allowUnfree = true;
 
+  # Skip building nix-darwin's HTML manual: nixpkgs-unstable dropped
+  # `nixos-render-docs`'s `--toc-depth` flag but nix-darwin still passes it,
+  # breaking `darwin-manual-html.drv`. We don't use `darwin-help`, so disabling
+  # `documentation.doc.enable` removes it from our system closure.
+  documentation.doc.enable = false;
+
+  # `darwin-uninstaller` embeds its own inner nix-darwin system (with the
+  # default `documentation.doc.enable = true`), which also fails to build the
+  # HTML manual. Drop the uninstaller from the closure until upstream is fixed.
+  system.tools.darwin-uninstaller.enable = false;
+
   # macOS system version (this should match your current macOS version)
   system.stateVersion = 4;
 
