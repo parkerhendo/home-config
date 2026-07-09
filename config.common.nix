@@ -97,6 +97,10 @@
   # Disable nix-darwin's Nix management (using Determinate Nix)
   nix.enable = false;
 
+  # nix-darwin's HTML manual currently uses removed nixos-render-docs flags.
+  documentation.doc.enable = false;
+  system.tools.darwin-uninstaller.enable = false;
+
   # System packages (global system tools)
   environment.systemPackages = with pkgs; [
     # Essential system tools only - CLI tools managed by home-manager
