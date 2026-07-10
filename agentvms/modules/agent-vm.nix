@@ -1,5 +1,7 @@
-# One sandbox slot. Parameterized via specialArgs from flake.nix — see the
-# `agentvm` attrset there for the exhaustive list of knobs.
+# One sandbox slot: system-level guest config only. The user's home
+# environment (packages, dotfiles, prompt, agents) comes from home-manager
+# importing the host profile -- see pool.nix. Parameterized via the
+# `agentvm` specialArgs attrset defined there.
 { config, lib, pkgs, agentvm, ... }:
 let
   inherit (agentvm) user uid slot stateBase vcpu mem
@@ -58,6 +60,12 @@ in
         source = "/nix/store"; mountPoint = "/nix/.ro-store"; }
       { proto = "virtiofs"; tag = "workspace";
         source = workspace; mountPoint = "/workspace"; }
+      # Per-slot COPY of the host config repo (synced by `agentvm start`,
+      # never the live checkout), mounted at the same $HOME-relative path as
+      # on the mac so mkOutOfStoreSymlink dotfiles (~/.pi/agent, lumen, ...)
+      # and sessionPath entries ($HOME/home-config/scripts) resolve there.
+      { proto = "virtiofs"; tag = "home-config";
+        source = "${slotDir}/home-config"; mountPoint = "/home/${user}/home-config"; }
     ];
 
     # Writable /nix/store overlay on a per-slot disk image: direnv/nix
@@ -71,13 +79,13 @@ in
   };
 
   # Root fs is tmpfs; keep nix builds off it or RAM fills up.
+  # (~/.zshrc etc. are managed by home-manager, not tmpfiles.)
   systemd.tmpfiles.rules = [
     "d /nix/.rw-store/nix-build 0755 root root -"
     "d /home/${user} 0750 ${user} users -"
     "d /home/${user}/.local 0755 ${user} users -"
     "d /home/${user}/.local/share 0755 ${user} users -"
     "d /home/${user}/.local/share/docker 0710 root root -"
-    "f /home/${user}/.zshrc 0644 ${user} users -"
   ];
   nix.settings = {
     experimental-features = [ "nix-command" "flakes" ];
@@ -87,7 +95,7 @@ in
   };
 
   users.users.${user} = {
-    isSystemUser = true;
+    isSystemUser = true;               # isNormalUser forbids uid < 1000; we need the mac's 501
     createHome = true;
     home = "/home/${user}";
     group = "users";
@@ -143,6 +151,7 @@ in
   };
 
   environment.sessionVariables = {
+    AGENTVM_NAME = name;               # shell prompt prefix (dotfiles/zsh/prompt.zsh)
     CPATH = lib.makeSearchPathOutput "dev" "include" sourceBuildInputs;
     LIBRARY_PATH = lib.makeLibraryPath sourceBuildInputs;
     PKG_CONFIG_PATH = lib.makeSearchPathOutput "dev" "lib/pkgconfig" sourceBuildInputs;
@@ -160,8 +169,8 @@ in
     };
   };
 
-  # Guest-only bootstrap tools on top of the shared common-packages.nix set.
-  # Repos should provide their own toolchains via mise or `nix develop`.
+  # Guest-only system baseline. Everything user-facing (agents, editors,
+  # shell utilities) comes from the host home profile via home-manager;
   # docker binaries come from virtualisation.docker.
   environment.systemPackages = (with pkgs; [
     bashInteractive
@@ -177,9 +186,8 @@ in
     uv
     zip
     zsh
-    nodejs_22   # node/npm — guest-only; host uses mise
-  ]) ++ (import ../common-packages.nix pkgs)
-    ++ sourceBuildInputs;
+    nodejs_22   # node/npm -- guest-only; host uses mise
+  ]) ++ sourceBuildInputs;
 
   # Heavy dep churn (node_modules) is slow over virtiofs. Optionally shadow
   # it with VM-local tmpfs -- host won't see it, which is usually a feature:
