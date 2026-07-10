@@ -1,0 +1,4 @@
+theme = "gruvbox-dark"
+leader = ","
+comment_vim = true
+diff_view = "unified"

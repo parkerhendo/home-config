@@ -71,6 +71,7 @@
 
   xdg.enable = true;
   xdg.configFile."lumen".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/lumen";
+  xdg.configFile."tuicr".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/tuicr";
 
   home.sessionPath = [
     "$HOME/.npm-global/bin"
