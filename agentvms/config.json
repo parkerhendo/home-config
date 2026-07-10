@@ -1,0 +1,12 @@
+{
+  "user": "parker",
+  "uid": 501,
+  "slots": 4,
+  "vcpu": 6,
+  "mem": 16384,
+  "storeOverlaySizeMB": 32768,
+  "homeSizeMB": 65536,
+  "stateDir": ".local/state/agentvms",
+  "macPrefix": "02:76:6d:00:00:0",
+  "defaultProfile": "zephyr"
+}

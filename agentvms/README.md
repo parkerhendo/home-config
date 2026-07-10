@@ -29,12 +29,13 @@ port juggling — `http://vm-1.local:3000`, `http://vm-2.local:3000`.
    `authorized_keys` from your default SSH public key. To do it manually:
    `cp ~/.ssh/id_ed25519.pub ./authorized_keys`
 
-4. **Knobs**: edit the top of `pool.nix` (user, uid via `id -u`, slot count,
-   vcpu/mem/disk sizes, stateBase, default profile).
+4. **Knobs**: edit `config.json` (user, uid via `id -u`, slot count,
+   vcpu/mem/disk sizes, state dir, MAC prefix, default profile). It is the
+   single source shared by `pool.nix` and `bin/agentvm`.
 
 5. **First build** (slow once, then cached). The VM configs are outputs of
    the root home-config flake, so new files must be committed first:
-   `AGENTVM_WORKSPACE=$PWD nix build --impure ~/home-config#vm-1`
+   `nix build ~/home-config#vm-1`
 
 6. `bin/agentvm` is on PATH via `home.sessionPath` in `home.common.nix`.
 
@@ -50,10 +51,12 @@ agentvm stop 2 | all
 agentvm reset 2        # wipe slot state: nix cache, /home, workspace/repo copies, firmware vars
 ```
 
-Env overrides: `AGENTVM_SLOTS`, `AGENTVM_USER`, `AGENTVM_STATE`,
-`AGENTVM_FLAKE`, `AGENTVM_PROFILE` (host profile the guest home clones),
+Env overrides: `AGENTVM_FLAKE`, `AGENTVM_PROFILE` (host profile the guest
+home clones — builds the `vm-N-<profile>` flake output),
 `AGENTVM_WORKSPACE_MODE=live` (dangerous live host mount),
 `AGENTVM_ISOLATE=0` (allow VM↔VM traffic; default isolated).
+Everything shared with the nix side (slots, user, sizes, state dir) lives
+in `config.json` instead of env vars, so the two sides can't disagree.
 
 ## One-to-one clone of the host
 
@@ -95,14 +98,19 @@ from the repo's `mise` config or `nix develop` shell.
   and browser. (If you want phone access later, run tailscale in the guests.)
 - **Laptop, not always-on box** — closed lid suspends VMs. `caffeinate -s`
   while plugged in if you want agents chewing overnight.
-- **Workspace copy is impure-eval**: `agentvm start` rsyncs `$PWD` into
-  the per-slot state directory and exports that copy as `AGENTVM_WORKSPACE`
-  before rebuilding the runner with `--impure` (cheap after first build — only
-  the runner script changes). Destructive writes in `/workspace` affect the
-  slot copy, not the original host checkout. Dependency/build artifacts such as
-  `venv`, `.venv`, `node_modules`, `.direnv`, `bazel-*`, `dist`, `build`, and
-  `target` are excluded so macOS-specific outputs are recreated inside Linux.
-  Set `AGENTVM_WORKSPACE_MODE=live` to restore the old live-mount behavior.
+- **Workspace mount is constant, eval is pure**: the VM always mounts the
+  per-slot `workspace/` state dir; `agentvm start` populates it — an rsync
+  copy of `$PWD` by default, or a symlink to the live checkout with
+  `AGENTVM_WORKSPACE_MODE=live`. No env vars or `--impure` feed the build,
+  so the runner is identical wherever it's built. Destructive writes in
+  `/workspace` affect the slot copy, not the original host checkout.
+  Dependency/build artifacts such as `venv`, `.venv`, `node_modules`,
+  `.direnv`, `bazel-*`, `dist`, `build`, and `target` are excluded from the
+  copy so macOS-specific outputs are recreated inside Linux.
+- **SSH keys ride the home-config copy**: the gitignored
+  `agentvms/authorized_keys` reaches the guest via the rsynced
+  `~/home-config` mount, and guest sshd reads it from there — runtime data
+  stays out of flake sources and the store.
 - **Persistent per slot**: writable /nix/store overlay (warm direnv/build
   cache) + `/home` image (agent auth survives). Root fs is tmpfs — OS state
   is fresh every boot. `agentvm reset N` wipes the persistent bits.
@@ -125,7 +133,7 @@ the VMs — push from the host.
 ## Validated locally
 
 - Linux builder SSH and `ssh-ng://linux-builder` builds.
-- `nix build --impure <repo>#vm-1` from macOS into an aarch64-linux VM runner.
+- `nix build <repo>#vm-1` from macOS into an aarch64-linux VM runner.
 - `vmnet-run` fd 4 handoff to vfkit.
 - mDNS SSH to `vm-1.local` / `vm-2.local`.
 - Parallel slots on distinct subnets serving the same port (`:3000`).
