@@ -1,0 +1,28 @@
+# User-specific SSH material
+/authorized_keys
+/id_*
+/*.pem
+/*.key
+/*.pub
+
+# Local VM state, disk images, firmware vars, and generated runners
+/state/
+/vm-*/
+/*.img
+/efi-variable-store*
+/runner
+
+# Nix build outputs
+/result
+/result-*
+
+# Local environment/secrets
+.env
+.env.*
+!.env.example
+*.env
+
+# Logs and temporary files
+*.log
+*.tmp
+.DS_Store
