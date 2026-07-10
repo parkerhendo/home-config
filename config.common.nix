@@ -1,6 +1,9 @@
 {  config, pkgs, inputs, ... }:
 
 {
+  imports = [
+    ./modules/linux-builder.nix
+  ];
 
   nixpkgs.overlays = [
     (final: prev: {
@@ -94,85 +97,7 @@
   # Disable nix-darwin's Nix management (using Determinate Nix).
   nix.enable = false;
 
-  environment.etc."ssh/ssh_config.d/100-linux-builder.conf".text = ''
-    Host linux-builder
-      User builder
-      Hostname 127.0.0.1
-      HostKeyAlias linux-builder
-      UserKnownHostsFile /etc/ssh/ssh_known_hosts.d/100-linux-builder
-      Port 31022
-      IdentityFile /Users/${config.system.primaryUser}/.ssh/linux-builder_ed25519
-      IdentitiesOnly yes
-  '';
-
-  environment.etc."ssh/ssh_known_hosts.d/100-linux-builder".text = ''
-    linux-builder ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJBWcxb/Blaqt1auOtE+F8QUWrUotiC5qBJ+UuEWdVCb
-  '';
-
-  system.activationScripts.preActivation.text = ''
-    mkdir -p /var/lib/linux-builder /etc/nix
-
-    # Determinate Nix includes /etc/nix/nix.custom.conf from its managed
-    # nix.conf. Patch that hook instead of using nix-darwin's `nix.*`
-    # settings, which require `nix.enable = true`.
-    custom=/etc/nix/nix.custom.conf
-    tmp=$(/usr/bin/mktemp)
-    if [ -e "$custom" ]; then
-      /usr/bin/awk '
-        /^# BEGIN nix-darwin linux-builder$/ { skip = 1; next }
-        /^# END nix-darwin linux-builder$/ { skip = 0; next }
-        !skip { print }
-      ' "$custom" > "$tmp"
-    else
-      : > "$tmp"
-    fi
-    b64=$(printf '%s' 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJBWcxb/Blaqt1auOtE+F8QUWrUotiC5qBJ+UuEWdVCb root@nixos' | /usr/bin/base64)
-    cat >> "$tmp" <<EOF
-# BEGIN nix-darwin linux-builder
-extra-trusted-users = @admin ${config.system.primaryUser}
-builders = ssh-ng://builder@linux-builder aarch64-linux /etc/nix/builder_ed25519 1 - - - $b64
-builders-use-substitutes = true
-# END nix-darwin linux-builder
-EOF
-    /usr/bin/install -m 0644 "$tmp" "$custom"
-    rm -f "$tmp"
-
-    if [ -e /etc/nix/builder_ed25519 ]; then
-      /usr/sbin/chown root:wheel /etc/nix/builder_ed25519
-      /bin/chmod 0600 /etc/nix/builder_ed25519
-      /bin/mkdir -p /Users/${config.system.primaryUser}/.ssh
-      /usr/bin/install -m 0600 -o ${config.system.primaryUser} -g staff /etc/nix/builder_ed25519 /Users/${config.system.primaryUser}/.ssh/linux-builder_ed25519
-      rm -f /etc/nix/builder_ed25519_nixbld
-    fi
-  '';
-
-  launchd.daemons.linux-builder = {
-    script = ''
-      export NIX_SSL_CERT_FILE=/etc/nix/macos-keychain.crt
-      export TMPDIR=/run/org.nixos.linux-builder USE_TMPDIR=1
-      rm -rf "$TMPDIR"
-      mkdir -p "$TMPDIR"
-      trap 'rm -rf "$TMPDIR"' EXIT
-      (
-        while [ ! -e /etc/nix/builder_ed25519 ]; do
-          sleep 1
-        done
-        /usr/sbin/chown root:wheel /etc/nix/builder_ed25519
-        /bin/chmod 0600 /etc/nix/builder_ed25519
-        /bin/mkdir -p /Users/${config.system.primaryUser}/.ssh
-        /usr/bin/install -m 0600 -o ${config.system.primaryUser} -g staff /etc/nix/builder_ed25519 /Users/${config.system.primaryUser}/.ssh/linux-builder_ed25519
-        rm -f /etc/nix/builder_ed25519_nixbld
-      ) &
-      exec ${pkgs.darwin.linux-builder}/bin/create-builder
-    '';
-    serviceConfig = {
-      KeepAlive = true;
-      RunAtLoad = true;
-      WorkingDirectory = "/var/lib/linux-builder";
-      StandardOutPath = "/var/log/linux-builder.log";
-      StandardErrorPath = "/var/log/linux-builder.log";
-    };
-  };
+  # Linux builder wiring lives in modules/linux-builder.nix (imported above).
 
   # nix-darwin's HTML manual currently uses removed nixos-render-docs flags.
   documentation.doc.enable = false;

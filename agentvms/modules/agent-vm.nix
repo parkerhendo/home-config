@@ -1,7 +1,9 @@
-# One sandbox slot. Parameterized via specialArgs from flake.nix.
-{ config, lib, pkgs, user, uid, slot, stateBase, vcpu, mem
-, storeOverlaySizeMB, homeSizeMB, authorizedKeys, hostPkgs, ... }:
+# One sandbox slot. Parameterized via specialArgs from flake.nix — see the
+# `agentvm` attrset there for the exhaustive list of knobs.
+{ config, lib, pkgs, agentvm, ... }:
 let
+  inherit (agentvm) user uid slot stateBase vcpu mem
+    storeOverlaySizeMB homeSizeMB authorizedKeys hostPkgs;
   name = "vm-${toString slot}";
   slotDir = "${stateBase}/${name}";
 
@@ -158,33 +160,26 @@ in
     };
   };
 
+  # Guest-only bootstrap tools on top of the shared common-packages.nix set.
+  # Repos should provide their own toolchains via mise or `nix develop`.
+  # docker binaries come from virtualisation.docker.
   environment.systemPackages = (with pkgs; [
-    # Minimal bootstrap tools. Repos should provide their own toolchains via
-    # mise or `nix develop`.
     bashInteractive
     awscli2
-    coreutils
     curl
-    docker_29
     docker-compose
-    git
     gnupg
     gcc
     gnumake
-    jq
     pkg-config
     python311
-    python3
-    ripgrep
-    tmux
     unzip
     uv
     zip
     zsh
-    mise
-  ]) ++ sourceBuildInputs;
-  # Agent tooling: e.g. claude-code lives in nixpkgs (unfree). Uncomment:
-  # nixpkgs.config.allowUnfree = true;  # (then add claude-code above)
+    nodejs_22   # node/npm — guest-only; host uses mise
+  ]) ++ (import ../common-packages.nix pkgs)
+    ++ sourceBuildInputs;
 
   # Heavy dep churn (node_modules) is slow over virtiofs. Optionally shadow
   # it with VM-local tmpfs -- host won't see it, which is usually a feature:

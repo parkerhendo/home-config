@@ -10,48 +10,16 @@
   #   allowUnfree = true;
   # };
 
-  # Common packages across all machines
-  home.packages = with pkgs; [
-    # Custom packages
+  # Common packages across all machines. The shared list is also installed
+  # inside every agent VM guest; anything mac-only stays here.
+  home.packages = (import ./agentvms/common-packages.nix pkgs) ++ (with pkgs; [
+    # Custom (mac-only)
     timer-cli
     timer-bar
 
-    # AI Stuff
-    amp-cli
-    opencode
-    claude-code
-    gemini-cli
-    pi-coding-agent
-
-    # Shell and terminal utilities
-    atuin
-    bat
-    btop
-    coreutils
+    # Mac-only utilities
     darwin.trash
-    fd
-    fzf
-    tree
-    jq
-
-    # Development tools
-    gh
-    ghui
-    git
-    neovim
-
-    parallel
-    ripgrep
-    tmux
-
-    # Networking
-    ngrok
-
-    # Media and utilities
-    ffmpeg
-    # nix
-    niv
-  ];
+  ]);
 
   # Git configuration (no paths)
   programs.git = {
@@ -112,13 +80,11 @@
     nix-direnv.enable = true;
   };
 
-  # Pi coding agent (mkOutOfStoreSymlink for editable files)
-  home.file.".zsh".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/zsh";
+  # Pi coding agent (mkOutOfStoreSymlink for editable files). `agentvm` is
+  # exposed via `home.sessionPath` below rather than a symlink.
   home.file.".pi/agent".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/pi/agent";
-  home.file.".local/bin/agentvm".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/agentvms/bin/agentvm";
 
-  # Shell profile shared by all profiles. This includes ~/.local/bin on PATH,
-  # which makes the agentvm symlink above available in new zsh sessions.
+  # Shell profile shared by all profiles.
   home.file.".zprofile".source = ./dotfiles/zprofile;
   home.file.".zsh".source = ./dotfiles/zsh;
   home.file.".zshrc".source = ./dotfiles/zshrc;

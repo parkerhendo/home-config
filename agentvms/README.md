@@ -57,16 +57,27 @@ Env overrides: `AGENTVM_SLOTS`, `AGENTVM_USER`, `AGENTVM_STATE`,
 
 ## Bundled dev tools
 
-The guest intentionally stays minimal. It includes bootstrap and navigation
-tools (`git`, `curl`, `gnupg`, `jq`, `python`, `uv`, `ripgrep`, `tmux`, `zsh`, archive utilities) plus
-`mise`, `direnv`/`nix-direnv`, Nix flakes, terminfo, and a small native build baseline
-+ common headers for source-building runtimes (`gcc`, `make`, `pkg-config`,
-`openssl`, `zlib`, `readline`, `sqlite`, `gdbm`, `libffi`, `libyaml`, `bzip2`,
-`xz`, `ncurses`). The VM also includes Docker/Compose and AWS CLI v2 for
-common local service workflows. It puts `/workspace/venv/bin` and mise shims on
-PATH so commands installed by `make develop` / `mise install` are available to
-plain `make` and shell commands. Project-specific runtimes and other toolchains
-should come from the repo's `mise` config or `nix develop` shell.
+The guest mirrors the host's everyday CLI set so `agentvm start` feels like a
+host shell. `common-packages.nix` is the single shared list installed on both
+the mac (via home-manager in `home.common.nix`) and in every guest — AI CLIs
+(`claude-code`, `pi-coding-agent`, `opencode`, `amp-cli`, `gemini-cli`),
+shell/terminal utilities (`atuin`, `bat`, `btop`, `fd`, `fzf`, `jq`,
+`ripgrep`, `tmux`, `tree`), dev tooling (`git`, `gh`, `ghui`, `mise`,
+`neovim`, `parallel`), plus `ngrok`, `ffmpeg`, and `niv`. Anything mac-only
+(`darwin.trash`, `timer-*`) stays in `home.common.nix`; anything guest-only
+stays in `modules/agent-vm.nix`. `pi-coding-agent` and `ghui` come from a
+`nixpkgs-unstable` overlay until they land in 25.11.
+
+On top of the shared list the guest adds bootstrap tools (`curl`, `gnupg`,
+`python311`, `uv`, `zsh`, `nodejs`, archive utilities), `direnv`/`nix-direnv`,
+Nix flakes, terminfo, and a small native build baseline + common headers for
+source-building runtimes (`gcc`, `make`, `pkg-config`, `openssl`, `zlib`,
+`readline`, `sqlite`, `gdbm`, `libffi`, `libyaml`, `bzip2`, `xz`, `ncurses`).
+The VM also includes Docker/Compose and AWS CLI v2 for common local service
+workflows. It puts `/workspace/venv/bin` and mise shims on PATH so commands
+installed by `make develop` / `mise install` are available to plain `make`
+and shell commands. Project-specific runtimes and other toolchains should
+still come from the repo's `mise` config or `nix develop` shell.
 
 ## Design notes / deltas from the mini-PC version
 
