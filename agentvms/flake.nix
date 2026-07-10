@@ -3,13 +3,15 @@
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-25.11";
+    # For packages not yet in 25.11 (pi-coding-agent, ghui).
+    nixpkgs-unstable.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     microvm = {
       url = "github:microvm-nix/microvm.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
-  outputs = { self, nixpkgs, microvm }:
+  outputs = { self, nixpkgs, nixpkgs-unstable, microvm }:
     let
       lib = nixpkgs.lib;
 
@@ -28,6 +30,16 @@
       hostSystem = "aarch64-darwin";
       hostPkgs = nixpkgs.legacyPackages.${hostSystem};
 
+      # Packages missing from 25.11; applied as an overlay (inline module in
+      # mkSlot) so guest package lists reference them via the normal `pkgs`.
+      unstablePkgs = import nixpkgs-unstable {
+        system = guestSystem;
+        config.allowUnfree = true;
+      };
+      unstableOverlay = final: prev: {
+        inherit (unstablePkgs) pi-coding-agent ghui;
+      };
+
       authorizedKeysPath = ./authorized_keys;
       authorizedKeys =
         if builtins.pathExists authorizedKeysPath then
@@ -41,13 +53,15 @@
       mkSlot = n:
         lib.nameValuePair "vm-${toString n}" (lib.nixosSystem {
           system = guestSystem;
-          specialArgs = {
+          specialArgs.agentvm = {
             inherit user uid stateBase vcpu mem
               storeOverlaySizeMB homeSizeMB authorizedKeys hostPkgs;
             slot = n;
           };
           modules = [
             microvm.nixosModules.microvm
+            { nixpkgs.overlays = [ unstableOverlay ];
+              nixpkgs.config.allowUnfree = true; }  # claude-code, ngrok
             ./modules/agent-vm.nix
           ];
         });
