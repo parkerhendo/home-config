@@ -1,0 +1,236 @@
+#!/usr/bin/env bash
+# agentvm -- ephemeral sandbox VMs on macOS, szymonkaliski-style but local.
+#   cd some-project && agentvm start   # claim free slot, mount $PWD -> /workspace, ssh in
+#   agentvm ls | stop N | stop all | ssh N | attach N | reset N
+set -euo pipefail
+
+SCRIPT="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT" ]]; do
+  SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT")" && pwd)"
+  SCRIPT_TARGET="$(readlink "$SCRIPT")"
+  [[ "$SCRIPT_TARGET" == /* ]] || SCRIPT_TARGET="$SCRIPT_DIR/$SCRIPT_TARGET"
+  SCRIPT="$SCRIPT_TARGET"
+done
+AGENTVM_DIR="$(cd -P "$(dirname "$SCRIPT")/.." && pwd)"
+
+SLOTS="${AGENTVM_SLOTS:-4}"
+USER_NAME="${AGENTVM_USER:-parker}"
+STATE="${AGENTVM_STATE:-$HOME/.local/state/agentvms}"
+FLAKE="${AGENTVM_FLAKE:-path:$AGENTVM_DIR}"
+WORKSPACE_MODE="${AGENTVM_WORKSPACE_MODE:-copy}"
+
+cmd_help() {
+  cat <<'EOF'
+agentvm - ephemeral NixOS microVM workspaces on macOS
+
+Usage:
+  agentvm start          Claim a free slot, copy $PWD, boot, and SSH into /workspace
+  agentvm ls             Show slot status
+  agentvm ssh N          SSH into a running VM slot
+  agentvm attach N       Attach to the VM serial console tmux session
+  agentvm stop N         Stop one VM slot
+  agentvm stop all       Stop all VM slots
+  agentvm reset N        Wipe a stopped slot's cache, /home, workspace copy, and firmware state
+  agentvm help           Show this help
+  agentvm --help         Show this help
+
+Environment:
+  AGENTVM_SLOTS=N              Number of VM slots, default: 4
+  AGENTVM_USER=NAME            Guest SSH user, default: parker
+  AGENTVM_STATE=PATH           Slot state directory, default: ~/.local/state/agentvms
+  AGENTVM_FLAKE=REF            Flake ref for VM configs, default: path:<agentvms dir>
+  AGENTVM_WORKSPACE_MODE=copy  Copy $PWD into per-slot state before mounting (default)
+  AGENTVM_WORKSPACE_MODE=live  Danger: mount the host checkout directly
+  AGENTVM_ISOLATE=0            Allow VM-to-VM traffic; default is isolated
+EOF
+}
+
+case "${1:-}" in
+  help|--help|-h) cmd_help; exit 0 ;;
+esac
+
+# vmnet-helper location: brew (macOS 26+, no sudo) or /opt (<=15, sudo).
+if [[ -x /opt/homebrew/opt/vmnet-helper/libexec/vmnet-run ]]; then
+  VMNET_RUN="/opt/homebrew/opt/vmnet-helper/libexec/vmnet-run"; SUDO=""
+elif PREFIX=$(brew --prefix vmnet-helper 2>/dev/null) && [[ -x "$PREFIX/libexec/vmnet-run" ]]; then
+  VMNET_RUN="$PREFIX/libexec/vmnet-run"; SUDO=""
+elif [[ -x /opt/vmnet-helper/bin/vmnet-run ]]; then
+  VMNET_RUN="/opt/vmnet-helper/bin/vmnet-run"; SUDO="sudo"
+else
+  echo "vmnet-helper not found; see README setup" >&2; exit 1
+fi
+ISOLATE_FLAG=""
+[[ "${AGENTVM_ISOLATE:-1}" == "1" ]] && ISOLATE_FLAG="--enable-isolation"
+
+session() { echo "agentvm-$1"; }
+slotdir() { echo "$STATE/vm-$1"; }
+running() { tmux has-session -t "$(session "$1")" 2>/dev/null; }
+
+ensure_authorized_keys() {
+  local keys="$AGENTVM_DIR/authorized_keys" pub
+  [[ -s "$keys" ]] && return 0
+
+  for pub in "$HOME/.ssh/id_ed25519.pub" "$HOME/.ssh/id_ecdsa.pub" "$HOME/.ssh/id_rsa.pub"; do
+    if [[ -s "$pub" ]]; then
+      cp "$pub" "$keys"
+      echo "agentvm: initialized $keys from $pub" >&2
+      return 0
+    fi
+  done
+
+  echo "agentvm: missing $keys and no default SSH public key found" >&2
+  echo "agentvm: create one with: cp ~/.ssh/id_ed25519.pub $keys" >&2
+  exit 1
+}
+
+prepare_workspace() {
+  local n="$1" dir="$2" source="$PWD" copy="$dir/workspace"
+  local excludes=(
+    --exclude .direnv/
+    --exclude .venv/
+    --exclude venv/
+    --exclude node_modules/
+    --exclude bazel-bin
+    --exclude bazel-out
+    --exclude bazel-testlogs
+    --exclude 'bazel-*'
+    --exclude __pycache__/
+    --exclude data/minio/
+    --exclude .pytest_cache/
+    --exclude .mypy_cache/
+    --exclude .ruff_cache/
+    --exclude .turbo/
+    --exclude dist/
+    --exclude build/
+    --exclude target/
+  )
+  case "$WORKSPACE_MODE" in
+    copy)
+      mkdir -p "$copy"
+      echo "vm-$n: syncing workspace copy ..." >&2
+      /usr/bin/rsync -a --delete --delete-excluded "${excludes[@]}" "$source"/ "$copy"/
+      echo "$copy"
+      ;;
+    live)
+      echo "$source"
+      ;;
+    *)
+      echo "AGENTVM_WORKSPACE_MODE must be 'copy' or 'live'" >&2
+      exit 1
+      ;;
+  esac
+}
+
+# vmnet's dhcpd_leases strips leading zeros per octet: 02:76:6d:00:00:01 -> 2:76:6d:0:0:1
+lease_mac() { echo "2:76:6d:0:0:$1"; }
+
+ssh_opts() {
+  local n="$1"
+  echo "-o UserKnownHostsFile=$(slotdir "$n")/known_hosts -o StrictHostKeyChecking=accept-new -o ConnectTimeout=2"
+}
+
+resolve_host() {  # mDNS first, dhcpd_leases fallback
+  local n="$1" host="vm-$n.local" ip
+  if ping -c1 -t1 "$host" >/dev/null 2>&1; then echo "$host"; return; fi
+  ip=$(awk -v mac="$(lease_mac "$n")" '
+        /ip_address/ {ip=$0; sub(/.*=/,"",ip)}
+        /hw_address/ && index($0, mac) {print ip; exit}
+      ' /var/db/dhcpd_leases 2>/dev/null || true)
+  [[ -n "${ip:-}" ]] && echo "$ip"
+}
+
+wait_ssh() {
+  local n="$1" host
+  for _ in $(seq 1 60); do
+    host=$(resolve_host "$n" || true)
+    if [[ -n "${host:-}" ]] && \
+       ssh $(ssh_opts "$n") "$USER_NAME@$host" true 2>/dev/null; then
+      echo "$host"; return 0
+    fi
+    sleep 1
+  done
+  echo "vm-$n: no ssh after 60s -- check console: agentvm attach $n" >&2
+  return 1
+}
+
+cmd_start() {
+  local n="" i
+  for i in $(seq 1 "$SLOTS"); do
+    running "$i" || { n="$i"; break; }
+  done
+  [[ -z "$n" ]] && { echo "all $SLOTS slots busy:"; cmd_ls; exit 1; }
+
+  local dir; dir=$(slotdir "$n"); mkdir -p "$dir"
+  [[ -f "$dir/interface-id" ]] || uuidgen > "$dir/interface-id"
+  echo "$PWD" > "$dir/workspace-path"
+  rm -f "$dir/known_hosts"
+
+  local workspace; workspace=$(prepare_workspace "$n" "$dir")
+  echo "$workspace" > "$dir/workspace-mount-path"
+  ensure_authorized_keys
+
+  echo "vm-$n: building runner for workspace $workspace ..."
+  AGENTVM_WORKSPACE="$workspace" nix build --impure "$FLAKE#vm-$n" -o "$dir/runner"
+
+  local subnet=$((64 + n))
+  echo "vm-$n: booting ..."
+  tmux new-session -d -s "$(session "$n")" -c "$dir" \
+    "$SUDO $VMNET_RUN $ISOLATE_FLAG --interface-id $(cat "$dir/interface-id") \
+     --start-address 192.168.$subnet.1 --end-address 192.168.$subnet.254 --subnet-mask 255.255.255.0 -- \
+     $dir/runner/bin/microvm-run"
+
+  local host; host=$(wait_ssh "$n")
+  echo "vm-$n ready at $host"
+  exec ssh $(ssh_opts "$n") -t "$USER_NAME@$host" \
+    'cd /workspace 2>/dev/null || true; exec $SHELL -l'
+}
+
+cmd_ssh() {
+  local n="$1" host; host=$(resolve_host "$n") || { echo "vm-$n unreachable" >&2; exit 1; }
+  exec ssh $(ssh_opts "$n") -t "$USER_NAME@$host" \
+    'cd /workspace 2>/dev/null || true; exec $SHELL -l'
+}
+
+cmd_stop() {
+  local n="$1" host
+  running "$n" || { echo "vm-$n not running"; return 0; }
+  host=$(resolve_host "$n" || true)
+  [[ -n "${host:-}" ]] && \
+    ssh $(ssh_opts "$n") "$USER_NAME@$host" 'sudo poweroff' 2>/dev/null || true
+  sleep 2
+  tmux kill-session -t "$(session "$n")" 2>/dev/null || true
+  echo "vm-$n stopped"
+}
+
+cmd_reset() {  # wipe per-slot state: nix cache, /home, workspace copy, firmware vars
+  local n="$1"
+  running "$n" && { echo "stop vm-$n first" >&2; exit 1; }
+  rm -rf "$(slotdir "$n")"/workspace
+  rm -f "$(slotdir "$n")"/{store-overlay.img,home.img,known_hosts,workspace-mount-path} \
+        "$(slotdir "$n")"/efi-variable-store* 2>/dev/null || true
+  echo "vm-$n reset"
+}
+
+cmd_ls() {
+  local i
+  for i in $(seq 1 "$SLOTS"); do
+    if running "$i"; then
+      printf "vm-%s  running  %s\n" "$i" "$(cat "$(slotdir "$i")/workspace-path" 2>/dev/null)"
+    else
+      printf "vm-%s  free\n" "$i"
+    fi
+  done
+}
+
+case "${1:-}" in
+  start)  cmd_start ;;
+  ssh)    cmd_ssh "${2:?slot}" ;;
+  attach) exec tmux attach -t "$(session "${2:?slot}")" ;;  # serial console
+  stop)   if [[ "${2:-}" == "all" ]]; then
+            for i in $(seq 1 "$SLOTS"); do cmd_stop "$i"; done
+          else cmd_stop "${2:?slot|all}"; fi ;;
+  reset)  cmd_reset "${2:?slot}" ;;
+  help|--help|-h) cmd_help ;;
+  ls|"")  cmd_ls ;;
+  *) cmd_help >&2; exit 1 ;;
+esac

@@ -115,6 +115,13 @@
   # Pi coding agent (mkOutOfStoreSymlink for editable files)
   home.file.".zsh".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/zsh";
   home.file.".pi/agent".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/pi/agent";
+  home.file.".local/bin/agentvm".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/agentvms/bin/agentvm";
+
+  # Shell profile shared by all profiles. This includes ~/.local/bin on PATH,
+  # which makes the agentvm symlink above available in new zsh sessions.
+  home.file.".zprofile".source = ./dotfiles/zprofile;
+  home.file.".zsh".source = ./dotfiles/zsh;
+  home.file.".zshrc".source = ./dotfiles/zshrc;
 
   xdg.enable = true;
   xdg.configFile."lumen".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/lumen";
@@ -146,6 +153,7 @@
     "$HOME/.npm-global/bin"
     "$HOME/.bun/bin"
     "$HOME/home-config/scripts"
+    "$HOME/home-config/agentvms/bin"
   ];
 
   home.sessionVariables = {
