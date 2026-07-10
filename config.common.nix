@@ -163,9 +163,11 @@
       upgrade = true;
     };
     taps = [
+      "agavra/tap"
       "jnsahaj/lumen"
     ];
     brews = [
+      "agavra/tap/tuicr"
       "jnsahaj/lumen/lumen"
     ];
     # Common GUI Applications (Casks) across all machines
