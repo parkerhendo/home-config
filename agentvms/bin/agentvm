@@ -12,11 +12,16 @@ while [[ -L "$SCRIPT" ]]; do
   SCRIPT="$SCRIPT_TARGET"
 done
 AGENTVM_DIR="$(cd -P "$(dirname "$SCRIPT")/.." && pwd)"
+REPO_DIR="$(dirname "$AGENTVM_DIR")"
 
 SLOTS="${AGENTVM_SLOTS:-4}"
 USER_NAME="${AGENTVM_USER:-parker}"
 STATE="${AGENTVM_STATE:-$HOME/.local/state/agentvms}"
-FLAKE="${AGENTVM_FLAKE:-path:$AGENTVM_DIR}"
+# VM configs live in the root home-config flake (agentvms/pool.nix) so the
+# guest home is built from the same profile as the host. git+file: so the
+# fsmonitor socket in .git/ doesn't break source copying (untracked files
+# must be committed to be visible; authorized_keys travels via env below).
+FLAKE="${AGENTVM_FLAKE:-git+file://$REPO_DIR}"
 WORKSPACE_MODE="${AGENTVM_WORKSPACE_MODE:-copy}"
 
 cmd_help() {
@@ -30,7 +35,7 @@ Usage:
   agentvm attach N       Attach to the VM serial console tmux session
   agentvm stop N         Stop one VM slot
   agentvm stop all       Stop all VM slots
-  agentvm reset N        Wipe a stopped slot's cache, /home, workspace copy, and firmware state
+  agentvm reset N        Wipe a stopped slot's cache, /home, workspace/repo copies, and firmware state
   agentvm help           Show this help
   agentvm --help         Show this help
 
@@ -38,7 +43,8 @@ Environment:
   AGENTVM_SLOTS=N              Number of VM slots, default: 4
   AGENTVM_USER=NAME            Guest SSH user, default: parker
   AGENTVM_STATE=PATH           Slot state directory, default: ~/.local/state/agentvms
-  AGENTVM_FLAKE=REF            Flake ref for VM configs, default: path:<agentvms dir>
+  AGENTVM_FLAKE=REF            Flake ref for VM configs, default: git+file://<home-config repo>
+  AGENTVM_PROFILE=NAME         Host profile the guest home clones, default: zephyr
   AGENTVM_WORKSPACE_MODE=copy  Copy $PWD into per-slot state before mounting (default)
   AGENTVM_WORKSPACE_MODE=live  Danger: mount the host checkout directly
   AGENTVM_ISOLATE=0            Allow VM-to-VM traffic; default is isolated
@@ -167,10 +173,20 @@ cmd_start() {
 
   local workspace; workspace=$(prepare_workspace "$n" "$dir")
   echo "$workspace" > "$dir/workspace-mount-path"
+
+  # Per-slot copy of the config repo -> guest ~/home-config (dotfile symlink
+  # targets). A copy, not a live mount: the VM must not be able to write any
+  # real host path. Socket excluded (git fsmonitor); re-synced every start.
+  echo "vm-$n: syncing home-config copy ..." >&2
+  /usr/bin/rsync -a --delete --exclude '.git/fsmonitor--daemon.ipc' \
+    "$REPO_DIR"/ "$dir/home-config"/
+
   ensure_authorized_keys
 
   echo "vm-$n: building runner for workspace $workspace ..."
-  AGENTVM_WORKSPACE="$workspace" nix build --impure "$FLAKE#vm-$n" -o "$dir/runner"
+  AGENTVM_WORKSPACE="$workspace" \
+  AGENTVM_AUTHORIZED_KEYS="$(cat "$AGENTVM_DIR/authorized_keys")" \
+    nix build --impure "$FLAKE#vm-$n" -o "$dir/runner"
 
   local subnet=$((64 + n))
   echo "vm-$n: booting ..."
@@ -202,10 +218,10 @@ cmd_stop() {
   echo "vm-$n stopped"
 }
 
-cmd_reset() {  # wipe per-slot state: nix cache, /home, workspace copy, firmware vars
+cmd_reset() {  # wipe per-slot state: nix cache, /home, workspace + repo copies, firmware vars
   local n="$1"
   running "$n" && { echo "stop vm-$n first" >&2; exit 1; }
-  rm -rf "$(slotdir "$n")"/workspace
+  rm -rf "$(slotdir "$n")"/workspace "$(slotdir "$n")"/home-config
   rm -f "$(slotdir "$n")"/{store-overlay.img,home.img,known_hosts,workspace-mount-path} \
         "$(slotdir "$n")"/efi-variable-store* 2>/dev/null || true
   echo "vm-$n reset"

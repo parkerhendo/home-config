@@ -10,6 +10,14 @@ prompt_pwd() {
   print -n "%{$GRV_AQUA%}%1~"
 }
 
+# Inside an agent VM (AGENTVM_NAME set by agentvms/modules/agent-vm.nix),
+# prefix the prompt with the slot name: `[vm-1] /workspace my-branch |`
+prompt_vm() {
+  if [[ -n "$AGENTVM_NAME" ]]; then
+    print -n "%{$GRV_ORANGE%}[$AGENTVM_NAME]%{$reset_color%} "
+  fi
+}
+
 prompt_timer() {
   local timer_out=$(timer status 2>/dev/null)
   if [[ "$timer_out" != "Not tracking" && -n "$timer_out" ]]; then
@@ -51,12 +59,12 @@ git_prompt_status() {
 
       git_branch=" $branch"
 
-      PROMPT='$(prompt_timer)$(prompt_pwd)$branch_color$git_branch$rebase_info$ZSH_MAIN_PROMPT'
+      PROMPT='$(prompt_vm)$(prompt_timer)$(prompt_pwd)$branch_color$git_branch$rebase_info$ZSH_MAIN_PROMPT'
     else
-      PROMPT='$(prompt_timer)$(prompt_pwd)$rebase_info$ZSH_MAIN_PROMPT'
+      PROMPT='$(prompt_vm)$(prompt_timer)$(prompt_pwd)$rebase_info$ZSH_MAIN_PROMPT'
     fi
   else
-    PROMPT='$(prompt_timer)$(prompt_pwd)$ZSH_MAIN_PROMPT'
+    PROMPT='$(prompt_vm)$(prompt_timer)$(prompt_pwd)$ZSH_MAIN_PROMPT'
   fi
   zle && zle reset-prompt
 }
@@ -72,7 +80,7 @@ setup_git_prompt_status() {
 }
 
 # single-quote comments are important here!
-PROMPT='$(prompt_timer)$(prompt_pwd)$ZSH_MAIN_PROMPT'
+PROMPT='$(prompt_vm)$(prompt_timer)$(prompt_pwd)$ZSH_MAIN_PROMPT'
 PROMPT2='%{$GRV_ORANGE%}%_%{$reset_color%}%{$GRV_GRAY%} | %{$reset_color%}'
 SPROMPT="correct "%R" to "%r' ? ([Y]es/[N]o/[E]dit/[A]bort) '
 

@@ -10,10 +10,45 @@
   #   allowUnfree = true;
   # };
 
-  # Common packages across all machines. The shared list is also installed
-  # inside every agent VM guest; anything mac-only stays here.
-  home.packages = (import ./agentvms/common-packages.nix pkgs) ++ (with pkgs; [
-    # Custom (mac-only)
+  # Common packages across all machines. This module is also imported by the
+  # agent VM guests (agentvms/pool.nix), so keep the main list cross-platform
+  # and guard anything mac-only behind isDarwin.
+  home.packages = (with pkgs; [
+    # AI stuff
+    amp-cli
+    opencode
+    claude-code
+    gemini-cli
+    pi-coding-agent
+
+    # Shell and terminal utilities
+    atuin
+    bat
+    btop
+    coreutils
+    fd
+    fzf
+    jq
+    ripgrep
+    tmux
+    tree
+
+    # Development tools
+    gh
+    ghui
+    git
+    mise
+    neovim
+    parallel
+
+    # Networking
+    ngrok
+
+    # Media and utilities
+    ffmpeg
+    niv
+  ]) ++ lib.optionals pkgs.stdenv.isDarwin (with pkgs; [
+    # Custom (mac-only, from overlays in config.common.nix)
     timer-cli
     timer-bar
 

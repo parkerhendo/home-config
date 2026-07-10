@@ -36,6 +36,12 @@
       flake = false;
     };
 
+    # Agent sandbox VMs (agentvms/)
+    microvm = {
+      url = "github:microvm-nix/microvm.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
 };
 
   outputs = inputs@{
@@ -46,9 +52,21 @@
     nix-homebrew,
     nix-index-database,
     timer-cli,
+    microvm,
     ...
-  }: {
+  }:
+  let
+    # Ephemeral agent-sandbox microVMs; guests clone a host home profile.
+    agentvms = import ./agentvms/pool.nix {
+      inherit nixpkgs home-manager microvm;
+    };
+  in {
     formatter.aarch64-darwin = nixpkgs.legacyPackages.aarch64-darwin.nixfmt;
+
+    inherit (agentvms) nixosConfigurations;
+
+    # `agentvm` builds these runner scripts: nix build .#vm-N
+    packages.aarch64-darwin = agentvms.packages;
 
     darwinConfigurations =
       let
