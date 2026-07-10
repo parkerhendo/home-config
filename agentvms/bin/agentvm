@@ -226,9 +226,11 @@ case "${1:-}" in
   start)  cmd_start ;;
   ssh)    cmd_ssh "${2:?slot}" ;;
   attach) exec tmux attach -t "$(session "${2:?slot}")" ;;  # serial console
-  stop)   if [[ "${2:-}" == "all" ]]; then
+  stop)   if [[ -z "${2:-}" ]]; then
+            echo "usage: agentvm stop N|all" >&2; exit 1
+          elif [[ "${2:-}" == "all" ]]; then
             for i in $(seq 1 "$SLOTS"); do cmd_stop "$i"; done
-          else cmd_stop "${2:?slot|all}"; fi ;;
+          else cmd_stop "$2"; fi ;;
   reset)  cmd_reset "${2:?slot}" ;;
   help|--help|-h) cmd_help ;;
   ls|"")  cmd_ls ;;

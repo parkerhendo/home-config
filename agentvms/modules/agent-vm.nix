@@ -75,6 +75,7 @@ in
     "d /home/${user}/.local 0755 ${user} users -"
     "d /home/${user}/.local/share 0755 ${user} users -"
     "d /home/${user}/.local/share/docker 0710 root root -"
+    "f /home/${user}/.zshrc 0644 ${user} users -"
   ];
   nix.settings = {
     experimental-features = [ "nix-command" "flakes" ];
@@ -88,7 +89,7 @@ in
     createHome = true;
     home = "/home/${user}";
     group = "users";
-    useDefaultShell = true;
+    shell = pkgs.zsh;
     inherit uid;                       # match mac uid -> sane virtiofs ownership
     extraGroups = [ "wheel" "docker" ];
     openssh.authorizedKeys.keys = authorizedKeys;
@@ -115,6 +116,7 @@ in
 
   programs.direnv = { enable = true; nix-direnv.enable = true; };
   programs.nix-ld.enable = true;
+  environment.enableAllTerminfo = true;
   system.activationScripts.binbash = lib.stringAfter [ "binsh" ] ''
     ln -sfn /run/current-system/sw/bin/bash /bin/.bash.tmp
     mv /bin/.bash.tmp /bin/bash
@@ -124,11 +126,25 @@ in
       cd /workspace
     fi
   '';
+  programs.zsh = {
+    enable = true;
+    interactiveShellInit = ''
+      if [[ -d /workspace && "$PWD" == "/home/${user}" ]]; then
+        cd /workspace
+      fi
+    '';
+  };
+
+  environment.shellAliases = {
+    la = "ls -la";
+    ll = "ls -alF";
+  };
 
   environment.sessionVariables = {
     CPATH = lib.makeSearchPathOutput "dev" "include" sourceBuildInputs;
     LIBRARY_PATH = lib.makeLibraryPath sourceBuildInputs;
     PKG_CONFIG_PATH = lib.makeSearchPathOutput "dev" "lib/pkgconfig" sourceBuildInputs;
+    UV_PYTHON_PREFERENCE = "only-system";
   };
   environment.shellInit = ''
     export PATH="/workspace/venv/bin:$HOME/.local/share/mise/shims:$PATH"
@@ -157,11 +173,14 @@ in
     gnumake
     jq
     pkg-config
+    python311
     python3
     ripgrep
     tmux
     unzip
+    uv
     zip
+    zsh
     mise
   ]) ++ sourceBuildInputs;
   # Agent tooling: e.g. claude-code lives in nixpkgs (unfree). Uncomment:

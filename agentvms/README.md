@@ -58,8 +58,8 @@ Env overrides: `AGENTVM_SLOTS`, `AGENTVM_USER`, `AGENTVM_STATE`,
 ## Bundled dev tools
 
 The guest intentionally stays minimal. It includes bootstrap and navigation
-tools (`git`, `curl`, `gnupg`, `jq`, `python`, `ripgrep`, `tmux`, archive utilities) plus
-`mise`, `direnv`/`nix-direnv`, Nix flakes, and a small native build baseline
+tools (`git`, `curl`, `gnupg`, `jq`, `python`, `uv`, `ripgrep`, `tmux`, `zsh`, archive utilities) plus
+`mise`, `direnv`/`nix-direnv`, Nix flakes, terminfo, and a small native build baseline
 + common headers for source-building runtimes (`gcc`, `make`, `pkg-config`,
 `openssl`, `zlib`, `readline`, `sqlite`, `gdbm`, `libffi`, `libyaml`, `bzip2`,
 `xz`, `ncurses`). The VM also includes Docker/Compose and AWS CLI v2 for
