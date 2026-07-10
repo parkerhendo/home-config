@@ -14,13 +14,19 @@ done
 AGENTVM_DIR="$(cd -P "$(dirname "$SCRIPT")/.." && pwd)"
 REPO_DIR="$(dirname "$AGENTVM_DIR")"
 
-SLOTS="${AGENTVM_SLOTS:-4}"
-USER_NAME="${AGENTVM_USER:-parker}"
-STATE="${AGENTVM_STATE:-$HOME/.local/state/agentvms}"
+# Knobs shared with the nix side come from config.json -- the single source
+# both bin/agentvm and pool.nix read, so the bash/nix boundary can't drift.
+CONFIG="$AGENTVM_DIR/config.json"
+command -v jq >/dev/null || { echo "agentvm: jq required (reads $CONFIG)" >&2; exit 1; }
+SLOTS=$(jq -er .slots "$CONFIG")
+USER_NAME=$(jq -er .user "$CONFIG")
+STATE="/Users/$USER_NAME/$(jq -er .stateDir "$CONFIG")"
+MAC_PREFIX=$(jq -er .macPrefix "$CONFIG")
 # VM configs live in the root home-config flake (agentvms/pool.nix) so the
 # guest home is built from the same profile as the host. git+file: so the
 # fsmonitor socket in .git/ doesn't break source copying (untracked files
-# must be committed to be visible; authorized_keys travels via env below).
+# must be committed to be visible; authorized_keys stays gitignored and
+# reaches the guest via the rsynced home-config copy instead).
 FLAKE="${AGENTVM_FLAKE:-git+file://$REPO_DIR}"
 WORKSPACE_MODE="${AGENTVM_WORKSPACE_MODE:-copy}"
 
@@ -40,14 +46,15 @@ Usage:
   agentvm --help         Show this help
 
 Environment:
-  AGENTVM_SLOTS=N              Number of VM slots, default: 4
-  AGENTVM_USER=NAME            Guest SSH user, default: parker
-  AGENTVM_STATE=PATH           Slot state directory, default: ~/.local/state/agentvms
   AGENTVM_FLAKE=REF            Flake ref for VM configs, default: git+file://<home-config repo>
-  AGENTVM_PROFILE=NAME         Host profile the guest home clones, default: zephyr
+  AGENTVM_PROFILE=NAME         Host profile the guest home clones (vm-N-<profile> flake
+                               output), default: the config.json defaultProfile
   AGENTVM_WORKSPACE_MODE=copy  Copy $PWD into per-slot state before mounting (default)
-  AGENTVM_WORKSPACE_MODE=live  Danger: mount the host checkout directly
+  AGENTVM_WORKSPACE_MODE=live  Danger: symlink the host checkout into the mount
   AGENTVM_ISOLATE=0            Allow VM-to-VM traffic; default is isolated
+
+Knobs (slots, user, sizes, state dir) live in agentvms/config.json, shared
+by this script and the nix side.
 EOF
 }
 
@@ -110,15 +117,18 @@ prepare_workspace() {
     --exclude build/
     --exclude target/
   )
+  # $copy is the constant virtiofs source baked into the VM config; both
+  # modes populate it (rsync copy, or symlink to the live checkout).
   case "$WORKSPACE_MODE" in
     copy)
+      [[ -L "$copy" ]] && rm "$copy"  # stale live-mode symlink; never rsync through it
       mkdir -p "$copy"
       echo "vm-$n: syncing workspace copy ..." >&2
       /usr/bin/rsync -a --delete --delete-excluded "${excludes[@]}" "$source"/ "$copy"/
-      echo "$copy"
       ;;
     live)
-      echo "$source"
+      [[ -e "$copy" && ! -L "$copy" ]] && rm -rf "$copy"  # drop stale copy-mode dir
+      ln -sfn "$source" "$copy"
       ;;
     *)
       echo "AGENTVM_WORKSPACE_MODE must be 'copy' or 'live'" >&2
@@ -128,7 +138,13 @@ prepare_workspace() {
 }
 
 # vmnet's dhcpd_leases strips leading zeros per octet: 02:76:6d:00:00:01 -> 2:76:6d:0:0:1
-lease_mac() { echo "2:76:6d:0:0:$1"; }
+# Derived from the same config.json macPrefix the guest MAC is built from.
+lease_mac() {
+  local octets out="" o
+  IFS=: read -ra octets <<<"$MAC_PREFIX$1"
+  for o in "${octets[@]}"; do out+=$(printf '%x:' "$((16#$o))"); done
+  echo "${out%:}"
+}
 
 ssh_opts() {
   local n="$1"
@@ -171,8 +187,11 @@ cmd_start() {
   echo "$PWD" > "$dir/workspace-path"
   rm -f "$dir/known_hosts"
 
-  local workspace; workspace=$(prepare_workspace "$n" "$dir")
-  echo "$workspace" > "$dir/workspace-mount-path"
+  prepare_workspace "$n" "$dir"
+
+  # Guest sshd reads authorized_keys out of the home-config copy, so the
+  # keys file must exist before the rsync below.
+  ensure_authorized_keys
 
   # Per-slot copy of the config repo -> guest ~/home-config (dotfile symlink
   # targets). A copy, not a live mount: the VM must not be able to write any
@@ -181,12 +200,9 @@ cmd_start() {
   /usr/bin/rsync -a --delete --exclude '.git/fsmonitor--daemon.ipc' \
     "$REPO_DIR"/ "$dir/home-config"/
 
-  ensure_authorized_keys
-
-  echo "vm-$n: building runner for workspace $workspace ..."
-  AGENTVM_WORKSPACE="$workspace" \
-  AGENTVM_AUTHORIZED_KEYS="$(cat "$AGENTVM_DIR/authorized_keys")" \
-    nix build --impure "$FLAKE#vm-$n" -o "$dir/runner"
+  local target="vm-$n${AGENTVM_PROFILE:+-$AGENTVM_PROFILE}"
+  echo "vm-$n: building runner ($target) ..."
+  nix build "$FLAKE#$target" -o "$dir/runner"
 
   local subnet=$((64 + n))
   echo "vm-$n: booting ..."
@@ -222,7 +238,7 @@ cmd_reset() {  # wipe per-slot state: nix cache, /home, workspace + repo copies,
   local n="$1"
   running "$n" && { echo "stop vm-$n first" >&2; exit 1; }
   rm -rf "$(slotdir "$n")"/workspace "$(slotdir "$n")"/home-config
-  rm -f "$(slotdir "$n")"/{store-overlay.img,home.img,known_hosts,workspace-mount-path} \
+  rm -f "$(slotdir "$n")"/{store-overlay.img,home.img,known_hosts} \
         "$(slotdir "$n")"/efi-variable-store* 2>/dev/null || true
   echo "vm-$n reset"
 }

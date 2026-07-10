@@ -4,6 +4,11 @@
 # profile as the mac host: each VM imports profiles/<name>/home.nix (which
 # pulls in home.common.nix), so packages, dotfiles, prompt, and coding
 # agents match the host one-to-one instead of being mirrored by hand.
+#
+# Knobs live in ./config.json -- the single source shared with bin/agentvm,
+# so the bash/nix boundary can't drift (user, slot count, state dir, MAC
+# scheme). Evaluation is fully pure: profile selection happens via distinct
+# outputs (vm-N for the default profile, vm-N-<profile> for the rest).
 {
   nixpkgs,
   home-manager,
@@ -12,52 +17,36 @@
 let
   inherit (nixpkgs) lib;
 
-  # ---------------- knobs ----------------
-  user = "parker";
-  uid = 501; # `id -u` on the mac; must match for virtiofs ownership
-  slots = 4; # size of the VM pool (vm-1 .. vm-N); slot <= 9 enforced by agentvm.slot
-  vcpu = 6;
-  mem = 16384; # MB
-  storeOverlaySizeMB = 32768; # per-slot writable /nix/store overlay (warm build cache)
-  homeSizeMB = 65536; # per-slot persistent /home (agent logins survive restarts)
-  stateBase = "/Users/${user}/.local/state/agentvms";
-  defaultProfile = "zephyr";
-  # ----------------------------------------
-
-  # `agentvm start` builds with --impure; AGENTVM_PROFILE selects which host
-  # profile the guest home clones. Pure evals fall back to the default.
-  profile =
-    let
-      p = builtins.getEnv "AGENTVM_PROFILE";
-    in
-    if p == "" then defaultProfile else p;
+  knobs = lib.importJSON ./config.json;
+  inherit (knobs)
+    user
+    uid
+    slots
+    vcpu
+    mem
+    storeOverlaySizeMB
+    homeSizeMB
+    macPrefix
+    defaultProfile
+    ;
+  stateBase = "/Users/${user}/${knobs.stateDir}";
 
   guestSystem = "aarch64-linux";
   hostSystem = "aarch64-darwin";
   hostPkgs = nixpkgs.legacyPackages.${hostSystem};
 
-  # agentvms/authorized_keys is gitignored (per-machine), so a git flake
-  # never sees it; `agentvm start` exports its content for the --impure
-  # build. ./authorized_keys is a fallback for path:-style flake refs.
-  authorizedKeys =
-    let
-      env = builtins.getEnv "AGENTVM_AUTHORIZED_KEYS";
-      raw =
-        if env != "" then
-          env
-        else if builtins.pathExists ./authorized_keys then
-          lib.fileContents ./authorized_keys
-        else
-          "";
-    in
-    lib.filter (k: k != "") (lib.splitString "\n" raw);
+  # Every directory under profiles/ with a home.nix is a valid guest home.
+  profiles = lib.filter (
+    name:
+    (builtins.readDir ../profiles).${name} == "directory"
+    && builtins.pathExists (../profiles + "/${name}/home.nix")
+  ) (lib.attrNames (builtins.readDir ../profiles));
 
   mkName = n: "vm-${toString n}";
   slotNumbers = lib.range 1 slots;
-  slotNames = map mkName slotNumbers;
 
   mkSlot =
-    n:
+    profile: n:
     lib.nixosSystem {
       system = guestSystem;
       modules = [
@@ -74,7 +63,7 @@ let
               mem
               storeOverlaySizeMB
               homeSizeMB
-              authorizedKeys
+              macPrefix
               hostPkgs
               ;
             slot = n;
@@ -99,11 +88,17 @@ let
       ];
     };
 
-  configs = lib.listToAttrs (map (n: lib.nameValuePair (mkName n) (mkSlot n)) slotNumbers);
+  configs = lib.listToAttrs (
+    # vm-N: the default profile; vm-N-<profile>: explicit per-profile outputs.
+    (map (n: lib.nameValuePair (mkName n) (mkSlot defaultProfile n)) slotNumbers)
+    ++ lib.concatMap (
+      profile: map (n: lib.nameValuePair "${mkName n}-${profile}" (mkSlot profile n)) slotNumbers
+    ) profiles
+  );
 in
 {
   nixosConfigurations = configs;
 
   # `nix build .#vm-1` (from aarch64-darwin) -> runner script wrapping vfkit
-  packages = lib.genAttrs slotNames (name: configs.${name}.config.microvm.declaredRunner);
+  packages = lib.mapAttrs (_: c: c.config.microvm.declaredRunner) configs;
 }

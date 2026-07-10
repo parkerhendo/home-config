@@ -28,18 +28,14 @@ let
     zlib
   ];
 
-  # `agentvm start` exports AGENTVM_WORKSPACE=$PWD and builds with --impure,
-  # so the current project dir becomes the /workspace virtiofs share.
-  # Without the env var (plain `nix build`), falls back to a stable per-slot dir.
-  workspace =
-    let
-      ws = builtins.getEnv "AGENTVM_WORKSPACE";
-    in
-    if ws == "" then "${slotDir}/workspace" else ws;
+  # Constant mount source: `agentvm start` populates it (rsync copy, or a
+  # symlink to $PWD in live mode), so the build is pure and identical no
+  # matter where it's invoked from.
+  workspace = "${slotDir}/workspace";
 
-  # Locally-administered, deterministic per slot. Referenced by bin/agentvm
-  # for the dhcpd_leases IP-discovery fallback -- keep in sync if changed.
-  mac = "02:76:6d:00:00:0${toString cfg.slot}";
+  # Locally-administered, deterministic per slot. bin/agentvm derives the
+  # dhcpd_leases lookup form from the same config.json macPrefix.
+  mac = "${cfg.macPrefix}${toString cfg.slot}";
 in
 {
   options.agentvm = {
@@ -66,10 +62,9 @@ in
     };
     storeOverlaySizeMB = mkOption { type = types.ints.positive; };
     homeSizeMB = mkOption { type = types.ints.positive; };
-    authorizedKeys = mkOption {
-      type = types.listOf types.singleLineStr;
-      default = [ ];
-      description = "SSH public keys for the guest user.";
+    macPrefix = mkOption {
+      type = types.strMatching "([0-9a-f]{2}:){5}0";
+      description = "First 5.5 octets of the guest MAC; the slot digit completes it.";
     };
     hostPkgs = mkOption {
       type = types.pkgs;
@@ -170,7 +165,6 @@ in
         "wheel"
         "docker"
       ];
-      openssh.authorizedKeys.keys = cfg.authorizedKeys;
     };
     security.sudo.wheelNeedsPassword = false;
     services.getty.autologinUser = cfg.user; # serial console in the tmux pane
@@ -178,6 +172,12 @@ in
     services.openssh = {
       enable = true;
       settings.PasswordAuthentication = false;
+      # Keys come from the host's gitignored agentvms/authorized_keys via the
+      # rsynced ~/home-config copy -- runtime data, so it never has to enter
+      # flake sources or the store. StrictModes would reject the virtiofs
+      # path's ownership chain; the VM boundary is the perimeter here.
+      settings.StrictModes = false;
+      authorizedKeysFiles = [ "/home/${cfg.user}/home-config/agentvms/authorized_keys" ];
     };
 
     # mDNS: `ssh vm-N.local` / http://vm-N.local:3000 from the mac over vmnet.
