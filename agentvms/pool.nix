@@ -26,6 +26,7 @@ let
     mem
     storeOverlaySizeMB
     homeSizeMB
+    subnetBase
     macPrefix
     defaultProfile
     ;
@@ -63,6 +64,7 @@ let
               mem
               storeOverlaySizeMB
               homeSizeMB
+              subnetBase
               macPrefix
               hostPkgs
               ;

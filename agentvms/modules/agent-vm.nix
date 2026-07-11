@@ -36,6 +36,10 @@ let
   # Locally-administered, deterministic per slot. bin/agentvm derives the
   # dhcpd_leases lookup form from the same config.json macPrefix.
   mac = "${cfg.macPrefix}${toString cfg.slot}";
+
+  # The mac host as seen from this slot: vmnet gives the host the subnet's
+  # start address. Same subnetBase as bin/agentvm via config.json.
+  hostAddr = "192.168.${toString (cfg.subnetBase + cfg.slot)}.1";
 in
 {
   options.agentvm = {
@@ -62,6 +66,10 @@ in
     };
     storeOverlaySizeMB = mkOption { type = types.ints.positive; };
     homeSizeMB = mkOption { type = types.ints.positive; };
+    subnetBase = mkOption {
+      type = types.ints.positive;
+      description = "Slot N's vmnet subnet is 192.168.(subnetBase+N).0/24; shared with bin/agentvm.";
+    };
     macPrefix = mkOption {
       type = types.strMatching "([0-9a-f]{2}:){5}0";
       description = "First 5.5 octets of the guest MAC; the slot digit completes it.";
@@ -87,6 +95,11 @@ in
       # vmnet-helper: `vmnet-run` hands vfkit a datagram socket on fd 4.
       interfaces = [ ];
       vfkit = {
+        # Avoid locally compiling nixpkgs' vfkit on macOS; current cctools can
+        # crash linking it. Use the Homebrew bottle installed during setup.
+        package = cfg.hostPkgs.writeShellScriptBin "vfkit" ''
+          exec /opt/homebrew/bin/vfkit "$@"
+        '';
         extraArgs = [ "--device=virtio-net,fd=4,mac=${mac}" ];
         # x86_64 binaries via Rosetta (Apple Silicon).
         rosetta.enable = true;
@@ -270,6 +283,7 @@ in
 
     environment.sessionVariables = {
       AGENTVM_NAME = name; # shell prompt prefix (dotfiles/zsh/prompt.zsh)
+      AGENTVM_HOST_ADDR = hostAddr; # the mac; e.g. image: $AGENTVM_HOST_ADDR:5001/app in compose
       CPATH = lib.makeSearchPathOutput "dev" "include" sourceBuildInputs;
       LIBRARY_PATH = lib.makeLibraryPath sourceBuildInputs;
       PKG_CONFIG_PATH = lib.makeSearchPathOutput "dev" "lib/pkgconfig" sourceBuildInputs;
@@ -284,6 +298,14 @@ in
       package = pkgs.docker_29;
       daemon.settings = {
         data-root = "/home/${cfg.user}/.local/share/docker";
+        # Host-side registries (see README "Shared docker image cache"):
+        # :5000 = pull-through Docker Hub mirror, :5001 = push registry for
+        # locally built app images. Plain HTTP over the local vmnet link.
+        registry-mirrors = [ "http://${hostAddr}:5000" ];
+        insecure-registries = [
+          "${hostAddr}:5000"
+          "${hostAddr}:5001"
+        ];
       };
     };
 

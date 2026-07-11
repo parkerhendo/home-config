@@ -22,6 +22,7 @@ SLOTS=$(jq -er .slots "$CONFIG")
 USER_NAME=$(jq -er .user "$CONFIG")
 STATE="/Users/$USER_NAME/$(jq -er .stateDir "$CONFIG")"
 MAC_PREFIX=$(jq -er .macPrefix "$CONFIG")
+SUBNET_BASE=$(jq -er .subnetBase "$CONFIG")
 # VM configs live in the root home-config flake (agentvms/pool.nix) so the
 # guest home is built from the same profile as the host. git+file: so the
 # fsmonitor socket in .git/ doesn't break source copying (untracked files
@@ -204,7 +205,7 @@ cmd_start() {
   echo "vm-$n: building runner ($target) ..."
   nix build "$FLAKE#$target" -o "$dir/runner"
 
-  local subnet=$((64 + n))
+  local subnet=$((SUBNET_BASE + n))
   echo "vm-$n: booting ..."
   tmux new-session -d -s "$(session "$n")" -c "$dir" \
     "$SUDO $VMNET_RUN $ISOLATE_FLAG --interface-id $(cat "$dir/interface-id") \
