@@ -17,7 +17,9 @@ port juggling — `http://vm-1.local:3000`, `http://vm-2.local:3000`.
    nix store ping --store ssh-ng://linux-builder
    ```
 
-2. **vmnet-helper**
+2. **vfkit + vmnet-helper**
+   - Install vfkit from Homebrew: `brew install vfkit`. The runner wraps this
+     bottle instead of compiling nixpkgs' vfkit locally on macOS.
    - macOS 26+: `brew tap nirs/vmnet-helper && brew install vmnet-helper`
      (no root needed). Optionally also vmnet-broker for faster native vmnet.
    - macOS 15 or earlier:
@@ -57,6 +59,41 @@ home clones — builds the `vm-N-<profile>` flake output),
 `AGENTVM_ISOLATE=0` (allow VM↔VM traffic; default isolated).
 Everything shared with the nix side (slots, user, sizes, state dir) lives
 in `config.json` instead of env vars, so the two sides can't disagree.
+
+## Shared docker image cache
+
+Each guest runs its own dockerd, but all slots are configured to use two
+registries on the mac (reached at the slot's vmnet gateway,
+`192.168.<subnetBase+N>.1`, exported in the guest as `$AGENTVM_HOST_ADDR`):
+
+- **`:5000` — pull-through Docker Hub mirror.** The first slot to pull an
+  image populates the host cache; the rest fetch layers over the local vmnet
+  link. Docker-Hub-only (dockerd mirrors don't cover ghcr.io etc.).
+- **`:5001` — push registry for your own images.** Build the app image once
+  (host or any slot), push it, and every slot pulls at LAN speed.
+
+One-time host setup (runs in OrbStack):
+
+```sh
+docker run -d --restart=always --name registry-mirror -p 5000:5000 \
+  -e REGISTRY_PROXY_REMOTEURL=https://registry-1.docker.io \
+  -v registry-mirror:/var/lib/registry registry:2
+docker run -d --restart=always --name registry-local -p 5001:5000 \
+  -v registry-local:/var/lib/registry registry:2
+```
+
+Typical flow — build once, run an instance per slot:
+
+```sh
+# host
+docker build -t localhost:5001/myapp:dev . && docker push localhost:5001/myapp:dev
+# compose file (env is interpolated per slot)
+#   image: ${AGENTVM_HOST_ADDR}:5001/myapp:dev
+```
+
+If the registries aren't running, guests fall back to pulling upstream
+directly — the mirror is best-effort. Extracted layers still live in each
+slot's home image; only downloads/builds are deduplicated.
 
 ## One-to-one clone of the host
 

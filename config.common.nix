@@ -163,6 +163,7 @@
       "agavra/tap/tuicr"
       "jnsahaj/lumen/lumen"
       "nirs/vmnet-helper/vmnet-helper"
+      "vfkit"
     ];
     # Common GUI Applications (Casks) across all machines
     casks = [

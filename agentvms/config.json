@@ -7,6 +7,7 @@
   "storeOverlaySizeMB": 32768,
   "homeSizeMB": 65536,
   "stateDir": ".local/state/agentvms",
+  "subnetBase": 64,
   "macPrefix": "02:76:6d:00:00:0",
   "defaultProfile": "zephyr"
 }
