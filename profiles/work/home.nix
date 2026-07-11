@@ -45,7 +45,6 @@
 
     # utilities
     hyperfine
-    watchexec
   ];
 
   # File management - symlink essential dotfiles (paths are profile-specific)

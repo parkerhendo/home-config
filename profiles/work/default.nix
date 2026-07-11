@@ -40,6 +40,7 @@
   homebrew.brews = [
     "cargo-binstall"
     "datadog-labs/pack/pup"
+    "watchexec"
   ];
   # Phendo-specific homebrew packages (additional to common ones)
   homebrew.casks = [

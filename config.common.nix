@@ -36,9 +36,6 @@
         '';
       };
     })
-    (final: prev: {
-      mise = prev.mise.overrideAttrs { doCheck = false; };
-    })
   ];
 
 # Keyboard configuration
