@@ -202,6 +202,48 @@ in
     programs.nix-ld.enable = true;
     environment.enableAllTerminfo = true;
 
+    # The guest reads the mac's /nix/store over virtiofs, and that store sits
+    # on case-insensitive APFS: nix's "case hack" renames case-colliding
+    # entries (terminfo ships X/ vs x/, A/ vs a/, ...) to `x~nix~case~hack~1`
+    # on unpack. NAR serialization strips the suffix back off, but a raw
+    # virtiofs share exposes it, so every xterm-* terminfo lookup misses
+    # ("'xterm-256color': unknown terminal type"). Rebuild a de-mangled db on
+    # the guest's own case-sensitive tmpfs and search it first. Each source
+    # package is de-hacked in a private staging dir (within one package the
+    # colliding pair never clashes post-rename), then dir-merged with cp.
+    systemd.services.terminfo-dehack = {
+      description = "De-mangle nix case-hacked terminfo from the host store share";
+      wantedBy = [ "multi-user.target" ];
+      before = [
+        "sshd.service"
+        "getty.target"
+      ];
+      serviceConfig.Type = "oneshot";
+      path = [ pkgs.findutils ];
+      script = ''
+        env=/run/current-system/sw/share/terminfo
+        tmp=/run/terminfo.tmp
+        rm -rf "$tmp"
+        mkdir -p "$tmp"
+        find "$env" -type l -print0 | xargs -0 -r readlink \
+          | grep '^/nix/store/' | sed 's|\(/share/terminfo\)/.*|\1|' | sort -u \
+          | while read -r src; do
+            stage=$(mktemp -d)
+            cp -rP --no-preserve=mode,ownership "$src/." "$stage/"
+            find "$stage" -depth -name '*~nix~case~hack~*' | while read -r p; do
+              mv "$p" "$(printf '%s' "$p" | sed 's/~nix~case~hack~[0-9]*$//')"
+            done
+            cp -rPf "$stage/." "$tmp/"
+            rm -rf "$stage"
+          done
+        rm -rf /run/terminfo
+        mv "$tmp" /run/terminfo
+      '';
+    };
+    environment.extraInit = ''
+      export TERMINFO_DIRS="/run/terminfo''${TERMINFO_DIRS:+:$TERMINFO_DIRS}"
+    '';
+
     system.activationScripts.binbash = lib.stringAfter [ "binsh" ] ''
       ln -sfn /run/current-system/sw/bin/bash /bin/.bash.tmp
       mv /bin/.bash.tmp /bin/bash
