@@ -86,6 +86,8 @@
 
               nix-homebrew.darwinModules.nix-homebrew
               {
+                environment.etc."agentvm-profile".text = "${profileName}\n";
+
                 nix-homebrew = {
                   enable = true;
                   enableRosetta = true;

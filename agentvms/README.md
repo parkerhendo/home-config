@@ -54,7 +54,9 @@ agentvm reset 2        # wipe slot state: nix cache, /home, workspace/repo copie
 ```
 
 Env overrides: `AGENTVM_FLAKE`, `AGENTVM_PROFILE` (host profile the guest
-home clones — builds the `vm-N-<profile>` flake output),
+home clones — builds the `vm-N-<profile>` flake output; default is read
+from nix-darwin's `/etc/agentvm-profile`, then detected from hostname/computer
+name, then `config.json`'s fallback),
 `AGENTVM_WORKSPACE_MODE=live` (dangerous live host mount),
 `AGENTVM_ISOLATE=0` (allow VM↔VM traffic; default isolated).
 Everything shared with the nix side (slots, user, sizes, state dir) lives
@@ -99,9 +101,9 @@ slot's home image; only downloads/builds are deduplicated.
 
 The guest home environment is not a hand-mirrored package list — it *is* the
 host profile. `pool.nix` runs home-manager inside each guest and imports the
-same `profiles/<name>/home.nix` (default `zephyr`, override with
-`AGENTVM_PROFILE`) that `darwin-rebuild` uses on the mac, which pulls in
-`home.common.nix`: the same packages (coding agents, `atuin`, `neovim`,
+same `profiles/<name>/home.nix` (auto-detected from nix-darwin's active
+profile marker, fallback hostname/computer-name mapping, fallback `zephyr`, override with `AGENTVM_PROFILE`)
+that `darwin-rebuild` uses on the mac, which pulls in `home.common.nix`: the same packages (coding agents, `atuin`, `neovim`,
 `gh`, ...), the same zsh setup/prompt, the same git/tmux/nvim dotfiles.
 Mac-only bits in `home.common.nix` are guarded with
 `lib.optionals pkgs.stdenv.isDarwin`; mac GUI configs (ghostty, aerospace)

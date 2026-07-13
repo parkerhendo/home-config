@@ -23,6 +23,34 @@ USER_NAME=$(jq -er .user "$CONFIG")
 STATE="/Users/$USER_NAME/$(jq -er .stateDir "$CONFIG")"
 MAC_PREFIX=$(jq -er .macPrefix "$CONFIG")
 SUBNET_BASE=$(jq -er .subnetBase "$CONFIG")
+DEFAULT_PROFILE=$(jq -er .defaultProfile "$CONFIG")
+
+active_host_profile() {
+  local profile host default_file profile_dir
+  if [[ -r /etc/agentvm-profile ]]; then
+    profile=$(tr -d '[:space:]' < /etc/agentvm-profile)
+    if [[ -n "$profile" && -f "$REPO_DIR/profiles/$profile/home.nix" ]]; then
+      printf '%s\n' "$profile"
+      return 0
+    fi
+  fi
+
+  host=$(scutil --get HostName 2>/dev/null || scutil --get ComputerName 2>/dev/null || hostname -s 2>/dev/null || true)
+  [[ -n "$host" ]] || return 1
+
+  for default_file in "$REPO_DIR"/profiles/*/default.nix; do
+    [[ -f "$default_file" ]] || continue
+    if grep -Eq "networking\.(hostName|computerName) = \"$host\";" "$default_file"; then
+      profile_dir=${default_file%/default.nix}
+      basename "$profile_dir"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+PROFILE=${AGENTVM_PROFILE:-$(active_host_profile || printf '%s' "$DEFAULT_PROFILE")}
 # VM configs live in the root home-config flake (agentvms/pool.nix) so the
 # guest home is built from the same profile as the host. git+file: so the
 # fsmonitor socket in .git/ doesn't break source copying (untracked files
@@ -49,7 +77,7 @@ Usage:
 Environment:
   AGENTVM_FLAKE=REF            Flake ref for VM configs, default: git+file://<home-config repo>
   AGENTVM_PROFILE=NAME         Host profile the guest home clones (vm-N-<profile> flake
-                               output), default: the config.json defaultProfile
+                               output), default: active host profile, then config.json defaultProfile
   AGENTVM_WORKSPACE_MODE=copy  Copy $PWD into per-slot state before mounting (default)
   AGENTVM_WORKSPACE_MODE=live  Danger: symlink the host checkout into the mount
   AGENTVM_ISOLATE=0            Allow VM-to-VM traffic; default is isolated
@@ -152,6 +180,18 @@ ssh_opts() {
   echo "-o UserKnownHostsFile=$(slotdir "$n")/known_hosts -o StrictHostKeyChecking=accept-new -o ConnectTimeout=2"
 }
 
+# Interactive session with host creds passed through: agent forwarding for
+# git-over-ssh (cargo/git private deps), and the host's gh token via
+# SendEnv (guest sshd has AcceptEnv GH_TOKEN).
+connect() {
+  local n="$1" host="$2" token
+  if token=$(gh auth token 2>/dev/null) && [[ -n "$token" ]]; then
+    export GH_TOKEN="$token"
+  fi
+  exec ssh $(ssh_opts "$n") -A -o SendEnv=GH_TOKEN -t "$USER_NAME@$host" \
+    'if [ -n "$SSH_AUTH_SOCK" ]; then mkdir -p "$HOME/.ssh"; ln -snf "$SSH_AUTH_SOCK" "$HOME/.ssh/agent.sock"; fi; cd /workspace 2>/dev/null || true; exec $SHELL -l'
+}
+
 resolve_host() {  # mDNS first, dhcpd_leases fallback
   local n="$1" host="vm-$n.local" ip
   if ping -c1 -t1 "$host" >/dev/null 2>&1; then echo "$host"; return; fi
@@ -201,8 +241,8 @@ cmd_start() {
   /usr/bin/rsync -a --delete --exclude '.git/fsmonitor--daemon.ipc' \
     "$REPO_DIR"/ "$dir/home-config"/
 
-  local target="vm-$n${AGENTVM_PROFILE:+-$AGENTVM_PROFILE}"
-  echo "vm-$n: building runner ($target) ..."
+  local target="vm-$n-$PROFILE"
+  echo "vm-$n: building runner ($target; profile=$PROFILE) ..."
   nix build "$FLAKE#$target" -o "$dir/runner"
 
   local subnet=$((SUBNET_BASE + n))
@@ -214,14 +254,12 @@ cmd_start() {
 
   local host; host=$(wait_ssh "$n")
   echo "vm-$n ready at $host"
-  exec ssh $(ssh_opts "$n") -t "$USER_NAME@$host" \
-    'cd /workspace 2>/dev/null || true; exec $SHELL -l'
+  connect "$n" "$host"
 }
 
 cmd_ssh() {
   local n="$1" host; host=$(resolve_host "$n") || { echo "vm-$n unreachable" >&2; exit 1; }
-  exec ssh $(ssh_opts "$n") -t "$USER_NAME@$host" \
-    'cd /workspace 2>/dev/null || true; exec $SHELL -l'
+  connect "$n" "$host"
 }
 
 cmd_stop() {

@@ -40,6 +40,7 @@
     mise
     neovim
     parallel
+    pnpm_10
 
     # Networking
     ngrok
