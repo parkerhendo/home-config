@@ -29,6 +29,7 @@
     uv
     go
     rustup
+    cargo-binstall
 
     # dev utilities
     # Upstream darwin package fails while generating an empty bash completion;

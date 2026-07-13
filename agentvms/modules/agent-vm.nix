@@ -185,6 +185,9 @@ in
     services.openssh = {
       enable = true;
       settings.PasswordAuthentication = false;
+      # Host creds pass-through: bin/agentvm connects with -A (agent
+      # forwarding for git-over-ssh) and SendEnv GH_TOKEN (gh CLI auth).
+      settings.AcceptEnv = [ "GH_TOKEN" ];
       # Keys come from the host's gitignored agentvms/authorized_keys via the
       # rsynced ~/home-config copy -- runtime data, so it never has to enter
       # flake sources or the store. StrictModes would reject the virtiofs
@@ -192,6 +195,16 @@ in
       settings.StrictModes = false;
       authorizedKeysFiles = [ "/home/${cfg.user}/home-config/agentvms/authorized_keys" ];
     };
+
+    # git-over-ssh via the forwarded agent shouldn't die on first-use host
+    # key verification (the guest has no ~/.ssh).
+    programs.ssh.knownHosts."github.com".publicKey =
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
+
+    environment.etc."gitconfig".text = ''
+      [core]
+        sshCommand = ssh -o IdentityAgent=/home/${cfg.user}/.ssh/agent.sock
+    '';
 
     # mDNS: `ssh vm-N.local` / http://vm-N.local:3000 from the mac over vmnet.
     services.avahi = {
@@ -257,6 +270,16 @@ in
       export TERMINFO_DIRS="/run/terminfo''${TERMINFO_DIRS:+:$TERMINFO_DIRS}"
     '';
 
+    system.activationScripts.cargoConfig = lib.stringAfter [ "users" ] ''
+      install -d -m0755 -o ${cfg.user} -g users /home/${cfg.user}/.cargo
+      cat > /home/${cfg.user}/.cargo/config.toml <<'EOF'
+[net]
+git-fetch-with-cli = true
+EOF
+      chown ${cfg.user}:users /home/${cfg.user}/.cargo/config.toml
+      chmod 0644 /home/${cfg.user}/.cargo/config.toml
+    '';
+
     system.activationScripts.binbash = lib.stringAfter [ "binsh" ] ''
       ln -sfn /run/current-system/sw/bin/bash /bin/.bash.tmp
       mv /bin/.bash.tmp /bin/bash
@@ -284,10 +307,12 @@ in
     environment.sessionVariables = {
       AGENTVM_NAME = name; # shell prompt prefix (dotfiles/zsh/prompt.zsh)
       AGENTVM_HOST_ADDR = hostAddr; # the mac; e.g. image: $AGENTVM_HOST_ADDR:5001/app in compose
+      MISE_NODE_COMPILE = "0"; # use prebuilt Node binaries; compiling Node in microVMs is too slow/OOM-prone
       CPATH = lib.makeSearchPathOutput "dev" "include" sourceBuildInputs;
       LIBRARY_PATH = lib.makeLibraryPath sourceBuildInputs;
       PKG_CONFIG_PATH = lib.makeSearchPathOutput "dev" "lib/pkgconfig" sourceBuildInputs;
       UV_PYTHON_PREFERENCE = "only-system";
+      CARGO_NET_GIT_FETCH_WITH_CLI = "true";
     };
     environment.shellInit = ''
       export PATH="/workspace/venv/bin:$HOME/.local/share/mise/shims:$PATH"
