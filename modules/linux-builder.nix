@@ -50,34 +50,34 @@ in
   '';
 
   system.activationScripts.preActivation.text = ''
-    mkdir -p /var/lib/linux-builder /etc/nix
+        mkdir -p /var/lib/linux-builder /etc/nix
 
-    # Determinate Nix includes /etc/nix/nix.custom.conf from its managed
-    # nix.conf. Patch that hook instead of using nix-darwin's `nix.*`
-    # settings, which require `nix.enable = true`.
-    custom=/etc/nix/nix.custom.conf
-    tmp=$(/usr/bin/mktemp)
-    if [ -e "$custom" ]; then
-      /usr/bin/awk '
-        /^# BEGIN nix-darwin linux-builder$/ { skip = 1; next }
-        /^# END nix-darwin linux-builder$/ { skip = 0; next }
-        !skip { print }
-      ' "$custom" > "$tmp"
-    else
-      : > "$tmp"
-    fi
-    b64=$(printf '%s' '${builderHostKey} root@nixos' | /usr/bin/base64)
-    cat >> "$tmp" <<EOF
-# BEGIN nix-darwin linux-builder
-extra-trusted-users = @admin ${primaryUser}
-builders = ssh-ng://builder@linux-builder aarch64-linux /etc/nix/builder_ed25519 1 - - - $b64
-builders-use-substitutes = true
-# END nix-darwin linux-builder
-EOF
-    /usr/bin/install -m 0644 "$tmp" "$custom"
-    rm -f "$tmp"
+        # Determinate Nix includes /etc/nix/nix.custom.conf from its managed
+        # nix.conf. Patch that hook instead of using nix-darwin's `nix.*`
+        # settings, which require `nix.enable = true`.
+        custom=/etc/nix/nix.custom.conf
+        tmp=$(/usr/bin/mktemp)
+        if [ -e "$custom" ]; then
+          /usr/bin/awk '
+            /^# BEGIN nix-darwin linux-builder$/ { skip = 1; next }
+            /^# END nix-darwin linux-builder$/ { skip = 0; next }
+            !skip { print }
+          ' "$custom" > "$tmp"
+        else
+          : > "$tmp"
+        fi
+        b64=$(printf '%s' '${builderHostKey} root@nixos' | /usr/bin/base64)
+        cat >> "$tmp" <<EOF
+    # BEGIN nix-darwin linux-builder
+    extra-trusted-users = @admin ${primaryUser}
+    builders = ssh-ng://builder@linux-builder aarch64-linux /etc/nix/builder_ed25519 1 - - - $b64
+    builders-use-substitutes = true
+    # END nix-darwin linux-builder
+    EOF
+        /usr/bin/install -m 0644 "$tmp" "$custom"
+        rm -f "$tmp"
 
-    ${installBuilderKey}
+        ${installBuilderKey}
   '';
 
   launchd.daemons.linux-builder = {
