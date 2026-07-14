@@ -1,15 +1,8 @@
-# direnv
+# atuin
 load_atuin() {
   if hash atuin > /dev/null; then
     eval "$(atuin init zsh --disable-up-arrow)"
     bindkey '^r' atuin-search
-  fi
-}
-
-# direnv
-load_direnv() {
-  if hash direnv > /dev/null; then
-    eval "$(direnv hook zsh)"
   fi
 }
 
@@ -60,7 +53,6 @@ load_gitstatus() {
 
 # Load essential plugins immediately
 load_atuin # atuin for better history search
-load_direnv # direnv for environment management
 load_z # I often want to jump somewhere immediately when opening a shell
 
 # Load other plugins with or without defer

@@ -38,7 +38,6 @@
     gh
     ghui
     git
-    mise
     neovim
 
     parallel
@@ -61,12 +60,60 @@
     signing.format = "openpgp";
   };
 
+  programs.zsh = {
+    enable = true;
+    dotDir = config.home.homeDirectory;
+    enableCompletion = false;
+    profileExtra = ''
+      source ~/.orbstack/shell/init.zsh 2>/dev/null || :
+    '';
+    initContent = ''
+      # zsh-defer is optional - configuration will work without it
+      if [ -f ~/.zsh/plugins/zsh-defer/zsh-defer.plugin.zsh ]; then
+        source ~/.zsh/plugins/zsh-defer/zsh-defer.plugin.zsh
+        ZSH_DEFER_AVAILABLE=true
+      else
+        ZSH_DEFER_AVAILABLE=false
+      fi
+
+      files=(
+        exports
+        path
+        aliases
+        bindkeys
+        colors
+        completion
+        functions
+        history
+        locale
+        options
+        prompt
+        plugins
+      )
+
+      for file in $files; do
+        source ~/.zsh/$file.zsh
+      done
+
+      autoload edit-command-line
+      zle -N edit-command-line
+      bindkey '^Xe' edit-command-line
+    '';
+  };
+
+  programs.mise = {
+    enable = true;
+    enableZshIntegration = true;
+  };
+
   programs.direnv = {
     enable = true;
+    enableZshIntegration = true;
     nix-direnv.enable = true;
   };
 
   # Pi coding agent (mkOutOfStoreSymlink for editable files)
+  home.file.".zsh".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/zsh";
   home.file.".pi/agent".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/pi/agent";
 
   xdg.enable = true;
@@ -94,7 +141,10 @@
   '';
 
   home.sessionPath = [
+    "$HOME/.local/share/mise/shims"
+    "$HOME/.local/bin"
     "$HOME/.npm-global/bin"
+    "$HOME/.bun/bin"
     "$HOME/home-config/scripts"
   ];
 

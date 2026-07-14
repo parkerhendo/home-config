@@ -36,11 +36,6 @@
 
   # File management - symlink essential dotfiles (paths are profile-specific)
   home.file = {
-    # Shell profile
-    ".zprofile".source = ../../dotfiles/zprofile;
-    ".zsh".source = ../../dotfiles/zsh;
-    ".zshrc".source = ../../dotfiles/zshrc;
-
     # Git configuration
     ".gitconfig".source = ../../dotfiles/git/gitconfig;
     ".gitalias.txt".source = ../../dotfiles/git/gitalias.txt;
