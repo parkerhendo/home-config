@@ -1,0 +1,45 @@
+{
+  "//": "Single source of truth shared by bin/agentvm (bash) and pool.nix (nix). Copy to config.json and adjust. Comments ('//' keys) are ignored.",
+
+  "//user": "Guest login user; match your macOS username so virtiofs ownership lines up.",
+  "user": "you",
+  "//uid": "Your macOS uid (`id -u`); must match for sane virtiofs ownership.",
+  "uid": 501,
+
+  "//slots": "Pool size, 1..9 (the slot digit completes the MAC address).",
+  "slots": 2,
+  "//vcpu": "vCPUs per guest.",
+  "vcpu": 4,
+  "//mem": "Guest memory in MB (min 1024).",
+  "mem": 8192,
+  "//storeOverlaySizeMB": "Writable /nix/store overlay image per slot, MB (min 1024).",
+  "storeOverlaySizeMB": 16384,
+  "//homeSizeMB": "Persistent /home image per slot, MB.",
+  "homeSizeMB": 32768,
+
+  "//stateDir": "Per-slot state location: relative to your home, or an absolute path.",
+  "stateDir": ".local/state/agentvms",
+
+  "//subnetBase": "Slot N lives on 192.168.(subnetBase+N).0/24; pick a range no other VPN/network uses (e.g. Docker Desktop claims 192.168.65.0/24 -- avoid base 64 if you run it).",
+  "subnetBase": 100,
+  "//macPrefix": "First 5.5 octets of the guest MACs (locally administered); the slot digit completes it.",
+  "macPrefix": "02:76:6d:00:00:0",
+
+  "//defaultProfile": "Guest home profile used when auto-detection finds nothing (profiles/<name>/home.nix).",
+  "defaultProfile": "default",
+
+  "//vfkitPath": "Host path to the vfkit binary (brew install vfkit).",
+  "vfkitPath": "/opt/homebrew/bin/vfkit",
+  "//repoMountName": "Basename the config repo copy is mounted under in the guest $HOME.",
+  "repoMountName": "home-config",
+
+  "//forwardSshAgent": "Forward your ssh-agent into guest sessions (git-over-ssh for private deps). While a session is attached, code in the guest can use your agent's keys -- leave off unless you need it.",
+  "forwardSshAgent": false,
+  "//forwardGhToken": "Send `gh auth token` into guest sessions as GH_TOKEN. The guest can act as you on GitHub -- leave off unless you need it.",
+  "forwardGhToken": false,
+
+  "//dockerMirrorPort": "Host port of a pull-through Docker Hub mirror shared by all slots (null to disable).",
+  "dockerMirrorPort": null,
+  "//dockerPushPort": "Host port of a push registry for locally built images (null to disable).",
+  "dockerPushPort": null
+}

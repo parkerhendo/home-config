@@ -1,9 +1,21 @@
 #!/usr/bin/env bash
-# agentvm -- ephemeral sandbox VMs on macOS, szymonkaliski-style but local.
-#   cd some-project && agentvm start   # claim free slot, mount $PWD -> /workspace, ssh in
-#   agentvm ls | stop N | stop all | ssh N | attach N | reset N
+# agentvm -- ephemeral NixOS microVM sandboxes on macOS (microvm.nix + vfkit
+# + vmnet-helper). Each slot boots an isolated aarch64-linux guest with a
+# copy of $PWD mounted at /workspace:
+#   cd some-project && agentvm start   # claim free slot, copy $PWD, boot, ssh in
+#   agentvm ls | ssh N | exec N -- cmd | attach N | log N | stop N|all | reset N|all | doctor
+#
+# Configuration contract: everything shared between this script and the nix
+# side (agentvms/pool.nix) lives in agentvms/config.json so the bash/nix
+# boundary can't drift. Host-specific paths are derived from it; nothing in
+# this script is hardcoded to one person's machine. See config.example.json
+# and README.md for the schema.
 set -euo pipefail
 
+AGENTVM_VERSION="1.0.0"
+
+# ---------------------------------------------------------------------------
+# Locate ourselves (symlink-safe) and the enclosing repo.
 SCRIPT="${BASH_SOURCE[0]}"
 while [[ -L "$SCRIPT" ]]; do
   SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT")" && pwd)"
@@ -14,17 +26,81 @@ done
 AGENTVM_DIR="$(cd -P "$(dirname "$SCRIPT")/.." && pwd)"
 REPO_DIR="$(dirname "$AGENTVM_DIR")"
 
-# Knobs shared with the nix side come from config.json -- the single source
-# both bin/agentvm and pool.nix read, so the bash/nix boundary can't drift.
-CONFIG="$AGENTVM_DIR/config.json"
-command -v jq >/dev/null || { echo "agentvm: jq required (reads $CONFIG)" >&2; exit 1; }
+die()  { echo "agentvm: $*" >&2; exit 1; }
+note() { echo "$*" >&2; }
+
+# ---------------------------------------------------------------------------
+# Config: single source shared with the nix side.
+CONFIG="${AGENTVM_CONFIG:-$AGENTVM_DIR/config.json}"
+
+require_tools() {
+  local missing=() t
+  for t in "$@"; do
+    command -v "$t" >/dev/null 2>&1 || missing+=("$t")
+  done
+  [[ ${#missing[@]} -eq 0 ]] || die "missing required tools: ${missing[*]}"
+}
+
+# jq parses the config; tmux is the slot lock/console for every command.
+require_tools jq tmux
+
+[[ -r "$CONFIG" ]] || die "config not found: $CONFIG (set AGENTVM_CONFIG or create it from config.example.json)"
+
+# Validate shape before trusting any value; a clear message beats a jq error
+# three commands later.
+CONFIG_ERRORS=$(jq -r '
+  def req($k; $t):
+    if has($k) then
+      if (.[$k] | type) == $t then empty
+      else ".\($k) must be \($t), got \(.[$k] | type)" end
+    else ".\($k) is missing" end;
+  [ req("user"; "string"),
+    req("uid"; "number"),
+    req("slots"; "number"),
+    req("vcpu"; "number"),
+    req("mem"; "number"),
+    req("storeOverlaySizeMB"; "number"),
+    req("homeSizeMB"; "number"),
+    req("stateDir"; "string"),
+    req("subnetBase"; "number"),
+    req("macPrefix"; "string"),
+    req("defaultProfile"; "string")
+  ] | .[]' "$CONFIG" 2>&1) || die "config is not valid JSON: $CONFIG"
+[[ -z "$CONFIG_ERRORS" ]] || die "invalid config $CONFIG:
+$CONFIG_ERRORS"
+
 SLOTS=$(jq -er .slots "$CONFIG")
 USER_NAME=$(jq -er .user "$CONFIG")
-STATE="/Users/$USER_NAME/$(jq -er .stateDir "$CONFIG")"
+STATE_DIR=$(jq -er .stateDir "$CONFIG")
 MAC_PREFIX=$(jq -er .macPrefix "$CONFIG")
 SUBNET_BASE=$(jq -er .subnetBase "$CONFIG")
 DEFAULT_PROFILE=$(jq -er .defaultProfile "$CONFIG")
+# Optional knobs (safe defaults when absent, so older configs keep working).
+VFKIT_PATH=$(jq -r '.vfkitPath // "/opt/homebrew/bin/vfkit"' "$CONFIG")
+FORWARD_SSH_AGENT=$(jq -r '.forwardSshAgent // false' "$CONFIG")
+FORWARD_GH_TOKEN=$(jq -r '.forwardGhToken // false' "$CONFIG")
+REPO_MOUNT_NAME=$(jq -r '.repoMountName // "home-config"' "$CONFIG")
+DOCKER_MIRROR_PORT=$(jq -r '.dockerMirrorPort // empty' "$CONFIG")
+DOCKER_PUSH_PORT=$(jq -r '.dockerPushPort // empty' "$CONFIG")
 
+# stateDir may be absolute; otherwise it is relative to the user's home.
+case "$STATE_DIR" in
+  /*) STATE="$STATE_DIR" ;;
+  *)  STATE="/Users/$USER_NAME/$STATE_DIR" ;;
+esac
+
+# Range checks shared with the nix side's assertions (fail fast, same rules).
+[[ "$SLOTS" =~ ^[1-9]$ ]] || die "config: slots must be 1..9 (single MAC digit scheme), got $SLOTS"
+if (( SUBNET_BASE < 1 || SUBNET_BASE + SLOTS > 254 )); then
+  die "config: subnetBase ($SUBNET_BASE) + slots ($SLOTS) must stay within 192.168.1-254"
+fi
+[[ "$MAC_PREFIX" =~ ^([0-9a-f]{2}:){5}0$ ]] || die "config: macPrefix must look like 02:76:6d:00:00:0"
+
+# ---------------------------------------------------------------------------
+# Profile selection: env override, nix-darwin's active-profile marker,
+# hostname/computer-name mapping against profiles/*/default.nix, then the
+# config.json fallback. All layers degrade gracefully when absent, so the
+# script also works in repos without that layout.
 active_host_profile() {
   local profile host default_file profile_dir
   if [[ -r /etc/agentvm-profile ]]; then
@@ -51,62 +127,102 @@ active_host_profile() {
 }
 
 PROFILE=${AGENTVM_PROFILE:-$(active_host_profile || printf '%s' "$DEFAULT_PROFILE")}
-# VM configs live in the root home-config flake (agentvms/pool.nix) so the
-# guest home is built from the same profile as the host. git+file: so the
-# fsmonitor socket in .git/ doesn't break source copying (untracked files
-# must be committed to be visible; authorized_keys stays gitignored and
-# reaches the guest via the rsynced home-config copy instead).
+# VM configs live in the enclosing flake (agentvms/pool.nix) so the guest
+# home is built from the same profile as the host. git+file: so the fsmonitor
+# socket in .git/ doesn't break source copying (untracked files must be
+# committed to be visible; authorized_keys stays gitignored and reaches the
+# guest via the rsynced repo copy instead).
 FLAKE="${AGENTVM_FLAKE:-git+file://$REPO_DIR}"
 WORKSPACE_MODE="${AGENTVM_WORKSPACE_MODE:-copy}"
+BOOT_TIMEOUT="${AGENTVM_BOOT_TIMEOUT:-90}"
 
 cmd_help() {
   cat <<'EOF'
 agentvm - ephemeral NixOS microVM workspaces on macOS
 
 Usage:
-  agentvm start          Claim a free slot, copy $PWD, boot, and SSH into /workspace
-  agentvm ls             Show slot status
-  agentvm ssh N          SSH into a running VM slot
-  agentvm attach N       Attach to the VM serial console tmux session
-  agentvm stop N         Stop one VM slot
-  agentvm stop all       Stop all VM slots
-  agentvm reset N        Wipe a stopped slot's cache, /home, workspace/repo copies, and firmware state
-  agentvm help           Show this help
-  agentvm --help         Show this help
+  agentvm start [N] [options]  Claim a slot (or slot N), copy $PWD, boot, ssh in
+      --profile NAME           Guest home profile (default: auto-detected)
+      --detach | -d            Boot but do not ssh in (for scripting)
+      --live                   Danger: mount the live $PWD instead of a copy
+      --no-build               Reuse the slot's existing runner (skip nix build)
+  agentvm ls                   Show slot status (alias: status)
+  agentvm ssh N                SSH into a running slot
+  agentvm exec N -- CMD...     Run a command in /workspace on slot N (exit code passes through)
+  agentvm diff N               Show what pulling the slot's workspace copy would change
+  agentvm pull N [--delete] [--yes]  Sync the slot's workspace copy back to the host checkout
+  agentvm ip N                 Print the slot's address (for scripting/browsers)
+  agentvm attach N             Attach the serial console tmux session
+  agentvm log N [-f]           Show (or follow) the slot's console log
+  agentvm stop N|all [--force] Graceful poweroff (--force: kill immediately)
+  agentvm reset N|all          Wipe a stopped slot: nix cache, /home, copies, firmware
+  agentvm build [N|all]        Pre-build slot runner(s) without booting
+  agentvm doctor               Check host setup (vfkit, vmnet, builder, keys, config)
+  agentvm version              Print version
 
 Environment:
-  AGENTVM_FLAKE=REF            Flake ref for VM configs, default: git+file://<home-config repo>
-  AGENTVM_PROFILE=NAME         Host profile the guest home clones (vm-N-<profile> flake
-                               output), default: active host profile, then config.json defaultProfile
-  AGENTVM_WORKSPACE_MODE=copy  Copy $PWD into per-slot state before mounting (default)
-  AGENTVM_WORKSPACE_MODE=live  Danger: symlink the host checkout into the mount
-  AGENTVM_ISOLATE=0            Allow VM-to-VM traffic; default is isolated
+  AGENTVM_CONFIG=PATH          Config file (default: agentvms/config.json)
+  AGENTVM_FLAKE=REF            Flake ref for VM configs (default: git+file://<repo>)
+  AGENTVM_PROFILE=NAME         Guest home profile (overrides auto-detection)
+  AGENTVM_WORKSPACE_MODE=copy|live   Same as --live (default: copy)
+  AGENTVM_LIVE_ACK=yes         Skip the live-mode confirmation (scripts)
+  AGENTVM_ISOLATE=0            Allow VM-to-VM traffic (default: isolated)
+  AGENTVM_BOOT_TIMEOUT=SECS    How long to wait for guest ssh (default: 90)
 
-Knobs (slots, user, sizes, state dir) live in agentvms/config.json, shared
-by this script and the nix side.
+Knobs shared with the nix side (slots, user, sizes, network scheme, cred
+forwarding) live in agentvms/config.json. See config.example.json.
 EOF
 }
 
 case "${1:-}" in
   help|--help|-h) cmd_help; exit 0 ;;
+  version|--version) echo "agentvm $AGENTVM_VERSION"; exit 0 ;;
 esac
 
+# ---------------------------------------------------------------------------
+# Host virtualization helpers.
+
 # vmnet-helper location: brew (macOS 26+, no sudo) or /opt (<=15, sudo).
-if [[ -x /opt/homebrew/opt/vmnet-helper/libexec/vmnet-run ]]; then
-  VMNET_RUN="/opt/homebrew/opt/vmnet-helper/libexec/vmnet-run"; SUDO=""
-elif PREFIX=$(brew --prefix vmnet-helper 2>/dev/null) && [[ -x "$PREFIX/libexec/vmnet-run" ]]; then
-  VMNET_RUN="$PREFIX/libexec/vmnet-run"; SUDO=""
-elif [[ -x /opt/vmnet-helper/bin/vmnet-run ]]; then
-  VMNET_RUN="/opt/vmnet-helper/bin/vmnet-run"; SUDO="sudo"
-else
-  echo "vmnet-helper not found; see README setup" >&2; exit 1
-fi
+find_vmnet_run() {
+  if [[ -x /opt/homebrew/opt/vmnet-helper/libexec/vmnet-run ]]; then
+    VMNET_RUN="/opt/homebrew/opt/vmnet-helper/libexec/vmnet-run"; VMNET_SUDO=""
+  elif PREFIX=$(brew --prefix vmnet-helper 2>/dev/null) && [[ -x "$PREFIX/libexec/vmnet-run" ]]; then
+    VMNET_RUN="$PREFIX/libexec/vmnet-run"; VMNET_SUDO=""
+  elif [[ -x /opt/vmnet-helper/bin/vmnet-run ]]; then
+    VMNET_RUN="/opt/vmnet-helper/bin/vmnet-run"; VMNET_SUDO="sudo"
+  else
+    return 1
+  fi
+}
+
 ISOLATE_FLAG=""
 [[ "${AGENTVM_ISOLATE:-1}" == "1" ]] && ISOLATE_FLAG="--enable-isolation"
 
 session() { echo "agentvm-$1"; }
 slotdir() { echo "$STATE/vm-$1"; }
-running() { tmux has-session -t "$(session "$1")" 2>/dev/null; }
+running() { tmux has-session -t "=$(session "$1")" 2>/dev/null; }
+
+check_slot() {  # validate a slot argument early, with a clear message
+  [[ "${1:-}" =~ ^[0-9]+$ ]] || die "slot must be a number 1..$SLOTS, got '${1:-}'"
+  (( $1 >= 1 && $1 <= SLOTS )) || die "slot $1 out of range (1..$SLOTS)"
+}
+
+set_phase() { printf '%s\n' "$2" > "$(slotdir "$1")/phase"; }
+get_phase() { cat "$(slotdir "$1")/phase" 2>/dev/null || echo "running"; }
+
+# ---------------------------------------------------------------------------
+# SSH plumbing. Guest sshd host keys persist in the slot's /home image, so
+# known_hosts stays valid across reboots and only `reset` invalidates it.
+ssh_args() {  # populates SSH_ARGS for slot $1
+  local n="$1"
+  SSH_ARGS=(
+    -o "UserKnownHostsFile=$(slotdir "$n")/known_hosts"
+    -o StrictHostKeyChecking=accept-new
+    -o ConnectTimeout=3
+    -o ServerAliveInterval=30
+    -o ServerAliveCountMax=6
+  )
+}
 
 ensure_authorized_keys() {
   local keys="$AGENTVM_DIR/authorized_keys" pub
@@ -115,53 +231,67 @@ ensure_authorized_keys() {
   for pub in "$HOME/.ssh/id_ed25519.pub" "$HOME/.ssh/id_ecdsa.pub" "$HOME/.ssh/id_rsa.pub"; do
     if [[ -s "$pub" ]]; then
       cp "$pub" "$keys"
-      echo "agentvm: initialized $keys from $pub" >&2
+      note "agentvm: initialized $keys from $pub"
       return 0
     fi
   done
 
-  echo "agentvm: missing $keys and no default SSH public key found" >&2
-  echo "agentvm: create one with: cp ~/.ssh/id_ed25519.pub $keys" >&2
-  exit 1
+  die "missing $keys and no default SSH public key found
+create one with: cp ~/.ssh/id_ed25519.pub $keys"
 }
 
+# Dependency/build artifacts excluded from workspace copies in BOTH
+# directions: macOS-specific outputs are recreated inside Linux, and `pull`
+# must never splat guest artifacts over (or delete) the host's own.
+WORKSPACE_EXCLUDES=(
+  --exclude .direnv/
+  --exclude .venv/
+  --exclude venv/
+  --exclude node_modules/
+  --exclude bazel-bin
+  --exclude bazel-out
+  --exclude bazel-testlogs
+  --exclude 'bazel-*'
+  --exclude __pycache__/
+  --exclude data/minio/
+  --exclude .pytest_cache/
+  --exclude .mypy_cache/
+  --exclude .ruff_cache/
+  --exclude .turbo/
+  --exclude dist/
+  --exclude build/
+  --exclude target/
+)
+
 prepare_workspace() {
-  local n="$1" dir="$2" source="$PWD" copy="$dir/workspace"
-  local excludes=(
-    --exclude .direnv/
-    --exclude .venv/
-    --exclude venv/
-    --exclude node_modules/
-    --exclude bazel-bin
-    --exclude bazel-out
-    --exclude bazel-testlogs
-    --exclude 'bazel-*'
-    --exclude __pycache__/
-    --exclude data/minio/
-    --exclude .pytest_cache/
-    --exclude .mypy_cache/
-    --exclude .ruff_cache/
-    --exclude .turbo/
-    --exclude dist/
-    --exclude build/
-    --exclude target/
-  )
+  local n="$1" dir="$2" src="$PWD"
+  local copy="$dir/workspace"
+  # Guard against copying a filesystem's worth of data into a slot.
+  [[ "$src" != "/" ]] || die "refusing to use / as the workspace"
+  [[ "$src" != "$HOME" ]] || die "refusing to use your home directory as the workspace; cd into a project first"
   # $copy is the constant virtiofs source baked into the VM config; both
   # modes populate it (rsync copy, or symlink to the live checkout).
   case "$WORKSPACE_MODE" in
     copy)
       [[ -L "$copy" ]] && rm "$copy"  # stale live-mode symlink; never rsync through it
       mkdir -p "$copy"
-      echo "vm-$n: syncing workspace copy ..." >&2
-      /usr/bin/rsync -a --delete --delete-excluded "${excludes[@]}" "$source"/ "$copy"/
+      note "vm-$n: syncing workspace copy ..."
+      /usr/bin/rsync -a --delete --delete-excluded "${WORKSPACE_EXCLUDES[@]}" "$src"/ "$copy"/
       ;;
     live)
+      note "vm-$n: WARNING: live mode mounts $src read-write into the sandbox."
+      note "vm-$n: anything the guest does affects your real checkout directly."
+      if [[ "${AGENTVM_LIVE_ACK:-}" != "yes" ]]; then
+        [[ -t 0 ]] || die "live mode needs AGENTVM_LIVE_ACK=yes when non-interactive"
+        printf 'mount the live checkout? [y/N] ' >&2
+        local ans; read -r ans
+        case "$ans" in y|Y|yes|YES) ;; *) die "aborted (use copy mode, the default)" ;; esac
+      fi
       [[ -e "$copy" && ! -L "$copy" ]] && rm -rf "$copy"  # drop stale copy-mode dir
-      ln -sfn "$source" "$copy"
+      ln -sfn "$src" "$copy"
       ;;
     *)
-      echo "AGENTVM_WORKSPACE_MODE must be 'copy' or 'live'" >&2
-      exit 1
+      die "AGENTVM_WORKSPACE_MODE must be 'copy' or 'live', got '$WORKSPACE_MODE'"
       ;;
   esac
 }
@@ -175,135 +305,587 @@ lease_mac() {
   echo "${out%:}"
 }
 
-ssh_opts() {
-  local n="$1"
-  echo "-o UserKnownHostsFile=$(slotdir "$n")/known_hosts -o StrictHostKeyChecking=accept-new -o ConnectTimeout=2"
+lease_ip() {  # last known DHCP lease for slot $1 (no network traffic)
+  awk -v mac="$(lease_mac "$1")" '
+    /ip_address/ {ip=$0; sub(/.*=/,"",ip)}
+    /hw_address/ && index($0, mac) {print ip; exit}
+  ' /var/db/dhcpd_leases 2>/dev/null || true
 }
 
-# Interactive session with host creds passed through: agent forwarding for
-# git-over-ssh (cargo/git private deps), and the host's gh token via
-# SendEnv (guest sshd has AcceptEnv GH_TOKEN).
-connect() {
-  local n="$1" host="$2" token
-  if token=$(gh auth token 2>/dev/null) && [[ -n "$token" ]]; then
-    export GH_TOKEN="$token"
+mdns_ip() {  # resolve vm-N.local via mDNS; prints the address or nothing
+  dscacheutil -q host -a name "vm-$1.local" 2>/dev/null \
+    | awk '/^ip_address:/ {print $2; exit}'
+}
+
+# Resolve a slot to an address INSIDE its own vmnet subnet. The DHCP lease
+# file is authoritative for our interface; mDNS is only a fallback and its
+# answer is validated against the expected subnet -- any device on the LAN
+# can claim "vm-N.local", and we forward credentials into whatever we
+# connect to, so an unvalidated mDNS answer would hand them to a spoofer.
+resolve_host() {
+  local n="$1" ip
+  local prefix="192.168.$((SUBNET_BASE + n))."
+  ip=$(lease_ip "$n")
+  if [[ -n "$ip" && "$ip" == "$prefix"* ]] && ping -c1 -t1 "$ip" >/dev/null 2>&1; then
+    echo "$ip"
+    return 0
   fi
-  exec ssh $(ssh_opts "$n") -A -o SendEnv=GH_TOKEN -t "$USER_NAME@$host" \
-    'if [ -n "$SSH_AUTH_SOCK" ]; then mkdir -p "$HOME/.ssh"; ln -snf "$SSH_AUTH_SOCK" "$HOME/.ssh/agent.sock"; fi; cd /workspace 2>/dev/null || true; exec $SHELL -l'
+  ip=$(mdns_ip "$n")
+  if [[ -n "$ip" && "$ip" == "$prefix"* ]] && ping -c1 -t1 "$ip" >/dev/null 2>&1; then
+    echo "$ip"
+    return 0
+  fi
+  return 1
 }
 
-resolve_host() {  # mDNS first, dhcpd_leases fallback
-  local n="$1" host="vm-$n.local" ip
-  if ping -c1 -t1 "$host" >/dev/null 2>&1; then echo "$host"; return; fi
-  ip=$(awk -v mac="$(lease_mac "$n")" '
-        /ip_address/ {ip=$0; sub(/.*=/,"",ip)}
-        /hw_address/ && index($0, mac) {print ip; exit}
-      ' /var/db/dhcpd_leases 2>/dev/null || true)
-  [[ -n "${ip:-}" ]] && echo "$ip"
+# Host creds passed through when enabled in config.json: agent forwarding
+# for git-over-ssh (forwardSshAgent) and the host's gh token via SendEnv
+# (forwardGhToken; guest sshd must AcceptEnv it). Populates FWD_ARGS and
+# REMOTE_INIT; shared by interactive ssh and exec so both behave the same.
+build_forwarding() {
+  local token
+  FWD_ARGS=()
+  REMOTE_INIT='true'
+  if [[ "$FORWARD_SSH_AGENT" == "true" ]]; then
+    FWD_ARGS+=(-A)
+    # $SSH_AUTH_SOCK below must expand on the guest, not here.
+    # shellcheck disable=SC2016
+    REMOTE_INIT='if [ -n "$SSH_AUTH_SOCK" ]; then mkdir -p "$HOME/.ssh"; ln -snf "$SSH_AUTH_SOCK" "$HOME/.ssh/agent.sock"; fi'
+  fi
+  if [[ "$FORWARD_GH_TOKEN" == "true" ]] && token=$(gh auth token 2>/dev/null) && [[ -n "$token" ]]; then
+    export GH_TOKEN="$token"
+    FWD_ARGS+=(-o SendEnv=GH_TOKEN)
+  fi
+}
+
+connect() {  # interactive session into slot $1 at host $2
+  local n="$1" host="$2"
+  build_forwarding
+  ssh_args "$n"
+  # ${FWD_ARGS[@]+...}: macOS bash 3.2 treats "${FWD_ARGS[@]}" on an empty
+  # array as unbound under set -u.
+  exec ssh "${SSH_ARGS[@]}" ${FWD_ARGS[@]+"${FWD_ARGS[@]}"} -t "$USER_NAME@$host" \
+    "$REMOTE_INIT; cd /workspace 2>/dev/null || true; exec \$SHELL -l"
 }
 
 wait_ssh() {
-  local n="$1" host
-  for _ in $(seq 1 60); do
-    host=$(resolve_host "$n" || true)
-    if [[ -n "${host:-}" ]] && \
-       ssh $(ssh_opts "$n") "$USER_NAME@$host" true 2>/dev/null; then
-      echo "$host"; return 0
+  local n="$1" host i err=""
+  ssh_args "$n"
+  for (( i = 0; i < BOOT_TIMEOUT; i++ )); do
+    running "$n" || { note "vm-$n: VM exited during boot -- see: agentvm log $n"; return 1; }
+    if host=$(resolve_host "$n"); then
+      if err=$(ssh "${SSH_ARGS[@]}" -o BatchMode=yes "$USER_NAME@$host" true 2>&1); then
+        echo "$host"
+        return 0
+      fi
     fi
     sleep 1
   done
-  echo "vm-$n: no ssh after 60s -- check console: agentvm attach $n" >&2
+  note "vm-$n: no ssh after ${BOOT_TIMEOUT}s -- console: agentvm attach $n | log: agentvm log $n"
+  if [[ -n "$err" ]]; then
+    note "vm-$n: last ssh error: $(printf '%s\n' "$err" | tail -1)"
+    note "vm-$n: if the host identification changed (e.g. after wiping home.img), run: rm $(slotdir "$n")/known_hosts"
+  fi
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# start: claim -> sync -> build -> boot -> ssh.
+#
+# Claiming must be atomic: two concurrent `agentvm start` runs must never
+# pick the same slot. tmux is the lock manager -- `new-session` on an
+# existing name fails, so whoever creates the session owns the slot. The
+# placeholder command holds the claim while we sync and build; the trap
+# releases it on any failure before the real VM process takes over.
+CLAIMED_SESSION=""
+release_claim() {
+  [[ -n "$CLAIMED_SESSION" ]] && tmux kill-session -t "=$CLAIMED_SESSION" 2>/dev/null
+  CLAIMED_SESSION=""
+  return 0
+}
+
+claim_slot() {  # claim_slot [N]; echoes the claimed slot number
+  local want="${1:-}" i candidates
+  if [[ -n "$want" ]]; then candidates="$want"; else candidates=$(seq 1 "$SLOTS"); fi
+  for i in $candidates; do
+    mkdir -p "$(slotdir "$i")"
+    if tmux new-session -d -s "$(session "$i")" -c "$(slotdir "$i")" \
+        "exec sleep 86400" 2>/dev/null; then
+      echo "$i"
+      return 0
+    fi
+  done
   return 1
 }
 
 cmd_start() {
-  local n="" i
-  for i in $(seq 1 "$SLOTS"); do
-    running "$i" || { n="$i"; break; }
+  local want_slot="" detach=0 no_build=0 arg
+  while [[ $# -gt 0 ]]; do
+    arg="$1"; shift
+    case "$arg" in
+      --profile) PROFILE="${1:?--profile needs a name}"; shift ;;
+      --detach|-d) detach=1 ;;
+      --live) WORKSPACE_MODE=live ;;
+      --no-build) no_build=1 ;;
+      [0-9]*) check_slot "$arg"; want_slot="$arg" ;;
+      *) die "unknown start option: $arg (see agentvm help)" ;;
+    esac
   done
-  [[ -z "$n" ]] && { echo "all $SLOTS slots busy:"; cmd_ls; exit 1; }
 
-  local dir; dir=$(slotdir "$n"); mkdir -p "$dir"
+  require_tools tmux rsync ssh nix uuidgen
+  find_vmnet_run || die "vmnet-helper not found; run 'agentvm doctor' and see README setup"
+  [[ -x "$VFKIT_PATH" ]] || die "vfkit not found at $VFKIT_PATH; brew install vfkit (or set vfkitPath in config.json)"
+  # Wrong uid means every virtiofs file appears owned by someone else in the
+  # guest -- nothing works and the cause is invisible. Fail before building.
+  [[ "$(id -u)" == "$(jq -er .uid "$CONFIG")" ]] ||
+    die "config.json uid ($(jq -er .uid "$CONFIG")) != your uid ($(id -u)); fix config.json (id -u)"
+  [[ -n "$ISOLATE_FLAG" ]] ||
+    note "WARNING: AGENTVM_ISOLATE=0 -- slots can reach each other; one compromised agent can poke the rest"
+
+  local n
+  if ! n=$(claim_slot "$want_slot"); then
+    if [[ -n "$want_slot" ]]; then
+      die "slot $want_slot is busy"
+    fi
+    echo "all $SLOTS slots busy:" >&2
+    cmd_ls >&2
+    exit 1
+  fi
+  CLAIMED_SESSION=$(session "$n")
+  # EXIT does the cleanup; INT/TERM must actually exit or a Ctrl-C during
+  # the build would release the claim and then keep going.
+  trap release_claim EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  local dir; dir=$(slotdir "$n")
   [[ -f "$dir/interface-id" ]] || uuidgen > "$dir/interface-id"
   echo "$PWD" > "$dir/workspace-path"
-  rm -f "$dir/known_hosts"
+  echo "$PROFILE" > "$dir/profile"
+  date +%s > "$dir/started-at"
+  set_phase "$n" "syncing"
+
+  # Guest sshd host keys persist in the slot's /home image, so known_hosts
+  # stays valid across boots (real trust-on-first-use). One-time migration:
+  # slots created before persistent host keys carry a stale per-boot entry.
+  if [[ ! -f "$dir/.hostkeys-persist" ]]; then
+    rm -f "$dir/known_hosts"
+    touch "$dir/.hostkeys-persist"
+  fi
 
   prepare_workspace "$n" "$dir"
 
-  # Guest sshd reads authorized_keys out of the home-config copy, so the
-  # keys file must exist before the rsync below.
+  # Guest sshd reads authorized_keys out of the repo copy, so the keys file
+  # must exist before the rsync below.
   ensure_authorized_keys
 
-  # Per-slot copy of the config repo -> guest ~/home-config (dotfile symlink
-  # targets). A copy, not a live mount: the VM must not be able to write any
-  # real host path. Socket excluded (git fsmonitor); re-synced every start.
-  echo "vm-$n: syncing home-config copy ..." >&2
+  # Per-slot copy of the config repo -> guest ~/<repoMountName> (dotfile
+  # symlink targets). A copy, not a live mount: the VM must not be able to
+  # write any real host path. Socket excluded (git fsmonitor); re-synced
+  # every start.
+  note "vm-$n: syncing $REPO_MOUNT_NAME copy ..."
   /usr/bin/rsync -a --delete --exclude '.git/fsmonitor--daemon.ipc' \
-    "$REPO_DIR"/ "$dir/home-config"/
+    "$REPO_DIR"/ "$dir/$REPO_MOUNT_NAME"/
 
   local target="vm-$n-$PROFILE"
-  echo "vm-$n: building runner ($target; profile=$PROFILE) ..."
-  nix build "$FLAKE#$target" -o "$dir/runner"
+  if [[ "$no_build" == 1 && -x "$dir/runner/bin/microvm-run" ]]; then
+    note "vm-$n: reusing existing runner (--no-build)"
+  else
+    set_phase "$n" "building"
+    note "vm-$n: building runner ($target; profile=$PROFILE) ..."
+    nix build "$FLAKE#$target" -o "$dir/runner" ||
+      die "build failed for $FLAKE#$target -- is the profile committed? (git+file flakes only see committed files)"
+  fi
 
+  # Boot: replace the placeholder claim with the real VM process, then start
+  # capturing the serial console to a per-slot log for post-mortems.
   local subnet=$((SUBNET_BASE + n))
-  echo "vm-$n: booting ..."
-  tmux new-session -d -s "$(session "$n")" -c "$dir" \
-    "$SUDO $VMNET_RUN $ISOLATE_FLAG --interface-id $(cat "$dir/interface-id") \
+  set_phase "$n" "booting"
+  note "vm-$n: booting ..."
+  [[ -f "$dir/console.log" ]] && mv -f "$dir/console.log" "$dir/console.log.1"
+  tmux respawn-pane -k -t "=$CLAIMED_SESSION" \
+    "$VMNET_SUDO $VMNET_RUN $ISOLATE_FLAG --interface-id $(cat "$dir/interface-id") \
      --start-address 192.168.$subnet.1 --end-address 192.168.$subnet.254 --subnet-mask 255.255.255.0 -- \
      $dir/runner/bin/microvm-run"
+  tmux pipe-pane -o -t "=$CLAIMED_SESSION" "cat >> '$dir/console.log'"
 
-  local host; host=$(wait_ssh "$n")
+  # The VM process now owns the session; failures past this point leave it
+  # up for debugging (attach/log) instead of tearing it down.
+  CLAIMED_SESSION=""
+  trap - EXIT INT TERM
+
+  local host
+  host=$(wait_ssh "$n") || exit 1
+  set_phase "$n" "ready"
   echo "vm-$n ready at $host"
+  if [[ "$detach" == 1 ]]; then
+    echo "attach with: agentvm ssh $n"
+    exit 0
+  fi
   connect "$n" "$host"
 }
 
 cmd_ssh() {
-  local n="$1" host; host=$(resolve_host "$n") || { echo "vm-$n unreachable" >&2; exit 1; }
+  local n="$1"
+  running "$n" || die "vm-$n is not running (agentvm ls)"
+  local host
+  host=$(resolve_host "$n") || die "vm-$n unreachable -- console: agentvm attach $n"
   connect "$n" "$host"
 }
 
-cmd_stop() {
+cmd_exec() {
+  local n="$1"; shift
+  [[ "${1:-}" == "--" ]] && shift
+  [[ $# -gt 0 ]] || die "usage: agentvm exec N -- CMD..."
+  running "$n" || die "vm-$n is not running (agentvm ls)"
+  local host
+  host=$(resolve_host "$n") || die "vm-$n unreachable -- console: agentvm attach $n"
+  ssh_args "$n"
+  build_forwarding
+  # Re-quote each argument so spaces/quotes survive the remote shell; the
+  # exit code passes through via exec. BatchMode: never hang on a prompt.
+  # Credentials forward exactly like interactive ssh, so `agentvm exec N --
+  # git push` works wherever `agentvm ssh N` would.
+  local remote_cmd="" a
+  for a in "$@"; do remote_cmd+="$(printf '%q' "$a") "; done
+  exec ssh "${SSH_ARGS[@]}" ${FWD_ARGS[@]+"${FWD_ARGS[@]}"} -o BatchMode=yes "$USER_NAME@$host" \
+    "$REMOTE_INIT; cd /workspace 2>/dev/null || true; $remote_cmd"
+}
+
+cmd_ip() {
   local n="$1" host
+  running "$n" || die "vm-$n is not running (agentvm ls)"
+  host=$(resolve_host "$n") || die "vm-$n unreachable"
+  echo "$host"
+}
+
+# Review/export story: work happens in the slot COPY; diff shows what pulling
+# would change on the host, pull applies it. Deletions are only propagated
+# with --delete. `.git/` NEVER syncs back -- guest-controlled hooks/config
+# would execute on the host. Export commits with git instead:
+#   git fetch ~/.local/state/agentvms/vm-N/workspace <branch>
+workspace_paths() {  # sets WS_SRC and WS_COPY for slot $1
+  local n="$1" dir
+  dir=$(slotdir "$n")
+  WS_COPY="$dir/workspace"
+  WS_SRC=$(cat "$dir/workspace-path" 2>/dev/null) || die "no workspace recorded for vm-$n"
+  [[ -n "$WS_SRC" && -d "$WS_SRC" ]] || die "original workspace '$WS_SRC' no longer exists"
+  [[ -d "$WS_COPY" ]] || die "vm-$n has no workspace copy (never started?)"
+  [[ ! -L "$WS_COPY" ]] || die "vm-$n runs in live mode; the host checkout already has the changes"
+}
+
+cmd_diff() {
+  local n="$1"
+  workspace_paths "$n"
+  note "vm-$n: changes the slot copy would apply to $WS_SRC (rsync itemized; > = update, del. = delete with --delete):"
+  /usr/bin/rsync -rlpt -ni --delete --exclude .git/ "${WORKSPACE_EXCLUDES[@]}" "$WS_COPY"/ "$WS_SRC"/
+}
+
+cmd_pull() {
+  local n="$1" delete_flag="" ans
+  shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --delete) delete_flag="--delete" ;;
+      --yes|-y) PULL_YES=1 ;;
+      *) die "unknown pull option: $1" ;;
+    esac
+    shift
+  done
+  workspace_paths "$n"
+  note "vm-$n: syncing slot copy back over $WS_SRC${delete_flag:+ (with deletions)}"
+  if [[ "${PULL_YES:-0}" != 1 ]]; then
+    [[ -t 0 ]] || die "refusing to pull non-interactively without --yes"
+    printf 'proceed? [y/N] ' >&2
+    read -r ans
+    case "$ans" in y|Y|yes|YES) ;; *) die "aborted" ;; esac
+  fi
+  # shellcheck disable=SC2086
+  /usr/bin/rsync -a -i $delete_flag --exclude .git/ "${WORKSPACE_EXCLUDES[@]}" "$WS_COPY"/ "$WS_SRC"/
+  echo "vm-$n: pulled into $WS_SRC (review with git before committing)"
+  echo "vm-$n: commits made inside the slot: git fetch $WS_COPY <branch>"
+}
+
+cmd_log() {
+  local n="$1" follow="${2:-}"
+  local file; file="$(slotdir "$n")/console.log"
+  [[ -f "$file" ]] || die "no console log for vm-$n yet (created on next boot)"
+  if [[ "$follow" == "-f" || "$follow" == "--follow" ]]; then
+    exec tail -n 50 -f "$file"
+  fi
+  exec tail -n 200 "$file"
+}
+
+cmd_stop() {
+  local n="$1" force="${2:-}" host i
   running "$n" || { echo "vm-$n not running"; return 0; }
-  host=$(resolve_host "$n" || true)
-  [[ -n "${host:-}" ]] && \
-    ssh $(ssh_opts "$n") "$USER_NAME@$host" 'sudo poweroff' 2>/dev/null || true
-  sleep 2
-  tmux kill-session -t "$(session "$n")" 2>/dev/null || true
+  # A slot still syncing/building holds only the placeholder claim -- there
+  # is no VM to power off, so skip the graceful window.
+  case "$(get_phase "$n")" in
+    syncing|building) force="--force" ;;
+  esac
+  if [[ "$force" != "--force" ]]; then
+    if host=$(resolve_host "$n"); then
+      ssh_args "$n"
+      ssh "${SSH_ARGS[@]}" -o BatchMode=yes "$USER_NAME@$host" 'sudo poweroff' 2>/dev/null || true
+    fi
+    # Graceful window: vfkit exits on guest poweroff, which ends the session.
+    for (( i = 0; i < 30; i++ )); do
+      running "$n" || break
+      sleep 1
+    done
+  fi
+  if running "$n"; then
+    [[ "$force" == "--force" ]] || note "vm-$n: no clean poweroff, killing"
+    tmux kill-session -t "=$(session "$n")" 2>/dev/null || true
+  fi
+  rm -f "$(slotdir "$n")/phase" "$(slotdir "$n")/started-at"
   echo "vm-$n stopped"
 }
 
 cmd_reset() {  # wipe per-slot state: nix cache, /home, workspace + repo copies, firmware vars
-  local n="$1"
-  running "$n" && { echo "stop vm-$n first" >&2; exit 1; }
-  rm -rf "$(slotdir "$n")"/workspace "$(slotdir "$n")"/home-config
-  rm -f "$(slotdir "$n")"/{store-overlay.img,home.img,known_hosts} \
-        "$(slotdir "$n")"/efi-variable-store* 2>/dev/null || true
+  local n="$1" dir
+  running "$n" && die "stop vm-$n first"
+  dir=$(slotdir "$n")
+  rm -rf "${dir:?}/workspace" "${dir:?}/$REPO_MOUNT_NAME"
+  rm -f "$dir"/{store-overlay.img,home.img,known_hosts,phase,started-at,.hostkeys-persist,console.log,console.log.1} \
+        "$dir"/efi-variable-store* 2>/dev/null || true
   echo "vm-$n reset"
 }
 
+cmd_build() {
+  local n="${1:-1}"
+  require_tools nix
+  local dir; dir=$(slotdir "$n"); mkdir -p "$dir"
+  local target="vm-$n-$PROFILE"
+  note "vm-$n: building runner ($target; profile=$PROFILE) ..."
+  nix build "$FLAKE#$target" -o "$dir/runner"
+  echo "vm-$n runner built: $dir/runner"
+}
+
+fmt_age() {  # seconds -> "3h12m"
+  local s="$1"
+  if (( s >= 3600 )); then printf '%dh%02dm' "$((s / 3600))" "$((s % 3600 / 60))"
+  elif (( s >= 60 )); then printf '%dm' "$((s / 60))"
+  else printf '%ds' "$s"; fi
+}
+
 cmd_ls() {
-  local i
+  local i dir phase addr profile ws age started now
+  now=$(date +%s)
+  printf '%-6s %-9s %-7s %-16s %-8s %s\n' "SLOT" "STATE" "UP" "ADDRESS" "PROFILE" "WORKSPACE"
   for i in $(seq 1 "$SLOTS"); do
+    dir=$(slotdir "$i")
     if running "$i"; then
-      printf "vm-%s  running  %s\n" "$i" "$(cat "$(slotdir "$i")/workspace-path" 2>/dev/null)"
+      phase=$(get_phase "$i")
+      addr=$(lease_ip "$i"); addr="${addr:-vm-$i.local}"
+      profile=$(cat "$dir/profile" 2>/dev/null || echo "-")
+      ws=$(cat "$dir/workspace-path" 2>/dev/null || echo "-")
+      age="-"
+      if started=$(cat "$dir/started-at" 2>/dev/null) && [[ "$started" =~ ^[0-9]+$ ]]; then
+        age=$(fmt_age "$((now - started))")
+      fi
+      printf '%-6s %-9s %-7s %-16s %-8s %s\n' "vm-$i" "$phase" "$age" "$addr" "$profile" "$ws"
     else
-      printf "vm-%s  free\n" "$i"
+      printf '%-6s %-9s\n' "vm-$i" "free"
     fi
   done
 }
 
+# ---------------------------------------------------------------------------
+# doctor: validate the host setup before a 10-minute build fails on it.
+DOCTOR_FAILURES=0
+DOCTOR_WARNINGS=0
+d_ok()   { printf '  ok    %s\n' "$1"; }
+d_warn() { printf '  WARN  %s\n' "$1"; DOCTOR_WARNINGS=$((DOCTOR_WARNINGS + 1)); }
+d_fail() { printf '  FAIL  %s\n' "$1"; DOCTOR_FAILURES=$((DOCTOR_FAILURES + 1)); }
+
+cmd_doctor() {
+  echo "agentvm doctor"
+
+  echo "config:"
+  d_ok "$CONFIG parses and validates (user=$USER_NAME slots=$SLOTS subnets=192.168.$((SUBNET_BASE + 1))-$((SUBNET_BASE + SLOTS)).0/24)"
+  if [[ -d "$STATE" || ! -e "$STATE" ]]; then
+    if mkdir -p "$STATE" 2>/dev/null && [[ -w "$STATE" ]]; then
+      d_ok "state dir writable: $STATE"
+    else
+      d_fail "state dir not writable: $STATE"
+    fi
+  else
+    d_fail "state dir is not a directory: $STATE"
+  fi
+
+  echo "tools:"
+  local t
+  for t in jq tmux rsync ssh nix uuidgen; do
+    if command -v "$t" >/dev/null 2>&1; then d_ok "$t"; else d_fail "$t not on PATH"; fi
+  done
+
+  echo "identity:"
+  local host_uid cfg_uid
+  host_uid=$(id -u)
+  cfg_uid=$(jq -er .uid "$CONFIG")
+  if [[ "$host_uid" == "$cfg_uid" ]]; then
+    d_ok "uid matches config ($cfg_uid)"
+  else
+    d_fail "config uid is $cfg_uid but you are $host_uid -- virtiofs ownership will be wrong"
+  fi
+  if [[ "$(whoami)" == "$USER_NAME" ]]; then
+    d_ok "user matches config ($USER_NAME)"
+  else
+    d_warn "config user is $USER_NAME but you are $(whoami)"
+  fi
+
+  echo "profile:"
+  if [[ -f "$REPO_DIR/profiles/$PROFILE/home.nix" ]]; then
+    d_ok "active profile '$PROFILE' has profiles/$PROFILE/home.nix"
+  else
+    d_fail "active profile '$PROFILE' has no profiles/$PROFILE/home.nix -- the vm-N-$PROFILE flake output won't exist"
+  fi
+
+  echo "virtualization:"
+  if [[ -x "$VFKIT_PATH" ]]; then
+    d_ok "vfkit: $VFKIT_PATH"
+  else
+    d_fail "vfkit not found at $VFKIT_PATH (brew install vfkit, or set vfkitPath in config.json)"
+  fi
+  if find_vmnet_run; then
+    d_ok "vmnet-run: $VMNET_RUN${VMNET_SUDO:+ (via sudo)}"
+  else
+    d_fail "vmnet-helper not found (brew tap nirs/vmnet-helper && brew install vmnet-helper)"
+  fi
+
+  echo "ssh:"
+  if [[ -s "$AGENTVM_DIR/authorized_keys" ]]; then
+    d_ok "authorized_keys present"
+  else
+    local pub found=0
+    for pub in "$HOME/.ssh/id_ed25519.pub" "$HOME/.ssh/id_ecdsa.pub" "$HOME/.ssh/id_rsa.pub"; do
+      [[ -s "$pub" ]] && { found=1; break; }
+    done
+    if [[ "$found" == 1 ]]; then
+      d_warn "authorized_keys missing; will be initialized from $pub on first start"
+    else
+      d_fail "no authorized_keys and no ~/.ssh/id_*.pub to initialize it from"
+    fi
+  fi
+  [[ "$FORWARD_SSH_AGENT" == "true" ]] && d_warn "forwardSshAgent=true: guests can use your ssh-agent while a session is attached"
+  [[ "$FORWARD_GH_TOKEN" == "true" ]] && d_warn "forwardGhToken=true: guests receive your gh token"
+
+  echo "builder:"
+  if ssh -o BatchMode=yes -o ConnectTimeout=5 linux-builder true 2>/dev/null; then
+    d_ok "linux-builder reachable over ssh"
+  else
+    d_warn "linux-builder not reachable (aarch64-linux builds will fail unless another builder is configured)"
+  fi
+
+  echo "network:"
+  local i subnet
+  for i in $(seq 1 "$SLOTS"); do
+    subnet="192.168.$((SUBNET_BASE + i))"
+    if ! running "$i" && netstat -rn -f inet 2>/dev/null | grep -Eq "^${subnet}[./]"; then
+      d_warn "slot $i's subnet $subnet.0/24 already has a route (another VM product? adjust subnetBase)"
+    fi
+  done
+  d_ok "slot subnets checked for collisions"
+
+  if [[ -n "$DOCKER_MIRROR_PORT" || -n "$DOCKER_PUSH_PORT" ]]; then
+    echo "docker registries (best-effort caches):"
+    local port
+    for port in $DOCKER_MIRROR_PORT $DOCKER_PUSH_PORT; do
+      if curl -fsS -m 2 "http://localhost:$port/v2/" >/dev/null 2>&1; then
+        d_ok "registry on :$port responding"
+      else
+        d_warn "no registry on :$port (guests fall back to upstream pulls)"
+      fi
+    done
+  fi
+
+  echo
+  if (( DOCTOR_FAILURES > 0 )); then
+    echo "$DOCTOR_FAILURES failure(s), $DOCTOR_WARNINGS warning(s)"
+    exit 1
+  fi
+  echo "healthy ($DOCTOR_WARNINGS warning(s))"
+}
+
+# ---------------------------------------------------------------------------
+# Dispatch.
+all_slots() { seq 1 "$SLOTS"; }
+
 case "${1:-}" in
-  start)  cmd_start ;;
-  ssh)    cmd_ssh "${2:?slot}" ;;
-  attach) exec tmux attach -t "$(session "${2:?slot}")" ;;  # serial console
-  stop)   if [[ -z "${2:-}" ]]; then
-            echo "usage: agentvm stop N|all" >&2; exit 1
-          elif [[ "${2:-}" == "all" ]]; then
-            for i in $(seq 1 "$SLOTS"); do cmd_stop "$i"; done
-          else cmd_stop "$2"; fi ;;
-  reset)  cmd_reset "${2:?slot}" ;;
-  help|--help|-h) cmd_help ;;
-  ls|"")  cmd_ls ;;
-  *) cmd_help >&2; exit 1 ;;
+  start)
+    shift
+    cmd_start "$@"
+    ;;
+  ssh)
+    check_slot "${2:-}"
+    cmd_ssh "$2"
+    ;;
+  exec)
+    check_slot "${2:-}"
+    n="$2"; shift 2
+    cmd_exec "$n" "$@"
+    ;;
+  diff)
+    check_slot "${2:-}"
+    cmd_diff "$2"
+    ;;
+  pull)
+    check_slot "${2:-}"
+    n="$2"; shift 2
+    cmd_pull "$n" "$@"
+    ;;
+  ip)
+    check_slot "${2:-}"
+    cmd_ip "$2"
+    ;;
+  attach)
+    check_slot "${2:-}"
+    running "$2" || die "vm-$2 is not running, so there is no console (agentvm ls)"
+    exec tmux attach -t "=$(session "$2")"  # serial console; detach with C-b d
+    ;;
+  log|logs)
+    check_slot "${2:-}"
+    cmd_log "$2" "${3:-}"
+    ;;
+  stop)
+    if [[ -z "${2:-}" ]]; then
+      die "usage: agentvm stop N|all [--force]"
+    elif [[ "$2" == "all" ]]; then
+      # Parallel: a graceful stop waits up to 30s per slot, so serial stops
+      # of a full pool would take minutes.
+      pids=()
+      for i in $(all_slots); do
+        cmd_stop "$i" "${3:-}" &
+        pids+=($!)
+      done
+      for p in "${pids[@]}"; do wait "$p" || true; done
+    else
+      check_slot "$2"
+      cmd_stop "$2" "${3:-}"
+    fi
+    ;;
+  reset)
+    if [[ "${2:-}" == "all" ]]; then
+      for i in $(all_slots); do cmd_reset "$i"; done
+    else
+      check_slot "${2:-}"
+      cmd_reset "$2"
+    fi
+    ;;
+  build)
+    if [[ "${2:-}" == "all" ]]; then
+      for i in $(all_slots); do cmd_build "$i"; done
+    else
+      [[ -z "${2:-}" ]] || check_slot "$2"
+      cmd_build "${2:-1}"
+    fi
+    ;;
+  doctor) cmd_doctor ;;
+  ls|status|"") cmd_ls ;;
+  *)
+    cmd_help >&2
+    exit 1
+    ;;
 esac
