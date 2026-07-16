@@ -57,7 +57,9 @@
   }:
   let
     # Ephemeral agent-sandbox microVMs; guests clone a host home profile.
-    agentvms = import ./agentvms/pool.nix {
+    # ./agentvms/default.nix is the personal instantiation (config.json +
+    # profiles/); the generic core is exported below for reuse.
+    agentvms = import ./agentvms {
       inherit nixpkgs home-manager microvm;
     };
   in {
@@ -67,6 +69,25 @@
 
     # `agentvm` builds these runner scripts: nix build .#vm-N
     packages.aarch64-darwin = agentvms.packages;
+
+    # Reusable core of the agentvm tool, independent of this repo's
+    # profiles and config.json (see agentvms/README.md "Reusing this").
+    nixosModules.agentvm = ./agentvms/modules/agent-vm.nix;
+    lib.mkAgentVmPool = import ./agentvms/pool.nix;
+
+    checks.aarch64-darwin =
+      let
+        pkgs = nixpkgs.legacyPackages.aarch64-darwin;
+      in
+      {
+        # Lint the CLI on `nix flake check` (which also evaluates every
+        # vm-N[-profile] nixosConfiguration, exercising the module asserts).
+        agentvm-cli = pkgs.runCommand "agentvm-shellcheck"
+          { nativeBuildInputs = [ pkgs.shellcheck ]; } ''
+          shellcheck ${./agentvms/bin/agentvm}
+          touch $out
+        '';
+      };
 
     darwinConfigurations =
       let

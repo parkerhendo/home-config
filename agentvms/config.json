@@ -9,5 +9,11 @@
   "stateDir": ".local/state/agentvms",
   "subnetBase": 64,
   "macPrefix": "02:76:6d:00:00:0",
-  "defaultProfile": "zephyr"
+  "defaultProfile": "zephyr",
+  "vfkitPath": "/opt/homebrew/bin/vfkit",
+  "repoMountName": "home-config",
+  "forwardSshAgent": true,
+  "forwardGhToken": true,
+  "dockerMirrorPort": 5000,
+  "dockerPushPort": 5001
 }

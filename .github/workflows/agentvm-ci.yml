@@ -1,0 +1,48 @@
+name: agentvm
+
+on:
+  push:
+    paths:
+      - "agentvms/**"
+      - ".github/workflows/agentvm-ci.yml"
+  pull_request:
+    paths:
+      - "agentvms/**"
+      - ".github/workflows/agentvm-ci.yml"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: bash syntax
+        run: bash -n agentvms/bin/agentvm
+
+      - name: shellcheck
+        run: shellcheck agentvms/bin/agentvm
+
+      # Same required-key/type rules the CLI and pool.nix enforce, so a bad
+      # config fails here before it fails on someone's machine.
+      - name: validate config schema
+        run: |
+          check() {
+            jq -e '
+              def req($k; $t): (has($k) and (.[$k] | type == $t));
+              req("user"; "string") and
+              req("uid"; "number") and
+              req("slots"; "number") and
+              req("vcpu"; "number") and
+              req("mem"; "number") and
+              req("storeOverlaySizeMB"; "number") and
+              req("homeSizeMB"; "number") and
+              req("stateDir"; "string") and
+              req("subnetBase"; "number") and
+              req("macPrefix"; "string") and
+              req("defaultProfile"; "string") and
+              (.slots >= 1 and .slots <= 9) and
+              (.subnetBase >= 1 and .subnetBase + .slots <= 254)
+            ' "$1" > /dev/null || { echo "$1 failed schema validation"; exit 1; }
+          }
+          check agentvms/config.json
+          check agentvms/config.example.json
