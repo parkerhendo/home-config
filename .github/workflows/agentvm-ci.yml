@@ -22,8 +22,9 @@ jobs:
       - name: shellcheck
         run: shellcheck agentvms/bin/agentvm
 
-      # Same required-key/type rules the CLI and pool.nix enforce, so a bad
-      # config fails here before it fails on someone's machine.
+      # Mirrors the CLI's config preflight (required keys, types, ranges,
+      # macPrefix shape) so a bad config fails here before it fails on
+      # someone's machine.
       - name: validate config schema
         run: |
           check() {
@@ -41,7 +42,10 @@ jobs:
               req("macPrefix"; "string") and
               req("defaultProfile"; "string") and
               (.slots >= 1 and .slots <= 9) and
-              (.subnetBase >= 1 and .subnetBase + .slots <= 254)
+              (.subnetBase >= 1 and .subnetBase + .slots <= 254) and
+              (.mem >= 1024) and
+              (.storeOverlaySizeMB >= 1024) and
+              (.macPrefix | test("^([0-9a-f]{2}:){5}0$"))
             ' "$1" > /dev/null || { echo "$1 failed schema validation"; exit 1; }
           }
           check agentvms/config.json

@@ -76,6 +76,7 @@ cd ~/code/some-project
 agentvm start                # copy $PWD into a free slot, boot, ssh in
 agentvm start 3 --detach     # boot a specific slot without attaching (scripting)
 agentvm start --profile work # override the auto-detected guest home profile
+agentvm start --no-build     # reuse the slot's existing runner (fast restart)
 agentvm ls                   # slot status: state, uptime, address, profile, workspace
 agentvm ssh 2                # reattach a shell
 agentvm exec 2 -- make test  # one-off command in /workspace, exit code passes through
@@ -114,7 +115,7 @@ validated by the CLI at startup, by `pool.nix` at eval time, and by CI:
 | `vcpu`, `mem` | per-guest CPU count and memory (MB, min 1024) |
 | `storeOverlaySizeMB` | writable /nix/store overlay image per slot (min 1024) |
 | `homeSizeMB` | persistent /home image per slot |
-| `stateDir` | per-slot state: relative to `$HOME`, or an absolute path |
+| `stateDir` | per-slot state: relative to the configured user's home (`/Users/<user>`), or an absolute path |
 | `subnetBase` | slot N lives on `192.168.(subnetBase+N).0/24` |
 | `macPrefix` | first 5.5 octets of guest MACs (locally administered) |
 | `defaultProfile` | guest home profile when auto-detection finds nothing |
@@ -131,8 +132,11 @@ checkout. Three ways to extract the results:
 
 1. `agentvm diff N` then `agentvm pull N` — file-level sync back to the
    host checkout (deletions only with `--delete`; dependency dirs like
-   `node_modules` are excluded both ways, and `.git/` never syncs back —
-   guest-written hooks/config must not execute on the host).
+   `node_modules` are excluded both ways, and `.git/` — any case variant —
+   never syncs back: guest-written hooks/config must not execute on the
+   host). Pulled files are still guest-controlled content: review before
+   running them, especially if your repo points `core.hooksPath` at a
+   tracked directory.
 2. Git-level, including commits made inside the slot:
    `git fetch ~/.local/state/agentvms/vm-N/workspace <branch>` — git
    transfers objects only, so this is the safe way to take guest commits.
@@ -239,9 +243,12 @@ What the design gives you:
   vmnet gateway, e.g. the docker registries) and anything the host routes.
   Treat host-bound services as guest-reachable.
 - **Connection integrity**: the CLI only connects to addresses inside the
-  slot's own subnet, validated against the DHCP lease file — a LAN device
-  advertising `vm-N.local` over mDNS cannot receive your session (or your
-  forwarded credentials). Guest SSH host keys persist per slot, so a
+  slot's own subnet (DHCP lease first, subnet-validated mDNS as fallback),
+  and only while the slot's vmnet route exists — in-subnet traffic then
+  cannot leave the vmnet interface, so a LAN device advertising
+  `vm-N.local` cannot receive your session or forwarded credentials.
+  `ForwardAgent=no` is passed explicitly when forwarding is off, overriding
+  any `Host *` ssh config. Guest SSH host keys persist per slot, so a
   changed identity is an error, not a silent re-trust.
 - **Credentials**: `forwardSshAgent` and `forwardGhToken` are explicit
   opt-ins in `config.json`. While a session is attached, guest code can use
@@ -323,5 +330,6 @@ lines).
 - Linux builder SSH and `ssh-ng://linux-builder` builds.
 - `nix build <repo>#vm-1` from macOS into an aarch64-linux VM runner.
 - `vmnet-run` fd 4 handoff to vfkit.
-- mDNS SSH to `vm-1.local` / `vm-2.local`.
+- mDNS resolution of `vm-1.local` / `vm-2.local` (the CLI now connects by
+  in-subnet IP; the mDNS names remain for browser use).
 - Parallel slots on distinct subnets serving the same port (`:3000`).
