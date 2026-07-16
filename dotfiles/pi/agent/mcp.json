@@ -1,5 +1,9 @@
 {
   "mcpServers": {
+    "notion": {
+      "url": "https://mcp.notion.com/mcp",
+      "directTools": true
+    },
     "sentry": {
       "command": "npx",
       "args": [
