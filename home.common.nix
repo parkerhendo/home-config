@@ -116,14 +116,10 @@
     nix-direnv.enable = true;
   };
 
-  # Pi coding agent (mkOutOfStoreSymlink for editable files). `agentvm` is
-  # exposed via `home.sessionPath` below rather than a symlink.
+  # Editable-file symlinks (mkOutOfStoreSymlink). `agentvm` is exposed via
+  # `home.sessionPath` below rather than a symlink.
+  home.file.".zsh".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/zsh";
   home.file.".pi/agent".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/pi/agent";
-
-  # Shell profile shared by all profiles.
-  home.file.".zprofile".source = ./dotfiles/zprofile;
-  home.file.".zsh".source = ./dotfiles/zsh;
-  home.file.".zshrc".source = ./dotfiles/zshrc;
 
   xdg.enable = true;
   xdg.configFile."lumen".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/lumen";
