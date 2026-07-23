@@ -27,6 +27,10 @@ reload_config = "prefix+r"
 # Ctrl+hjkl instead, which herdr doesn't expose as a bindable action).
 resize_mode = "prefix+shift+r"
 
+# Use Vim keys to move through the workspace list opened by prefix+w.
+navigate_workspace_down = "j"
+navigate_workspace_up = "k"
+
 # Repurpose prefix+shift+n/p (default: new_workspace / rename_pane) for
 # workspace switching, which is unbound by default.
 next_workspace = "prefix+shift+n"

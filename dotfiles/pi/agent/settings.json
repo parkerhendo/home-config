@@ -4,7 +4,7 @@
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-5.5",
   "hideThinkingBlock": false,
-  "defaultThinkingLevel": "medium",
+  "defaultThinkingLevel": "high",
   "packages": [
     "https://github.com/davebcn87/pi-autoresearch",
     "npm:pi-mcp-adapter",
