@@ -1,4 +1,37 @@
 {
+  "editorMode": "vim",
+  "effortLevel": "xhigh",
+  "enabledPlugins": {
+    "code-review@claude-plugins-official": true,
+    "code-simplifier@claude-plugins-official": true,
+    "compound-engineering@every-marketplace": true,
+    "explanatory-output-style@claude-plugins-official": true,
+    "feature-dev@claude-plugins-official": true,
+    "frontend-design@claude-plugins-official": true,
+    "learning-output-style@claude-plugins-official": true,
+    "lua-lsp@claude-plugins-official": true,
+    "playwright@claude-plugins-official": true,
+    "pr-review-toolkit@claude-plugins-official": true,
+    "ralph-wiggum@claude-plugins-official": true,
+    "rust-analyzer-lsp@claude-plugins-official": true,
+    "slack@claude-plugins-official": true,
+    "typescript-lsp@claude-plugins-official": true
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "bash '/Users/parker/.claude/hooks/herdr-agent-state.sh' session",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      }
+    ]
+  },
+  "model": "opus[1m]",
   "permissions": {
     "allow": [
       "Bash(*)",
@@ -8,34 +41,15 @@
       "Glob",
       "Grep"
     ],
+    "defaultMode": "auto",
     "deny": [
       "Bash(git push *), Bash(git commit *)"
-    ],
-    "defaultMode": "auto"
+    ]
   },
-  "model": "opus[1m]",
-  "statusLine": {
-    "type": "command",
-    "command": "bash ~/.claude/statusline-command.sh"
-  },
-  "enabledPlugins": {
-    "typescript-lsp@claude-plugins-official": true,
-    "rust-analyzer-lsp@claude-plugins-official": true,
-    "lua-lsp@claude-plugins-official": true,
-    "pr-review-toolkit@claude-plugins-official": true,
-    "code-review@claude-plugins-official": true,
-    "explanatory-output-style@claude-plugins-official": true,
-    "learning-output-style@claude-plugins-official": true,
-    "frontend-design@claude-plugins-official": true,
-    "ralph-wiggum@claude-plugins-official": true,
-    "playwright@claude-plugins-official": true,
-    "feature-dev@claude-plugins-official": true,
-    "code-simplifier@claude-plugins-official": true,
-    "compound-engineering@every-marketplace": true,
-    "slack@claude-plugins-official": true
-  },
-  "effortLevel": "xhigh",
+  "skipAutoPermissionPrompt": true,
   "skipDangerousModePermissionPrompt": true,
-  "editorMode": "vim",
-  "skipAutoPermissionPrompt": true
+  "statusLine": {
+    "command": "bash ~/.claude/statusline-command.sh",
+    "type": "command"
+  }
 }

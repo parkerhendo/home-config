@@ -95,5 +95,7 @@
     "aerospace".source =
       config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/aerospace";
     ".prompts".source = ../../prompts;
+    "herdr/config.toml".source =
+      config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/herdr/config.toml";
   };
 }
