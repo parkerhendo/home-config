@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review as"
+  short_description: "Review a change as yourself or any teammate"
+  default_prompt: "Use $review-as to learn my review style and show what I would flag in this change."

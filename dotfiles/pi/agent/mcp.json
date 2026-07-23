@@ -25,7 +25,8 @@
     "braintrust": {
       "url": "https://api.braintrust.dev/mcp",
       "auth": "bearer",
-      "bearerTokenEnv": "BRAINTRUST_API_KEY"
+      "bearerTokenEnv": "BRAINTRUST_API_KEY",
+      "directTools": true
     },
     "datadog": {
       "url": "https://mcp.us5.datadoghq.com/api/unstable/mcp-server/mcp",

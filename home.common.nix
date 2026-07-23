@@ -21,6 +21,7 @@
     opencode
     claude-code
     gemini-cli
+    herdr
     pi-coding-agent
 
     # Shell and terminal utilities
