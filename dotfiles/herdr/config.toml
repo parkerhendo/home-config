@@ -3,6 +3,11 @@ onboarding = false
 name = "gruvbox"
 auto_switch = false
 
+[theme.custom]
+# Gruvbox's default surface_dim matches the panel background, which hides
+# separators such as the sidebar/main divider.
+surface_dim = "#3c3836"
+
 [keys]
 # Match tmux prefix (see dotfiles/tmux.conf)
 prefix = "ctrl+a"
@@ -87,10 +92,6 @@ show_agent_labels_on_pane_borders = false
 
 [ui.toast.herdr]
 position = "top-right"
-
-[ui.toast.clipboard]
-enabled = true
-position = "bottom-center"
 
 [ui.sound]
 # Keep sound notifications disabled.
