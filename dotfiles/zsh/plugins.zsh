@@ -54,16 +54,15 @@ load_gitstatus() {
 # Load essential plugins immediately
 load_atuin # atuin for better history search
 load_z # I often want to jump somewhere immediately when opening a shell
+load_gitstatus # prompt should show git branch as soon as the shell starts
 
 # Load other plugins with or without defer
 if [ "$ZSH_DEFER_AVAILABLE" = "true" ]; then
   # Use zsh-defer for better startup performance
   zsh-defer -t 0.5 load_autopair
   zsh-defer -t 0.5 load_syntax_highlight
-  zsh-defer -t 1.0 load_gitstatus
 else
   # Load immediately if zsh-defer is not available
   load_autopair
   load_syntax_highlight
-  load_gitstatus
 fi
