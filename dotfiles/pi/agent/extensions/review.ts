@@ -76,9 +76,9 @@ let pendingModelRestore:
 const REVIEW_STATE_TYPE = "review-session";
 const REVIEW_ANCHOR_TYPE = "review-anchor";
 const REVIEW_SETTINGS_TYPE = "review-settings";
-const REVIEW_MODEL_PROVIDER = "openai";
-const REVIEW_MODEL_ID = "gpt-5.5";
-const REVIEW_THINKING_LEVEL: ThinkingLevel = "xhigh";
+const REVIEW_MODEL_PROVIDER = "openai-codex";
+const REVIEW_MODEL_ID = "gpt-5.6-sol";
+const REVIEW_THINKING_LEVEL: ThinkingLevel = "medium";
 const REVIEW_LOOP_MAX_ITERATIONS = 10;
 const REVIEW_LOOP_START_TIMEOUT_MS = 15000;
 const REVIEW_LOOP_START_POLL_MS = 50;
@@ -2024,7 +2024,7 @@ export default function reviewExtension(pi: ExtensionAPI) {
       "info",
     );
 
-    // Switch to the configured review model with xhigh thinking effort for reviews.
+    // Switch to the configured review model and thinking effort for reviews.
     pendingModelRestore = {
       model: ctx.model,
       thinkingLevel: pi.getThinkingLevel(),

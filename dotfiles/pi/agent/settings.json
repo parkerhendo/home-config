@@ -1,10 +1,11 @@
 {
   "theme": "gruvbox-dark",
+  "externalEditor": "nvim",
   "lastChangelogVersion": "0.80.10",
   "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.5",
+  "defaultModel": "gpt-5.6-sol",
   "hideThinkingBlock": false,
-  "defaultThinkingLevel": "high",
+  "defaultThinkingLevel": "medium",
   "packages": [
     "https://github.com/davebcn87/pi-autoresearch",
     "npm:pi-mcp-adapter",

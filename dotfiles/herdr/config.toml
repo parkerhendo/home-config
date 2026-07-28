@@ -40,6 +40,7 @@ navigate_workspace_up = "k"
 # workspace switching, which is unbound by default.
 next_workspace = "prefix+shift+n"
 previous_workspace = "prefix+shift+p"
+switch_workspace = "prefix+shift+1..9"
 new_workspace = ""
 rename_pane = ""
 
