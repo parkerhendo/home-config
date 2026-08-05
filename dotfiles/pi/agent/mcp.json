@@ -2,7 +2,7 @@
   "mcpServers": {
     "notion": {
       "url": "https://mcp.notion.com/mcp",
-      "directTools": true
+      "directTools": false
     },
     "sentry": {
       "command": "npx",
@@ -11,7 +11,7 @@
         "mcp-remote@latest",
         "https://mcp.sentry.dev/mcp"
       ],
-      "directTools": true
+      "directTools": false
     },
     "vercel": {
       "command": "npx",
@@ -20,17 +20,17 @@
         "mcp-remote",
         "https://mcp.vercel.com"
       ],
-      "directTools": true
+      "directTools": false
     },
     "braintrust": {
       "url": "https://api.braintrust.dev/mcp",
       "auth": "bearer",
       "bearerTokenEnv": "BRAINTRUST_API_KEY",
-      "directTools": true
+      "directTools": false
     },
     "datadog": {
       "url": "https://mcp.us5.datadoghq.com/api/unstable/mcp-server/mcp",
-      "directTools": true
+      "directTools": false
     }
   }
 }
