@@ -78,7 +78,7 @@ const REVIEW_ANCHOR_TYPE = "review-anchor";
 const REVIEW_SETTINGS_TYPE = "review-settings";
 const REVIEW_MODEL_PROVIDER = "openai-codex";
 const REVIEW_MODEL_ID = "gpt-5.6-sol";
-const REVIEW_THINKING_LEVEL: ThinkingLevel = "medium";
+const REVIEW_THINKING_LEVEL: ThinkingLevel = "xhigh";
 const REVIEW_LOOP_MAX_ITERATIONS = 10;
 const REVIEW_LOOP_START_TIMEOUT_MS = 15000;
 const REVIEW_LOOP_START_POLL_MS = 50;
@@ -518,6 +518,14 @@ Flag issues that:
 9. Be particularly careful with untrusted user input and follow the specific guidelines to review.
 10. Treat silent local error recovery (especially parsing/IO/network fallbacks) as high-signal review candidates unless there is explicit boundary-level justification.
 
+## Evidence and production applicability
+
+1. Before flagging an issue, verify that the affected scenario is supported and reachable in the environment whose impact is being claimed. Test-only, development-only, unsupported, or hypothetical configurations do not establish a production defect.
+2. Every finding must be backed by a traced code path, an existing contract/test, or a concrete reproduction using a supported configuration for the claimed environment. A plausible inference from names, types, or data shape is not enough.
+3. Trace relevant values through their producers and consumers, and inspect feature flags, deployment boundaries, defaults, and configuration constraints before claiming impact.
+4. For [P0] and [P1] findings, name the concrete supported production scenario and resulting failure. If production applicability or impact cannot be established, downgrade or omit the finding.
+5. Do not claim a reproduction unless its prerequisites and steps are verified. If a finding cannot be reproduced or substantiated when challenged, withdraw it immediately rather than sending the user through exploratory debugging.
+
 ## Untrusted User Input
 
 1. Be careful with open redirects, they must always be checked to only go to trusted domains (?next_page=...)
@@ -608,7 +616,9 @@ Follow this output contract even when the selected review instructions add stric
 1. Tag each finding title with [P0], [P1], [P2], or [P3]: P0 blocks release/operations, P1 is urgent, P2 is normal, P3 is low.
 2. Findings must reference locations that overlap with the actual diff when reviewing a diff.
 3. Provide an overall verdict: "correct" (no blocking issues) or "needs attention" (has blocking issues).
-4. End with this exact section:
+4. Only flag scenarios verified as supported and reachable in the environment whose impact is claimed. Back every finding with a traced code path, an existing contract/test, or a concrete reproduction valid for that environment; never infer impact from names, types, or hypothetical configurations alone. A [P0] or [P1] must name the concrete supported production scenario and failure.
+5. Do not claim a reproduction unless its prerequisites and steps are verified. If a finding cannot be reproduced or substantiated when challenged, withdraw it immediately rather than sending the user through exploratory debugging.
+6. End with this exact section:
 
 ## Human Reviewer Callouts (Non-Blocking)
 

@@ -20,6 +20,7 @@
     amp-cli
     opencode
     claude-code
+    cursor-cli
     gemini-cli
     herdr
     pi-coding-agent
