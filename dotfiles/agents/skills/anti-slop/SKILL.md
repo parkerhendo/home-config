@@ -9,7 +9,7 @@ disable-model-invocation: true
 From the current repository, run:
 
 ```bash
-node "$HOME/.pi/agent/skills/install-anti-slop/scripts/audit.mjs"
+node "$HOME/.agents/skills/install-anti-slop/scripts/audit.mjs"
 ```
 
 If the user supplied paths, append those paths. If they requested current Oxlint packages, append `--refresh`.

@@ -13,8 +13,8 @@ Sync our copies of [mattpocock/skills](https://github.com/mattpocock/skills) aga
 Run the sync analysis script, then follow its output. Use absolute paths from this skill directory so `$0`/current-directory confusion does not matter:
 
 ```bash
-SKILL_ROOT="$HOME/.pi/agent/skills/sync-pocock-skills"
-bash "$SKILL_ROOT/scripts/sync.sh" "$HOME/.pi/agent/skills" "$SKILL_ROOT/patches" --keep-upstream
+SKILL_ROOT="$HOME/.agents/skills/sync-pocock-skills"
+bash "$SKILL_ROOT/scripts/sync.sh" "$HOME/.agents/skills" "$SKILL_ROOT/patches" --keep-upstream
 ```
 
 ## Workflow
@@ -24,8 +24,8 @@ bash "$SKILL_ROOT/scripts/sync.sh" "$HOME/.pi/agent/skills" "$SKILL_ROOT/patches
 Run `scripts/sync.sh` with args `<skills_dir>` `<patches_dir>`, usually with `--keep-upstream` so the printed upstream clone remains available for inspection:
 
 ```bash
-SKILL_ROOT="$HOME/.pi/agent/skills/sync-pocock-skills"
-bash "$SKILL_ROOT/scripts/sync.sh" "$HOME/.pi/agent/skills" "$SKILL_ROOT/patches" --keep-upstream
+SKILL_ROOT="$HOME/.agents/skills/sync-pocock-skills"
+bash "$SKILL_ROOT/scripts/sync.sh" "$HOME/.agents/skills" "$SKILL_ROOT/patches" --keep-upstream
 ```
 
 Options:
@@ -74,12 +74,12 @@ For each `CHANGED:` entry:
 Apply with:
 
 ```bash
-SKILL_ROOT="$HOME/.pi/agent/skills/sync-pocock-skills"
+SKILL_ROOT="$HOME/.agents/skills/sync-pocock-skills"
 upstream_root="<UPSTREAM_DIR from sync output>"
 skill="<skill_name>"
 upstream_skill_dir=$(find "$upstream_root" -mindepth 2 -maxdepth 2 -type d -name "$skill" -print -quit)
 [[ -n "$upstream_skill_dir" ]] || { echo "missing upstream skill dir for $skill"; exit 1; }
-bash "$SKILL_ROOT/scripts/apply-upstream.sh" "$skill" "$upstream_skill_dir" "$HOME/.pi/agent/skills" "$SKILL_ROOT/patches"
+bash "$SKILL_ROOT/scripts/apply-upstream.sh" "$skill" "$upstream_skill_dir" "$HOME/.agents/skills" "$SKILL_ROOT/patches"
 ```
 
 After each apply, inspect the actual working-tree diff for that skill before summarising. Local overrides can add frontmatter, but any existing local frontmatter that is not configured in `patches/local-overrides.json` may be removed when upstream is copied. Call out metadata-only changes explicitly, and if a removed frontmatter field should be preserved, add it to `local-overrides.json` rather than relying on manual edits.

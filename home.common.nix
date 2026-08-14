@@ -117,6 +117,10 @@
   # Pi coding agent (mkOutOfStoreSymlink for editable files)
   home.file.".zsh".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/zsh";
   home.file.".pi/agent".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/pi/agent";
+  home.file.".agents" = {
+    source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/agents";
+    force = true;
+  };
   home.file.".plannotator/config.json".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/plannotator/config.json";
 
   xdg.enable = true;
