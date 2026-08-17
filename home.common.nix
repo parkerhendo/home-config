@@ -1,4 +1,16 @@
-{ pkgs, config, lib, ... }:
+{
+  pkgs,
+  config,
+  lib,
+  ...
+}:
+let
+  # Keep Herdr callbacks on the immutable binary that owns the running server.
+  herdrWithStableBinPath = pkgs.writeShellScriptBin "herdr" ''
+    export HERDR_BIN_PATH=${pkgs.herdr}/bin/herdr
+    exec "$HERDR_BIN_PATH" "$@"
+  '';
+in
 {
 
   home.stateVersion = "24.11";
@@ -22,7 +34,7 @@
     claude-code
     cursor-cli
     gemini-cli
-    herdr
+    herdrWithStableBinPath
     pi-coding-agent
 
     # Shell and terminal utilities

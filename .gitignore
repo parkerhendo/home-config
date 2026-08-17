@@ -50,9 +50,8 @@ dotfiles/pi/agent/mcp-npx-cache.json
 dotfiles/pi/agent/mcp-auth.json
 dotfiles/pi/agent/trust.json
 
-# pi extensions node_modules
-dotfiles/pi/agent/node_modules/
-dotfiles/pi/agent/extensions/**/node_modules/
+# Node.js dependencies
+node_modules/
 
 # pi generated/shared skills
 dotfiles/pi/agent/skills/braintrust-*/
