@@ -1,0 +1,281 @@
+#!/usr/bin/env bash
+# header-topic — deterministic topic + briefing lifecycle for the Header skill.
+#
+# The prose decides WHAT (topic name + goal from the detected stack, which recs to
+# surface — judgment). This bin owns the deterministic API dance — POST/GET, parse
+# the (nested) response, read/write repo state — so it isn't re-derived from prose
+# + JSON each run. One tested place for every endpoint + response shape.
+#
+# Motivating bug: responses NEST id fields (`{ "topic": { "id" }, "latest_briefing":
+# { "id" }, "first_briefing_id" }`), so a hand-written grep binds the wrong id.
+#
+# Usage:
+#   header-topic create --name N --goal D [--source-group ID]... [--no-bind]
+#       Create a topic (default source group if none), bind topic.id to this repo
+#       (skip: --no-bind), print TOPIC_ID / GOAL_ID / BRIEFING_ID.
+#   header-topic latest [--topic ID] [--public]
+#       Resolve a topic's latest briefing (bound REPO_TOPIC by default). Prints
+#       TOPIC_ID / TOPIC_NAME / GOAL_ID / BRIEFING_ID / GENERATED_AT and FRESH
+#       new|current|none — the session-start freshness check (compares GENERATED_AT
+#       to `header-repo seen`). `--public` uses the no-auth public endpoint.
+#   header-topic get <briefing_id>
+#       Print a briefing's full markdown (authenticated; Accept: text/markdown).
+#   header-topic generate <goal_id> [--max-entries N] [--max-age-days N]
+#       Trigger a fresh briefing for a goal. Prints BRIEFING_ID / ETA_SECONDS.
+#   header-topic status <briefing_id>
+#       Print one word: IN_PROGRESS | COMPLETED | FAILED | HTTP-<code>.
+#   header-topic await <briefing_id> [--interval SEC] [--timeout SEC]
+#       Block-poll a briefing to completion (default: every 10 min, up to 50 min).
+#       Meant to run detached (Claude Code: run_in_background) so the deferred-briefing
+#       pass actually happens. Exit: 0 COMPLETED · 5 FAILED · 6 timed out · 2 no key.
+#   header-topic add-source <url> [--group ID]
+#       Preview → create → add a source to a group (bound topic's first group if
+#       --group omitted). Prints SOURCE_ID / GROUP_ID / TYPE / NAME.
+#   header-topic dashboard [--since ISO8601]
+#       Per custom topic, print: TOPIC <topic_id> <next_action>.
+#
+# Exit (create/generate/add-source): 0 ok · 2 no key · 3 tier-gate (prints
+# ERROR_CODE, from a flat or `detail`-wrapped envelope) · 4 not-found · 1 other.
+#
+# Env: HEADER_HOME, HEADER_API_BASE (default https://joinheader.com), HEADER_API_KEY,
+#   HEADER_DEFAULT_SOURCE_GROUP, and *_STUB / *_STUB_CODE files for hermetic tests:
+#   HEADER_TOPIC_STUB (create), HEADER_TOPIC_STATUS_STUB (status),
+#   HEADER_TOPIC_GET_STUB (latest/get/generate/dashboard/add-source response body).
+set -uo pipefail
+
+BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+STATE_DIR="${HEADER_HOME:-$HOME/.header}"
+API_BASE="${HEADER_API_BASE:-https://joinheader.com}"
+DEFAULT_SG="${HEADER_DEFAULT_SOURCE_GROUP:-64981a34-3b8b-4064-a391-22f4534c229b}"
+
+json_escape() { printf '%s' "$1" | tr -d '\n\r' | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+# json_str <body> <key> — first value of a UNIQUELY-named "<key>":"…" (first_briefing_id,
+# default_goal_id, error_code, status, generated_at, name, type, url). grep -o keeps
+# document order; head -1 takes the first. error_code matches even when wrapped in `detail`.
+json_str() { printf '%s' "$1" | grep -o "\"$2\":\"[^\"]*\"" | head -1 | sed "s/^\"$2\":\"//; s/\"\$//"; }
+# topic_id <body> — the created/returned topic's id = the FIRST "id" (topic precedes any
+# nested latest_briefing.id; all other id fields are <word>_id, never the bare "id").
+topic_id() { printf '%s' "$1" | grep -o '"id":"[^"]*"' | head -1 | sed 's/^"id":"//; s/"$//'; }
+# nested_str <body> <objkey> <field> — <field> value inside "<objkey>":{ … }. Empty when
+# the object is null/absent (e.g. "latest_briefing":null).
+nested_str() {
+  printf '%s' "$1" | sed -n "s/.*\"$2\":{\\(.*\\)/\\1/p" \
+    | grep -o "\"$3\":\"[^\"]*\"" | head -1 | sed "s/^\"$3\":\"//; s/\"\$//"
+}
+# first_uuid <text> — first uuid-shaped token (source-group / id extraction from arrays).
+first_uuid() { printf '%s' "$1" | grep -oE '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' | head -1; }
+
+resolve_key() {
+  [ -n "${HEADER_API_KEY:-}" ] && { printf '%s' "$HEADER_API_KEY"; return; }
+  sed -n 's/^HEADER_API_KEY=//p' "$STATE_DIR/credentials" 2>/dev/null | head -1
+}
+need_key() { local k; k="$(resolve_key)"; [ -n "$k" ] && { printf '%s' "$k"; return 0; }
+  echo "header-topic: no API key — run 'header-auth register' or set HEADER_API_KEY" >&2; return 2; }
+
+# HTTP layer. http_call echoes "<body>\n<code>" (body is single-line JSON for these
+# endpoints). `call` runs it and sets BODY + _HC in the CALLER's scope — never invoke
+# http_call inside $(…) and expect a global to survive (subshells don't propagate).
+_HC=""; BODY=""
+http_call() {  # <method> <url> <key|-> [payload] [stub_env_body] [stub_env_code]
+  local method="$1" url="$2" key="$3" payload="${4:-}" stub="${5:-}" stubcode="${6:-}" c
+  if [ -n "$stub" ] && [ -n "${!stub:-}" ]; then
+    c=200; [ -n "$stubcode" ] && [ -n "${!stubcode:-}" ] && c="${!stubcode}"
+    printf '%s\n%s' "$(cat "${!stub}" 2>/dev/null)" "$c"; return 0
+  fi
+  local -a args=(-sS -w '\n%{http_code}' --max-time 45 -X "$method" "$url")
+  [ "$key" != "-" ] && args+=(-H "Authorization: Bearer $key")
+  [ -n "$payload" ] && args+=(-H 'Content-Type: application/json' --data "$payload")
+  curl "${args[@]}" 2>/dev/null || printf '\n000'
+}
+call() { local resp; resp="$(http_call "$@")"; _HC="${resp##*$'\n'}"; BODY="${resp%$'\n'*}"; }
+
+# tier_or_die <body> <code> — on 403/429 print ERROR_CODE + return 3; else return 0.
+tier_check() {
+  case "$2" in
+    403|429) local ec; ec="$(json_str "$1" error_code)"; printf 'ERROR_CODE %s\n' "${ec:-UNKNOWN}"
+             echo "header-topic: tier-gate ${ec:-HTTP $2} (HTTP $2)" >&2; return 3 ;;
+  esac; return 0
+}
+
+cmd_create() {
+  local name="" goal="" bind=1; local sgs=()
+  while [ $# -gt 0 ]; do case "$1" in
+    --name) name="${2:-}"; shift 2 ;; --goal) goal="${2:-}"; shift 2 ;;
+    --source-group) sgs+=("${2:-}"); shift 2 ;; --no-bind) bind=0; shift ;;
+    *) echo "header-topic: unknown flag '$1'" >&2; return 1 ;; esac; done
+  [ -n "$name" ] || { echo "header-topic: --name required" >&2; return 1; }
+  [ -n "$goal" ] || { echo "header-topic: --goal required" >&2; return 1; }
+  local key; key="$(need_key)" || return 2
+  [ ${#sgs[@]} -gt 0 ] || sgs=("$DEFAULT_SG")
+  local sg_json="" s; for s in "${sgs[@]}"; do sg_json="$sg_json\"$(json_escape "$s")\","; done
+  local payload; payload="$(printf '{"name":"%s","source_group_ids":[%s],"goal_description":"%s"}' \
+    "$(json_escape "$name")" "${sg_json%,}" "$(json_escape "$goal")")"
+  call POST "$API_BASE/api/v2/topics/" "$key" "$payload" HEADER_TOPIC_STUB HEADER_TOPIC_STUB_CODE
+  tier_check "$BODY" "$_HC" || return 3
+  case "$_HC" in 2*) ;; 000) echo "header-topic: offline" >&2; return 1 ;;
+    *) echo "header-topic: create failed (HTTP $_HC)${BODY:+ — $(printf '%s' "$BODY" | head -c 160)}" >&2; return 1 ;; esac
+  local tid gid bid; tid="$(topic_id "$BODY")"; gid="$(json_str "$BODY" default_goal_id)"; bid="$(json_str "$BODY" first_briefing_id)"
+  [ -n "$tid" ] || { echo "header-topic: could not parse topic.id" >&2; return 1; }
+  [ "$bind" = 1 ] && { "$BIN_DIR/header-repo" bind "$tid" "$name" || echo "header-topic: bind failed" >&2; }
+  printf 'TOPIC_ID %s\n' "$tid"; [ -n "$gid" ] && printf 'GOAL_ID %s\n' "$gid"; [ -n "$bid" ] && printf 'BRIEFING_ID %s\n' "$bid"
+}
+
+cmd_latest() {
+  local topic="" public=0
+  while [ $# -gt 0 ]; do case "$1" in
+    --topic) topic="${2:-}"; shift 2 ;; --public) public=1; shift ;;
+    *) echo "header-topic: unknown flag '$1'" >&2; return 1 ;; esac; done
+  [ -n "$topic" ] || topic="$("$BIN_DIR/header-repo" get 2>/dev/null || true)"
+  [ -n "$topic" ] || { echo "header-topic: no --topic and no bound REPO_TOPIC" >&2; return 1; }
+  local key url
+  if [ "$public" = 1 ]; then url="$API_BASE/api/v2/topics/public/$topic"; key="-"
+  else key="$(need_key)" || return 2; url="$API_BASE/api/v2/topics/$topic"; fi
+  call GET "$url" "$key" "" HEADER_TOPIC_GET_STUB HEADER_TOPIC_GET_STUB_CODE
+  case "$_HC" in 2*) ;; 404) echo "header-topic: topic not found (deleted?)" >&2; return 4 ;;
+    000) echo "header-topic: offline" >&2; return 1 ;;
+    *) echo "header-topic: HTTP $_HC" >&2; return 1 ;; esac
+  local tid name gid bid gen; tid="$(topic_id "$BODY")"; name="$(json_str "$BODY" name)"
+  gid="$(json_str "$BODY" default_goal_id)"; bid="$(nested_str "$BODY" latest_briefing id)"; gen="$(nested_str "$BODY" latest_briefing generated_at)"
+  local seen fresh; seen="$("$BIN_DIR/header-repo" seen 2>/dev/null || true)"
+  if [ -z "$bid" ]; then fresh="none"
+  elif [ -z "$seen" ] || [ "$gen" \> "$seen" ]; then fresh="new"
+  else fresh="current"; fi
+  printf 'TOPIC_ID %s\n' "$tid"; [ -n "$name" ] && printf 'TOPIC_NAME %s\n' "$name"
+  [ -n "$gid" ] && printf 'GOAL_ID %s\n' "$gid"; [ -n "$bid" ] && printf 'BRIEFING_ID %s\n' "$bid"
+  [ -n "$gen" ] && printf 'GENERATED_AT %s\n' "$gen"; printf 'FRESH %s\n' "$fresh"
+}
+
+cmd_get() {
+  local bid="${1:-}"; [ -n "$bid" ] || { echo "header-topic: get <briefing_id> required" >&2; return 1; }
+  local key; key="$(need_key)" || return 2
+  local tmp; tmp="$(mktemp)"
+  _HC="$(curl -sS -o "$tmp" -w '%{http_code}' --max-time 30 "$API_BASE/api/v2/briefings/$bid" \
+    -H "Authorization: Bearer $key" -H 'Accept: text/markdown' 2>/dev/null || echo 000)"
+  case "$_HC" in 2*) cat "$tmp" ;; *) rm -f "$tmp"; echo "header-topic: HTTP $_HC" >&2; return 1 ;; esac
+  rm -f "$tmp"
+}
+
+cmd_generate() {
+  local gid="" me="" mad=""
+  while [ $# -gt 0 ]; do case "$1" in
+    --max-entries) me="${2:-}"; shift 2 ;; --max-age-days) mad="${2:-}"; shift 2 ;;
+    -*) echo "header-topic: unknown flag '$1'" >&2; return 1 ;; *) gid="$1"; shift ;; esac; done
+  [ -n "$gid" ] || { echo "header-topic: generate <goal_id> required" >&2; return 1; }
+  local key; key="$(need_key)" || return 2
+  local payload="{}"; [ -n "$me$mad" ] && payload="$(printf '{%s%s%s}' \
+    "${me:+\"max_entries\":$me}" "$([ -n "$me" ] && [ -n "$mad" ] && echo ,)" "${mad:+\"max_age_days\":$mad}")"
+  call POST "$API_BASE/api/v2/goals/$gid/briefings" "$key" "$payload" HEADER_TOPIC_GET_STUB HEADER_TOPIC_GET_STUB_CODE
+  tier_check "$BODY" "$_HC" || return 3
+  case "$_HC" in 2*) ;; 000) echo "header-topic: offline" >&2; return 1 ;;
+    *) echo "header-topic: generate failed (HTTP $_HC)" >&2; return 1 ;; esac
+  local bid eta; bid="$(topic_id "$BODY")"
+  # estimated_duration_seconds is numeric, not a quoted string — grab it directly.
+  eta="$(printf '%s' "$BODY" | grep -o '"estimated_duration_seconds":[0-9]*' | head -1 | grep -oE '[0-9]+$')"
+  [ -n "$bid" ] || { echo "header-topic: could not parse briefing id" >&2; return 1; }
+  printf 'BRIEFING_ID %s\n' "$bid"; [ -n "$eta" ] && printf 'ETA_SECONDS %s\n' "$eta"
+}
+
+cmd_status() {
+  local bid="${1:-}"; [ -n "$bid" ] || { echo "header-topic: status <briefing_id> required" >&2; return 1; }
+  local key="-"
+  [ -n "${HEADER_TOPIC_STATUS_STUB:-}" ] || { key="$(need_key)" || return 2; }
+  call GET "$API_BASE/api/v2/briefings/$bid" "$key" "" HEADER_TOPIC_STATUS_STUB
+  case "$_HC" in 2*) local st; st="$(json_str "$BODY" status)"; printf '%s\n' "${st:-UNKNOWN}" ;;
+    *) printf 'HTTP-%s\n' "$_HC"; return 1 ;; esac
+}
+
+# await — block-poll a briefing to completion. Meant to run detached (Claude Code:
+# run_in_background:true) so the deferred-briefing pass ACTUALLY happens instead of
+# falling back to "next run". First briefings can take 30–40 min, so the default
+# cadence is every 10 min up to 50 min. Emits a timestamped status line each poll.
+# Exit: 0 COMPLETED · 5 FAILED · 6 timed out (still IN_PROGRESS) · 2 no key.
+cmd_await() {
+  local bid="" interval="${HEADER_TOPIC_POLL_INTERVAL:-600}" timeout="${HEADER_TOPIC_POLL_TIMEOUT:-3000}"
+  while [ $# -gt 0 ]; do case "$1" in
+    --interval) interval="${2:-}"; shift 2 ;; --timeout) timeout="${2:-}"; shift 2 ;;
+    -*) echo "header-topic: unknown flag '$1'" >&2; return 1 ;; *) bid="$1"; shift ;; esac; done
+  [ -n "$bid" ] || { echo "header-topic: await <briefing_id> required" >&2; return 1; }
+  local key="-"; [ -n "${HEADER_TOPIC_STATUS_STUB:-}" ] || { key="$(need_key)" || return 2; }
+  local deadline=$(( $(date +%s) + timeout )) st
+  while :; do
+    call GET "$API_BASE/api/v2/briefings/$bid" "$key" "" HEADER_TOPIC_STATUS_STUB
+    case "$_HC" in 2*) st="$(json_str "$BODY" status)" ;; *) st="HTTP-$_HC" ;; esac
+    printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${st:-UNKNOWN}"
+    case "$st" in
+      COMPLETED) echo "AWAIT COMPLETED"; return 0 ;;
+      FAILED)    echo "AWAIT FAILED"; return 5 ;;
+    esac
+    [ "$(date +%s)" -ge "$deadline" ] && { echo "AWAIT TIMEOUT still IN_PROGRESS"; return 6; }
+    sleep "$interval"
+  done
+}
+
+cmd_add_source() {
+  local url="" group=""
+  while [ $# -gt 0 ]; do case "$1" in
+    --group) group="${2:-}"; shift 2 ;; -*) echo "header-topic: unknown flag '$1'" >&2; return 1 ;;
+    *) url="$1"; shift ;; esac; done
+  [ -n "$url" ] || { echo "header-topic: add-source <url> required" >&2; return 1; }
+  local key; key="$(need_key)" || return 2
+  if [ -z "$group" ]; then
+    local tid; tid="$("$BIN_DIR/header-repo" get 2>/dev/null || true)"
+    [ -n "$tid" ] || { echo "header-topic: no --group and no bound topic to derive one" >&2; return 1; }
+    call GET "$API_BASE/api/v2/topics/$tid" "$key" "" HEADER_TOPIC_GET_STUB
+    group="$(first_uuid "$(printf '%s' "$BODY" | grep -o '"source_group_ids":\[[^]]*\]')")"
+    [ -n "$group" ] || { echo "header-topic: could not resolve a source group from the bound topic — pass --group" >&2; return 1; }
+  fi
+  call POST "$API_BASE/api/v2/sources/preview" "$key" "$(printf '{"url":"%s"}' "$(json_escape "$url")")" HEADER_TOPIC_GET_STUB HEADER_TOPIC_GET_STUB_CODE
+  tier_check "$BODY" "$_HC" || return 3
+  case "$_HC" in 2*) ;; *) echo "header-topic: preview failed (HTTP $_HC)${BODY:+ — $(printf '%s' "$BODY" | head -c 120)}" >&2; return 1 ;; esac
+  local name type; name="$(json_str "$BODY" name)"; type="$(json_str "$BODY" type)"
+  [ -n "$type" ] || { echo "header-topic: could not detect source type for $url" >&2; return 1; }
+  call POST "$API_BASE/api/v2/sources/" "$key" \
+    "$(printf '{"name":"%s","type":"%s","url":"%s"}' "$(json_escape "$name")" "$(json_escape "$type")" "$(json_escape "$url")")"
+  case "$_HC" in 2*) ;; *) echo "header-topic: source create failed (HTTP $_HC)" >&2; return 1 ;; esac
+  local sid; sid="$(topic_id "$BODY")"; [ -n "$sid" ] || { echo "header-topic: could not parse source id" >&2; return 1; }
+  call POST "$API_BASE/api/v2/source-groups/$group/members" "$key" "$(printf '{"member_id":"%s"}' "$sid")"
+  case "$_HC" in
+    2*) ;;
+    403) echo "header-topic: group $group isn't yours to edit (source $sid was created). Pass --group <a group you own>, or create one and attach it to the topic's goal — see reference/custom-briefings.md 'Add a source'." >&2; return 3 ;;
+    *) echo "header-topic: add-to-group failed (HTTP $_HC)" >&2; return 1 ;;
+  esac
+  printf 'SOURCE_ID %s\nGROUP_ID %s\nTYPE %s\n' "$sid" "$group" "$type"; [ -n "$name" ] && printf 'NAME %s\n' "$name"
+}
+
+cmd_dashboard() {
+  local since=""
+  while [ $# -gt 0 ]; do case "$1" in --since) since="${2:-}"; shift 2 ;; *) echo "header-topic: unknown flag '$1'" >&2; return 1 ;; esac; done
+  local key; key="$(need_key)" || return 2
+  local url="$API_BASE/api/v2/topics/dashboard"; [ -n "$since" ] && url="$url?since=$since"
+  call GET "$url" "$key" "" HEADER_TOPIC_GET_STUB
+  case "$_HC" in 2*) ;; *) echo "header-topic: HTTP $_HC" >&2; return 1 ;; esac
+  # Walk the custom_topics array by brace depth; emit topic id (first "id") + next_action per object.
+  printf '%s' "$BODY" | awk '
+    function emit(o,  tid,na){
+      if(match(o,/"id":"[^"]*"/)) tid=substr(o,RSTART+6,RLENGTH-7)
+      na="-"; if(match(o,/"next_action":"[^"]*"/)) na=substr(o,RSTART+15,RLENGTH-16)
+      if(tid!="") printf "TOPIC %s %s\n", tid, na
+    }
+    { i=index($0,"\"custom_topics\":["); if(!i) next
+      s=substr($0,i+17); depth=0; obj=""; n=length(s)
+      for(j=1;j<=n;j++){ c=substr(s,j,1)
+        if(c=="]" && depth==0) break
+        if(c=="{"){ depth++; obj=obj c; continue }
+        if(c=="}"){ depth--; obj=obj c; if(depth==0){ emit(obj); obj="" }; continue }
+        if(depth>0) obj=obj c } }'
+}
+
+case "${1:-}" in
+  create)     shift; cmd_create "$@" ;;
+  latest)     shift; cmd_latest "$@" ;;
+  get)        shift; cmd_get "$@" ;;
+  generate)   shift; cmd_generate "$@" ;;
+  status)     shift; cmd_status "$@" ;;
+  await)      shift; cmd_await "$@" ;;
+  add-source) shift; cmd_add_source "$@" ;;
+  dashboard)  shift; cmd_dashboard "$@" ;;
+  -h|--help)
+    echo "Usage: header-topic {create|latest|get|generate|status|await|add-source|dashboard} ..."
+    exit 0 ;;
+  *) echo "Usage: header-topic {create|latest|get|generate|status|await|add-source|dashboard} ..." >&2; exit 1 ;;
+esac

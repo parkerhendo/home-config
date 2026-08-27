@@ -13,6 +13,8 @@ export function formatSourceKind(kind: string): string {
       return "Project";
     case "project-legacy":
       return "Project legacy";
+    case "package":
+      return "Package";
     default:
       return "Unknown";
   }

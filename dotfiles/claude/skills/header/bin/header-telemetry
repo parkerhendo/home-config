@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# header-telemetry — opt-in, consent-gated usage metrics. Local-first.
+#
+#   header-telemetry log <event> [--outcome O] [--path P] [--duration N]
+#                                [--recs-surfaced N] [--recs-applied N] [--error-class E]
+#       Append an event to ~/.header/telemetry.jsonl IF the tier is not "off",
+#       then fire a backgrounded sync. No-op when tier=off.
+#
+#   header-telemetry sync [--dry-run]
+#       Rate-limited (once / 5 min). Send unsent events to the telemetry
+#       endpoint, stripping local-only (_-prefixed) fields; the "anonymous"
+#       tier also strips installation_id. --dry-run prints the batch instead of
+#       sending (tests). No-op when tier=off.
+#
+# Privacy: only usage metadata is ever sent (event, outcome, path, duration,
+# version, os, recommendation counts). Project identifiers (_repo, _branch) are
+# local-only and stripped before any send — workspace content never leaves.
+#
+# Tiers (header-config `telemetry`): off (default) | anonymous | full
+# Env: HEADER_HOME, HEADER_API_BASE, HEADER_TELEMETRY_URL, HEADER_TELEMETRY_NOSYNC
+#
+# Never exits non-zero on failure — telemetry must never break the briefing.
+set -uo pipefail
+
+BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+STATE_DIR="${HEADER_HOME:-$HOME/.header}"
+CONFIG="$BIN_DIR/header-config"
+VERSION_FILE="$(cd "$BIN_DIR/.." && pwd)/VERSION"
+LOG="$STATE_DIR/telemetry.jsonl"
+CURSOR="$STATE_DIR/.telemetry-cursor"
+RATE="$STATE_DIR/.telemetry-last-sync"
+IDFILE="$STATE_DIR/installation-id"
+API_BASE="${HEADER_API_BASE:-https://joinheader.com}"
+TELEMETRY_URL="${HEADER_TELEMETRY_URL:-$API_BASE/api/v2/telemetry/events}"
+
+tier() {
+  t="$("$CONFIG" get telemetry 2>/dev/null || echo off)"
+  case "$t" in off|anonymous|full) echo "$t" ;; *) echo off ;; esac
+}
+json_escape() { printf '%s' "$1" | tr -d '\n\r' | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+gen_uuid() {
+  uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null \
+    || od -An -tx1 -N16 /dev/urandom 2>/dev/null | tr -d ' \n'
+}
+install_id() {
+  [ -f "$IDFILE" ] && { cat "$IDFILE"; return; }
+  id="$(gen_uuid)"
+  if [ -n "$id" ]; then mkdir -p "$STATE_DIR"; printf '%s' "$id" > "$IDFILE"; fi
+  printf '%s' "$id"
+}
+
+cmd="${1:-}"; shift 2>/dev/null || true
+T="$(tier)"
+
+case "$cmd" in
+  log)
+    [ "$T" = "off" ] && exit 0
+    event="${1:-skill_run}"; shift 2>/dev/null || true
+    outcome=""; path=""; duration=""; rsurf=""; rappl=""; errcls=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --outcome)       outcome="${2:-}"; shift 2 ;;
+        --path)          path="${2:-}"; shift 2 ;;
+        --duration)      duration="${2:-}"; shift 2 ;;
+        --recs-surfaced) rsurf="${2:-}"; shift 2 ;;
+        --recs-applied)  rappl="${2:-}"; shift 2 ;;
+        --error-class)   errcls="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    mkdir -p "$STATE_DIR"
+    ver="$(tr -d '[:space:]' < "$VERSION_FILE" 2>/dev/null || echo unknown)"
+    os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    idfield=""; [ "$T" = "full" ] && idfield="$(install_id)"
+    eid="$(gen_uuid)"
+    repo="$(basename "$(git rev-parse --show-toplevel 2>/dev/null || echo unknown)")"
+    branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+    printf '{"v":1,"event_id":"%s","ts":"%s","event":"%s","version":"%s","os":"%s","outcome":"%s","path":"%s","duration_s":"%s","recs_surfaced":"%s","recs_applied":"%s","error_class":"%s","installation_id":"%s","_repo":"%s","_branch":"%s"}\n' \
+      "$eid" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(json_escape "$event")" "$ver" "$os" \
+      "$(json_escape "$outcome")" "$(json_escape "$path")" "$(json_escape "$duration")" \
+      "$(json_escape "$rsurf")" "$(json_escape "$rappl")" "$(json_escape "$errcls")" \
+      "$(json_escape "$idfield")" "$(json_escape "$repo")" "$(json_escape "$branch")" \
+      >> "$LOG"
+    [ -z "${HEADER_TELEMETRY_NOSYNC:-}" ] && "$0" sync >/dev/null 2>&1 &
+    exit 0
+    ;;
+
+  sync)
+    dry=0; [ "${1:-}" = "--dry-run" ] && dry=1
+    [ "$T" = "off" ] && exit 0
+    [ -f "$LOG" ] || exit 0
+    if [ "$dry" -eq 0 ] && [ -f "$RATE" ] && [ -z "$(find "$RATE" -mmin +5 2>/dev/null)" ]; then exit 0; fi
+    cur=0; [ -f "$CURSOR" ] && cur="$(tr -dc 0-9 < "$CURSOR" 2>/dev/null)"; [ -n "$cur" ] || cur=0
+    total="$(wc -l < "$LOG" | tr -d ' ')"
+    [ "$cur" -ge "$total" ] 2>/dev/null && exit 0
+    # Up to 100 unsent events; strip local-only fields; anonymous also strips installation_id.
+    unsent="$(tail -n "+$((cur + 1))" "$LOG" | head -n 100)"
+    count="$(printf '%s\n' "$unsent" | grep -c '^{')"
+    [ "${count:-0}" -eq 0 ] 2>/dev/null && exit 0
+    batch="$(printf '%s\n' "$unsent" | sed -e 's/,"_repo":"[^"]*"//g' -e 's/,"_branch":"[^"]*"//g')"
+    [ "$T" = "anonymous" ] && batch="$(printf '%s' "$batch" | sed -e 's/,"installation_id":"[^"]*"//g')"
+    body="[$(printf '%s' "$batch" | paste -sd, -)]"
+    if [ "$dry" -eq 1 ]; then printf '%s\n' "$body"; exit 0; fi
+    # full tier authenticates when a key is available; anonymous never attaches one.
+    key=""
+    [ "$T" = "full" ] && key="${HEADER_API_KEY:-$(sed -n 's/^HEADER_API_KEY=//p' "$STATE_DIR/credentials" 2>/dev/null)}"
+    set -- -sS -o /dev/null -w '%{http_code}' --max-time 10 -X POST "$TELEMETRY_URL" -H 'Content-Type: application/json'
+    [ -n "$key" ] && set -- "$@" -H "Authorization: Bearer $key"
+    code="$(curl "$@" -d "$body" 2>/dev/null || echo 000)"
+    case "$code" in 2*) echo "$((cur + count))" > "$CURSOR" ;; esac
+    touch "$RATE"
+    exit 0
+    ;;
+
+  -h|--help)
+    echo "Usage: header-telemetry {log|sync} ..."
+    exit 0
+    ;;
+  *)
+    echo "Usage: header-telemetry {log|sync} ..." >&2
+    exit 1
+    ;;
+esac

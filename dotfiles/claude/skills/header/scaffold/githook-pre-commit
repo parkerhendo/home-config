@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# .githooks/pre-commit — git-native trigger for the Header determinism gate.
+# Fires for everyone and every tool (humans, any agent, any harness).
+#
+# Enable once per clone:   git config core.hooksPath .githooks
+# Bypass a single commit:  git commit --no-verify
+#
+# HEADER_GATE_FORCE=1 tells the shared gate "git already decided this is a
+# commit — run the checks, skip command-sniffing."
+set -euo pipefail
+exec env HEADER_GATE_FORCE=1 "$(git rev-parse --show-toplevel)/scripts/pre-commit-gate.sh"

@@ -4,6 +4,7 @@ export type SkillSource =
   | { kind: "user"; root: string }
   | { kind: "project"; root: string }
   | { kind: "project-legacy"; root: string }
+  | { kind: "package"; root: string }
   | { kind: "unknown"; root: string };
 
 export interface LocatedSkillFile {

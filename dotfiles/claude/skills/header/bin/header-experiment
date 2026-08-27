@@ -1,0 +1,3673 @@
+#!/usr/bin/env bash
+# header-experiment — BETA. Local A/B (and A/A) experimentation for AI-agent
+# harness changes. Runs the loop the rest of the skill is built around:
+#
+#   mine → run → analyze → report          (or define/new → run → analyze → report)
+#
+# Each run executes (task × arm × replicate) in an isolated worktree at a pinned
+# commit whose git history is SEALED (a single root commit — the agent cannot
+# `git log` the commit that solves a mined task; `seal_history: off` to opt out),
+# captures real usage via the Claude Code headless adapter
+# (`claude -p --output-format json`), then runs a user-specified verifier. The
+# analyser pairs by task, bootstraps a 95% CI on per-task differences, and emits
+# a verdict against the deck's rule: B wins only if cost CI < 0 AND success is
+# non-inferior within δ. Local-only — nothing leaves the machine.
+#
+# `mine` (design §11) removes the last hand-authoring friction: it turns the
+# repo's own git history into tasks and its own test suite into the oracle, so the
+# user no longer writes task prompts or names verify commands. MVP scope (out:
+# auto-merge of the winning arm; LLM judges; FDR / sequential analysis; non-Claude
+# adapters; cross-customer aggregate submit). See docs/experiments-design.md §§11–12.
+#
+# Usage:
+#   header-experiment mine <id> [--repo DIR] [--limit N] [--max-files N]
+#                               [--max-tasks N] [--verify CMD] [--from M --to N]
+#                               [--arm L[:M[:OVD]]] [--since REF] [--list] [--yes]
+#                               Scan git history for fixes touching source+tests,
+#                               validate each by re-applying the fix's tests at the
+#                               parent and running the suite (keep the ones that
+#                               fail), then write a runnable experiment. --list
+#                               previews candidates without running anything.
+#   header-experiment define <id> [--description T] [--arm LABEL=model] ...
+#                               Scaffold ~/.header/experiments/<id>/ with a
+#                               template `spec` file (flat key:value + repeated
+#                               [arm:X] / [task:Y] sections — edit by hand).
+#   header-experiment validate <id>
+#                               Lint the spec: at least one task, ≥2 arms,
+#                               replicates ≥1, paths resolvable.
+#   header-experiment run <id> [--aa] [--k N] [--yes] [--seed N] [--adapter CMD]
+#                               Execute the matrix. --aa runs arm A vs itself
+#                               (the noise-floor / harness validator, §3 of the
+#                               design). --k overrides replicates. --yes skips
+#                               the cost-gate prompt. --adapter overrides
+#                               $HEADER_EXPERIMENT_ADAPTER (a script that
+#                               replaces `claude` for testing).
+#   header-experiment analyze <id> [--aa] [--seed N] [--bootstrap N]
+#                               Pair by task, bootstrap CI on B − A for cost
+#                               (continuous) and success (proportion). Write
+#                               result.json (or result-aa.json).
+#   header-experiment report <id> [--aa]
+#                               Pretty scorecard. Per-arm means, per-task diffs,
+#                               CIs, verdict.
+#
+# Files (one experiment dir per id):
+#   ~/.header/experiments/<id>/
+#     spec                  # editable: flat key:value + [arm:X] / [task:Y]
+#     runs.jsonl            # one JSON record per (task,arm,rep) — append-only
+#     runs-aa.jsonl         # same, for --aa mode
+#     result.json           # written by analyze
+#     result-aa.json        # written by analyze --aa
+#     logs/                 # per-run agent stdout/stderr
+#     arms/A/, arms/B/      # OPTIONAL: override files copied into the worktree
+#     tasks/                # OPTIONAL: prompt files (or use absolute paths)
+#
+# Spec format (one example — edit to taste):
+#   id: my-exp
+#   description: opus vs sonnet on auth refactor
+#   repo: .                       # absolute, or relative to the spec dir
+#   commit: HEAD                  # git ref; pinned per design doc §5
+#   replicates: 3
+#   non_inferiority_margin: 0.02  # δ for success-rate non-inferiority (2%)
+#
+#   [arm:A]
+#   model: claude-opus-4-7
+#   effort:                       # OPTIONAL — low|medium|high|xhigh|max; blank = inherit
+#   overrides_dir:                # blank = no overrides (control)
+#
+#   [arm:B]
+#   model: claude-sonnet-4-6
+#   effort: high                  # OPTIONAL — Claude Code reasoning effort for this arm
+#   overrides_dir: arms/B         # optional: dir of files copied into worktree
+#
+#   [task:t1]
+#   prompt: tasks/t1.md           # the agent's task description (relative ok)
+#   verify: npm test              # shell cmd; exit 0 = success (Tier 1 oracle)
+#   timeout_s: 1200
+#
+# Env:
+#   HEADER_HOME                 state dir (default: $HOME/.header)
+#   HEADER_EXPERIMENT_ADAPTER   override the agent invocation (testing; also the
+#                               seam for non-Claude harnesses). When set, the
+#                               runner calls:
+#                                 $HEADER_EXPERIMENT_ADAPTER <task_id> <arm> <rep> <prompt_file> <model> <effort>
+#                               in the worktree CWD; <model>/<effort> are the
+#                               arm's settings ("" = inherit). The adapter must
+#                               print one JSON object on stdout with at least
+#                               {"input_tokens":N,"output_tokens":N,...,
+#                                "total_cost_usd":F,"model":"..."}.
+#                               Defaults to a real `claude -p` invocation.
+#   HEADER_API_BASE             API host for `push` (default https://joinheader.com).
+#   HEADER_EXPERIMENTS_URL      override the full experiments endpoint.
+#   HEADER_EXPERIMENT_NOSYNC    when set, disables auto-sync entirely (test/CI guard).
+#
+# Auto-sync: opt-in. `experiment_sync` ships `off` (matches the telemetry/consent
+# posture). When the user sets it to `auto`, each lifecycle change (new/define/
+# validate/run/analyze/merge) syncs the experiment's metadata to the account if an
+# API key is present — see `push`; auto + no key → a once-per-experiment account
+# recommendation. Default `off` → fully silent and local.
+#
+# BETA — interface and output shape will change. The runner is local by design
+# (customer-infra runner is the on-thesis architecture, design doc §7.3); the only
+# egress is the opt-in/auto `push` of experiment METADATA (never code).
+set -uo pipefail
+
+STATE_DIR="${HEADER_HOME:-$HOME/.header}"
+EXP_ROOT="$STATE_DIR/experiments"
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# This tool always operates on an EXPLICIT repo path (--repo / the spec's repo:),
+# never the ambient git context. Clear inherited git env vars so our nested git
+# operations (worktree add, checkout, diff-tree) bind to that target repo even
+# when we're invoked from inside a git hook or CI step that exported GIT_DIR /
+# GIT_INDEX_FILE / GIT_WORK_TREE — otherwise mining would silently run against
+# the wrong repository.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX 2>/dev/null || true
+
+HC_BIN="$SELF_DIR/header-cost"
+LEDGER_BIN="$SELF_DIR/header-ledger"
+VERSION_FILE="$(cd "$SELF_DIR/.." && pwd)/VERSION"
+# Cloud sync (the `push` subcommand). Account-scoped, API-key-gated, opt-in.
+API_BASE="${HEADER_API_BASE:-https://joinheader.com}"
+EXPERIMENTS_URL="${HEADER_EXPERIMENTS_URL:-$API_BASE/api/v2/experiments}"
+# Anonymized aggregate submit (the `aggregate` subcommand) — the cross-customer
+# proven-changes library (design §7.3). DISTINCT from `push`: no identity at all.
+AGGREGATE_URL="${HEADER_AGGREGATE_URL:-$API_BASE/api/v2/experiments/aggregate}"
+
+json_escape() { printf '%s' "$1" | tr -d '\n\r' | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+now_iso()    { date -u +%Y-%m-%dT%H:%M:%SZ; }
+now_epoch()  { date +%s; }
+err()        { printf 'header-experiment: %s\n' "$*" >&2; }
+die()        { err "$*"; exit 1; }
+
+# beta_banner — printed to stderr on the user-facing subcommands so it's clear
+# the verdict / interface / file shapes are not yet frozen.
+beta_banner() {
+  echo "header-experiment is BETA — interface & output shapes may change. Experiments run locally; account sync is off by default (opt in: 'header-config set experiment_sync auto', requires an API key)." >&2
+}
+
+# spec_path / exp_dir — locate the spec for an id; create the dir on define only.
+exp_dir() { printf '%s/%s' "$EXP_ROOT" "$1"; }
+spec_path() { printf '%s/spec' "$(exp_dir "$1")"; }
+
+# spec_get_scalar <spec> <key> — read a top-level (pre-section) value. Returns
+# empty if not set. Top-level = lines before the first `[section]`.
+spec_get_scalar() {
+  awk -v key="$2" '
+    BEGIN { in_section=0 }
+    /^\[/ { in_section=1; next }
+    in_section { next }
+    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+    {
+      i = index($0, ":"); if (i==0) next
+      k = substr($0, 1, i-1); v = substr($0, i+1)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+      if (k == key) { print v; exit }
+    }' "$1"
+}
+
+# spec_list_sections <spec> <prefix> — list section labels matching [prefix:LABEL]
+# in declaration order (e.g. spec_list_sections /tmp/spec arm  →  "A\nB").
+spec_list_sections() {
+  awk -v pfx="$2" '
+    {
+      if (match($0, /^\[[^]]+\]/)) {
+        s = substr($0, RSTART+1, RLENGTH-2)
+        n = split(s, parts, ":")
+        if (n==2 && parts[1]==pfx) print parts[2]
+      }
+    }' "$1"
+}
+
+# spec_section_get <spec> <prefix> <label> <key> — read a value from
+# [prefix:label]. Returns empty if missing. Stops at the next [section] or EOF.
+spec_section_get() {
+  awk -v pfx="$2" -v lbl="$3" -v key="$4" '
+    BEGIN { in_section=0 }
+    {
+      if (match($0, /^\[[^]]+\]/)) {
+        s = substr($0, RSTART+1, RLENGTH-2)
+        n = split(s, parts, ":")
+        in_section = (n==2 && parts[1]==pfx && parts[2]==lbl) ? 1 : 0
+        next
+      }
+      if (!in_section) next
+      if ($0 ~ /^[[:space:]]*#/ || $0 ~ /^[[:space:]]*$/) next
+      i = index($0, ":"); if (i==0) next
+      k = substr($0, 1, i-1); v = substr($0, i+1)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+      if (k == key) { print v; exit }
+    }' "$1"
+}
+
+# resolve_path <base_dir> <maybe_relative_path>  → absolute path. Empty in → empty out.
+# Used for paths that are unambiguously rooted at base_dir (overrides_dir).
+resolve_path() {
+  case "${2:-}" in
+    ''|-) printf '' ;;
+    /*)   printf '%s' "$2" ;;
+    *)    printf '%s/%s' "$1" "$2" ;;
+  esac
+}
+
+# resolve_task_path <repo> <exp_dir> <maybe_relative_path>  → absolute path.
+# Task prompts naturally live in the user's repo (committed), so relative paths
+# resolve against the repo first. Falls back to the experiment dir for files the
+# wizard generated (inline prompts written to <exp_dir>/tasks/).
+resolve_task_path() {
+  local repo="$1" exp_dir="$2" p="${3:-}"
+  case "$p" in
+    '')   printf '' ;;
+    /*)   printf '%s' "$p" ;;
+    *)
+      if [ -f "$repo/$p" ];     then printf '%s' "$repo/$p"
+      elif [ -f "$exp_dir/$p" ]; then printf '%s' "$exp_dir/$p"
+      else                            printf '%s' "$repo/$p"
+      fi ;;
+  esac
+}
+
+# auto_detect_verify <repo_dir>  → best-guess verify command for the project.
+# Order: package.json → Cargo.toml → pyproject.toml/requirements.txt → go.mod →
+# Gemfile → fallback "true" (no-op; user should override). Stops at the first
+# manifest match. We don't run anything — just match the manifest.
+auto_detect_verify() {
+  local repo="$1"
+  [ -f "$repo/package.json" ]    && echo "npm test"        && return 0
+  [ -f "$repo/Cargo.toml" ]      && echo "cargo test"      && return 0
+  [ -f "$repo/pyproject.toml" ]  && echo "pytest -q"       && return 0
+  [ -f "$repo/requirements.txt" ]&& echo "pytest -q"       && return 0
+  [ -f "$repo/go.mod" ]          && echo "go test ./..."   && return 0
+  [ -f "$repo/Gemfile" ]         && echo "bundle exec rake test" && return 0
+  echo "true"
+}
+
+# _looks_like_test <path>  → exit 0 if the repo-relative path is a test file, by
+# the common conventions across ecosystems (JS/TS, Python, Go, Rust, Ruby, JVM).
+# Used by `mine` to classify a commit's changed files into tests vs. implementation.
+# Conservative-by-convention; false matches are caught downstream when the suite
+# is actually run during mining.
+_looks_like_test() {
+  local p="$1" b="${1##*/}"
+  case "$p" in
+    */__tests__/*|*/test/*|*/tests/*|*/spec/*|*/specs/*) return 0 ;;
+    test/*|tests/*|spec/*|specs/*)                       return 0 ;;
+  esac
+  case "$b" in
+    *.test.*|*.spec.*) return 0 ;;
+    *_test.go|*_test.py|*_test.rb|*_test.rs|*_test.ts|*_test.tsx|*_test.js|*_test.exs) return 0 ;;
+    test_*.py) return 0 ;;
+    *Test.java|*Tests.java|*Test.kt|*Tests.kt|*Spec.scala) return 0 ;;
+    *_spec.rb) return 0 ;;
+  esac
+  return 1
+}
+
+# _targeted_verify_cmd <verify> <paths_csv> → a narrowed command that runs ONLY
+# the given test paths, when <verify> is an auto-detected runner we know how to
+# scope (pytest, go test). Empty output = no safe narrowing (user-supplied /
+# unknown runner) → the caller keeps the full suite. Used by mine's validation:
+# the FAIL_TO_PASS question is about exactly these re-applied tests, so the
+# targeted run is both much faster on a big suite (the full suite ran once per
+# CANDIDATE) and more precise — an unrelated broken test can't masquerade as a
+# real fix.
+_targeted_verify_cmd() {
+  local verify="$1" paths="$2" p files="" dirs="" d oifs="$IFS"
+  IFS=','
+  for p in $paths; do
+    p="$(printf '%s' "$p" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    [ -n "$p" ] || continue
+    case "$p" in *' '*) IFS="$oifs"; return 0 ;; esac   # space in a path → don't risk word-splitting
+    files="$files $p"
+    case "$p" in */*) d="./${p%/*}" ;; *) d="." ;; esac
+    case " $dirs " in *" $d "*) ;; *) dirs="$dirs $d" ;; esac
+  done
+  IFS="$oifs"
+  [ -n "$files" ] || return 0
+  case "$verify" in
+    'pytest -q')     printf 'pytest -q%s' "$files" ;;
+    'go test ./...') printf 'go test%s' "$dirs" ;;
+  esac
+}
+
+# _oracle_checkout <worktree> <ref> <comma-sep-paths> — check out <ref>'s version
+# of the given paths into the worktree (working tree + index). The tests-oracle
+# task type (from `mine`) calls it twice: BEFORE the agent to apply a fixing
+# commit's TEST files onto the parent state (so the new tests fail and there's
+# something to fix), and AGAIN right before grading to LOCK them — reverting any
+# edit the agent made to the tests. That re-pin is the reward-hacking defense
+# (design §11) and needs no sandbox: the graded suite always runs the pinned
+# tests, so "make the test pass" can't be won by editing the test. Best-effort:
+# silent no-op if the worktree isn't a git repo or a path is gone.
+_oracle_checkout() {
+  local wt="$1" ref="$2" paths="$3" p arr=() oifs="$IFS"
+  ( cd "$wt" 2>/dev/null && git rev-parse --git-dir >/dev/null 2>&1 ) || return 0
+  IFS=','
+  for p in $paths; do
+    p="$(printf '%s' "$p" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    [ -n "$p" ] && arr+=("$p")
+  done
+  IFS="$oifs"
+  [ "${#arr[@]}" -gt 0 ] || return 0
+  ( cd "$wt" && git checkout "$ref" -- "${arr[@]}" 2>/dev/null )
+}
+
+# _seal_history <worktree> — cut the eval workspace off from repository history.
+# `git worktree add` leaves a .git POINTER into the parent repo's object store
+# (and the `cp -a` fallback copies .git wholesale), so the agent under test can
+# run `git log --all` / `git show <sha>` and read the very commit that solves a
+# `mine`d task — the task is DERIVED from that commit, so the answer is always
+# reachable. Databricks names this the "cheating by reading the answer from git"
+# failure mode and prescribes sealing the working copy per eval run.
+#
+# Sealing replaces history with a single root commit of the current tree: git
+# still works for the agent (status / diff / commit / stash), but there is no
+# prior or future commit to read. MUST run AFTER _oracle_checkout, which
+# legitimately needs the fixing ref's objects.
+#
+# Returns 0 when the workspace is sealed (no reachable history), 1 when it could
+# not be sealed — callers treat 1 as fatal for the replicate, because an unsealed
+# run silently produces an invalid measurement rather than a loud failure.
+# Escape: `seal_history: off` in the spec, or HEADER_EXPERIMENT_NO_SEAL=1.
+_seal_history() {
+  local wt="$1"
+  [ -e "$wt/.git" ] || return 0          # nothing to seal (already historyless)
+  rm -rf "$wt/.git" 2>/dev/null || return 1
+  ( cd "$wt" || exit 1
+    git init -q || exit 1
+    git add -A || exit 1
+    # --no-verify + an explicit identity: the sandbox may have no git identity,
+    # and a global core.hooksPath must not run this repo's hooks during sealing.
+    git -c user.email=experiment@header.local -c user.name='Header Experiment' \
+        -c commit.gpgsign=false -c core.hooksPath=/dev/null \
+        commit -q --no-verify --allow-empty \
+        -m 'sealed baseline — history withheld from the agent under test' || exit 1
+  ) >/dev/null 2>&1 || return 1
+  # Belt and braces: prove no commit other than the sealed root is reachable.
+  local n
+  n="$( ( cd "$wt" && git rev-list --all --count ) 2>/dev/null || echo 0 )"
+  [ "${n:-0}" = "1" ] || return 1
+  return 0
+}
+
+# _lock_snapshot <repo> <ref> <paths_csv> <dest> — copy <ref>'s version of the
+# lock paths OUT of the repo, before the workspace's history is sealed. The
+# grade-time lock (_lock_restore) must be able to reinstate the pristine tests
+# WITHOUT the object store — which is precisely what the agent must not have.
+# Uses `git archive`, so directories and files behave like `git checkout ref --`.
+_lock_snapshot() {
+  local repo="$1" ref="$2" paths="$3" dest="$4" p arr=() oifs="$IFS"
+  IFS=','
+  for p in $paths; do
+    p="$(printf '%s' "$p" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    [ -n "$p" ] && arr+=("$p")
+  done
+  IFS="$oifs"
+  [ "${#arr[@]}" -gt 0 ] || return 0
+  mkdir -p "$dest" || return 1
+  ( cd "$repo" && git archive --format=tar "$ref" -- "${arr[@]}" 2>/dev/null ) \
+    | ( cd "$dest" && tar -xf - 2>/dev/null ) || return 1
+  [ -n "$(ls -A "$dest" 2>/dev/null)" ] || return 1
+  return 0
+}
+
+# _lock_restore <dest> <worktree> — overwrite whatever the agent left at the
+# graded paths with the pristine snapshot. Lives outside the worktree so the
+# agent's edits (and `git checkout`) can't reach it.
+_lock_restore() {
+  local dest="$1" wt="$2"
+  [ -d "$dest" ] || return 1
+  cp -a "$dest"/. "$wt"/ 2>/dev/null || return 1
+}
+
+# prompt_user <message> [<default>]  → read one line interactively, echo answer.
+# `[ -t 0 ]` is the right check: it returns true iff stdin is a real terminal.
+# In tests / piped invocations stdin is NOT a tty, so we silently return the
+# default — callers must pass all required fields as flags in that case. (We
+# don't try /dev/tty: `-r /dev/tty` returns true but reading errors with ENXIO
+# when there's no controlling terminal, and bash's redirect error message
+# can't be suppressed by the read command's 2>/dev/null.)
+prompt_user() {
+  local msg="$1" def="${2:-}" ans=""
+  if [ -t 0 ]; then
+    if [ -n "$def" ]; then
+      printf '%s [%s]: ' "$msg" "$def" >&2
+    else
+      printf '%s: ' "$msg" >&2
+    fi
+    IFS= read -r ans
+    printf '%s' "${ans:-$def}"
+  else
+    printf '%s' "$def"
+  fi
+}
+
+# write_inline_task <exp_dir> <task_id> <text> → writes text to a .md file under
+# <exp_dir>/tasks/, prints the absolute path. Used by `new` when the user types
+# a one-liner instead of pointing at a file.
+write_inline_task() {
+  local d="$1" tid="$2" txt="$3"
+  mkdir -p "$d/tasks"
+  printf '%s\n' "$txt" > "$d/tasks/$tid.md"
+  printf '%s/tasks/%s.md' "$d" "$tid"
+}
+
+# gen_prompt_debt_arm_b <repo> <exp_dir> <file_rel> <lines>  → writes a copy of
+# <file_rel> into <exp_dir>/arms/B/<file_rel> with the listed line numbers
+# removed (sed). `lines` is a comma-separated list ("12,13,14"). Used by
+# `new --kind prompt-debt-deletion` to materialise arm B's override file from
+# audit findings.
+gen_prompt_debt_arm_b() {
+  local repo="$1" exp_dir="$2" file_rel="$3" lines="$4"
+  local src="$repo/$file_rel" arm_dir="$exp_dir/arms/B"
+  [ -f "$src" ] || { err "file not found in repo: $file_rel ($src)"; return 1; }
+  case "$lines" in *[!0-9,]*) err "lines must be comma-separated integers (got '$lines')"; return 1 ;; esac
+  local sub_dir; sub_dir="$(dirname "$file_rel")"
+  mkdir -p "$arm_dir/$sub_dir" 2>/dev/null || true
+  local sed_expr="" ln
+  local IFS=','
+  for ln in $lines; do sed_expr="${sed_expr}${ln}d;"; done
+  sed "$sed_expr" "$src" > "$arm_dir/$file_rel"
+}
+
+# mandate_keywords_in <text>  → echoes up to 3 lines of <text> that carry an
+# EMPHATIC behavior mandate (uppercase MUST / NEVER / ALWAYS / DO NOT / ...).
+# Case-sensitive on purpose: real CLAUDE.md mandates shout ("you MUST self-
+# verify"), while cargo-cult debt is sentence-case ("Always think step by step",
+# "Don't hallucinate"). Keying on the uppercase form keeps the escalation high-
+# precision so we don't cry wolf on every cargo-cult deletion.
+mandate_keywords_in() {
+  printf '%s\n' "$1" \
+    | grep -E '\b(MUST NOT|MUST|NEVER|ALWAYS|SHALL|DO NOT|REQUIRED|MANDATORY|NON-NEGOTIABLE)\b' \
+    | head -3
+}
+
+# print_discrimination_warning <file_label> <removed_text>
+# The deletion-side twin of the worktree false-success: a prompt-debt-deletion
+# experiment only measures something if the verify task EXERCISES the deleted
+# lines. Routes both cases honestly — pure cargo-cult → no experiment needed
+# ([Apply with review]); behavioral → the task must require the instruction to
+# fire, else "N-of-N both arms" proves the task was easy, not that the cut was
+# safe. Escalates when the deleted text carries an emphatic mandate (regression-
+# style verifiers are blind to adherence drift). All output to stderr.
+print_discrimination_warning() {
+  local flabel="$1" removed="$2" hits
+  cat >&2 <<EOF
+
+Discrimination check — this experiment trims $flabel (a prompt-prefix file):
+  An A/B here only measures something if your verify task EXERCISES the trimmed
+  lines. Two honest outcomes:
+    · Pure cargo-cult (no behavioral effect) → you don't need an experiment at
+      all; that's [Apply with review] — the diff is the proof.
+    · Actually affects behavior → your task must plausibly FAIL if the agent
+      ignores the trimmed lines. If it would pass either way, both arms behave
+      identically and "success non-inferior / N-of-N both arms" proves the task
+      was easy, not that the deletion was safe.
+EOF
+  hits="$(mandate_keywords_in "$removed")"
+  if [ -n "$hits" ]; then
+    cat >&2 <<EOF
+  ⚠ The trimmed text contains emphatic behavior MANDATES — e.g.:
+$(printf '%s\n' "$hits" | sed 's/^[[:space:]]*/        /')
+    A regression-style verify (npm test / pytest) is BLIND to adherence drift:
+    the suite passes in BOTH arms even if arm B quietly stops obeying the rule.
+    Either make verify ASSERT the mandated behavior, or treat this as
+    [Apply with review] rather than an experiment that can't see its own risk.
+    And if the question is "is this guardrail earning its cost?", that's a
+    guardrail-VALUE question, not a deletion A/B: the cost is cheap to measure
+    (one real execution), but the benefit is tail-risk insurance — unmeasurable
+    by a small A/B. Prefer measuring one execution's cost directly.
+EOF
+  fi
+}
+
+# check_prefix_deletion_discrimination <spec> <dir> <repo_abs>
+# Fires the discrimination warning for prompt-prefix (CLAUDE.md / AGENTS.md)
+# deletion experiments — including HAND-ROLLED specs (the common path for trims),
+# which bypass `new --kind prompt-debt-deletion`'s scaffold-time guardrails. We
+# detect them by diffing each arm's overrides_dir prompt-prefix files against the
+# repo's copy: lines present in the repo but absent in the override are the cut.
+# Warn-only (never changes validate's exit code).
+check_prefix_deletion_discrimination() {
+  local spec="$1" dir="$2" repo_abs="$3"
+  local arms_list; arms_list="$(spec_list_sections "$spec" arm)"
+  local label ovd ovd_abs ovf rel repo_f removed
+  for label in $arms_list; do
+    [ -n "$label" ] || continue
+    ovd="$(spec_section_get "$spec" arm "$label" overrides_dir)"
+    [ -n "$ovd" ] || continue
+    ovd_abs="$(resolve_path "$dir" "$ovd")"
+    [ -d "$ovd_abs" ] || continue
+    while IFS= read -r ovf; do
+      [ -n "$ovf" ] || continue
+      rel="${ovf#"$ovd_abs"/}"
+      repo_f="$repo_abs/$rel"
+      [ -f "$repo_f" ] || continue
+      removed="$(diff "$repo_f" "$ovf" 2>/dev/null | sed -n 's/^< //p')"
+      [ -n "$removed" ] || continue
+      print_discrimination_warning "arm '$label' → $rel" "$removed"
+    done < <(find "$ovd_abs" -type f \( -name 'CLAUDE.md' -o -name 'AGENTS.md' -o -name 'CLAUDE.local.md' -o -name 'AGENTS.local.md' \) 2>/dev/null)
+  done
+}
+
+# is_mandate_deletion <spec> <dir> <repo_abs>  → exit 0 if some arm trims a
+# prompt-prefix file (CLAUDE.md/AGENTS.md) AND the removed text carries an
+# emphatic mandate (MUST/NEVER/...). Silent — used by `report`'s cost-axis
+# caveat to decide whether a non-favorable cost result is suspicious.
+is_mandate_deletion() {
+  local spec="$1" dir="$2" repo_abs="$3"
+  local arms_list; arms_list="$(spec_list_sections "$spec" arm)"
+  local label ovd ovd_abs ovf rel repo_f removed
+  for label in $arms_list; do
+    [ -n "$label" ] || continue
+    ovd="$(spec_section_get "$spec" arm "$label" overrides_dir)"
+    [ -n "$ovd" ] || continue
+    ovd_abs="$(resolve_path "$dir" "$ovd")"
+    [ -d "$ovd_abs" ] || continue
+    while IFS= read -r ovf; do
+      [ -n "$ovf" ] || continue
+      rel="${ovf#"$ovd_abs"/}"
+      repo_f="$repo_abs/$rel"
+      [ -f "$repo_f" ] || continue
+      removed="$(diff "$repo_f" "$ovf" 2>/dev/null | sed -n 's/^< //p')"
+      [ -n "$removed" ] || continue
+      [ -n "$(mandate_keywords_in "$removed")" ] && return 0
+    done < <(find "$ovd_abs" -type f \( -name 'CLAUDE.md' -o -name 'AGENTS.md' -o -name 'CLAUDE.local.md' -o -name 'AGENTS.local.md' \) 2>/dev/null)
+  done
+  return 1
+}
+
+# magnitude_estimate_prompt_debt <repo> <file_rel> <lines>  → prints, to stderr,
+# a magnitude report for a prompt-debt-deletion scaffold: how many bytes/tokens
+# we'd strip, what fraction of the file that is, and whether [Apply with review]
+# is probably a better fit. Token estimate is bytes/4 — same proxy header-audit
+# uses; not a tokenizer. This is honest framing, not a hard gate — the user
+# decides whether to scaffold knowing the magnitude.
+magnitude_estimate_prompt_debt() {
+  local repo="$1" file_rel="$2" lines="$3"
+  local src="$repo/$file_rel"
+  [ -f "$src" ] || return 0
+  local total_bytes; total_bytes="$(wc -c < "$src" 2>/dev/null | tr -d ' ')"
+  [ -n "$total_bytes" ] && [ "$total_bytes" -gt 0 ] || return 0
+  # Sum bytes of the lines that will be removed (sed prints them).
+  local sed_expr="" ln
+  local IFS=','
+  for ln in $lines; do sed_expr="${sed_expr}${ln}p;"; done
+  local removed_bytes removed_text
+  removed_bytes="$(sed -n "$sed_expr" "$src" 2>/dev/null | wc -c | tr -d ' ')"
+  [ -n "$removed_bytes" ] || removed_bytes=0
+  removed_text="$(sed -n "$sed_expr" "$src" 2>/dev/null)"
+  # Integer percent — awk for the division (bash math is integer-only).
+  local pct
+  pct="$(awk -v r="$removed_bytes" -v t="$total_bytes" 'BEGIN{ if (t>0) printf "%.1f", (r*100)/t; else print "0.0" }')"
+  local est_removed_tokens=$(( removed_bytes / 4 ))
+  cat >&2 <<EOF
+
+Magnitude estimate (arm B vs A):
+  Stripping ~${removed_bytes} bytes (~${est_removed_tokens} tokens) from ${file_rel}.
+  That's ~${pct}% of the file (${total_bytes} bytes total).
+
+Reality check (the rule that matters more than statistical power):
+  Experiments are honest when the proven payoff outweighs their own cost.
+  Don't run a \$60 experiment to prove a \$0.10 effect.
+
+  Pricing nuance: prefix tokens live in the prompt cache and are priced at
+  ~10% of regular input rates on cache reads. So both the proven SAVINGS and
+  the experiment COST scale down together — the ratio is preserved, but the
+  headline dollar / headroom impact is smaller than the raw token count
+  suggests.
+EOF
+
+  # Pre-existing-enforcement nudge for CLAUDE.md / AGENTS.md edits — the
+  # specific class where the text being trimmed may already be redundant.
+  # Per the 2026-05-27 audit: pre-commit hooks / CI / .claude/settings.json
+  # hooks are often the real source of enforcement, making the CLAUDE.md
+  # text null-effect (and any experiment measuring it null-result).
+  local _basename; _basename="$(basename "$file_rel")"
+  case "$_basename" in
+    CLAUDE.md|AGENTS.md|CLAUDE.local.md|AGENTS.local.md)
+      cat >&2 <<EOF
+  Heads-up — before scaffolding this experiment, check whether other
+  mechanisms already enforce what those lines say:
+    · pre-commit hooks  →  .git/hooks/pre-commit, .githooks/, scripts/
+    · CI rules          →  .github/workflows/, .gitlab-ci.yml, CI configs
+    · Claude Code hooks →  .claude/settings.json (hooks: section)
+  If a hook is the real source of truth, the ${_basename} text is redundant —
+  the experiment will measure nothing because both arms behave identically.
+  Apply with review instead; or rescaffold targeting the actual enforcement.
+EOF
+      ;;
+  esac
+  # 5% is the rough cutoff between "small enough to review" and "big enough to
+  # bother proving" — see SKILL.md's audit categorisation. The number is a
+  # rule of thumb, not a hard threshold; we just suggest, never block. And we
+  # surface BOTH paths so the user doesn't think small-magnitude implies "skip
+  # the experiment" — sometimes you want empirical proof even of a small
+  # effect, you just want to run it cheap.
+  if awk -v p="$pct" 'BEGIN{ exit !(p+0 < 5) }'; then
+    cat >&2 <<'EOF'
+  This change is <5% of the file. Two paths — pick by ratio, not by magnitude alone:
+
+  A) [Apply with review] — recommended when the diff IS the proof:
+       · review the diff (small + observable)
+       · optionally run ONE sanity replicate (`--k 1`) to confirm tests still pass
+       · skip the full bootstrap A/B
+  B) [Experiment] but cheaper — if you want empirical proof anyway:
+       · `--k 1` (sanity-only) or `--k 2` (light power)
+       · point `--adapter` at a Haiku wrapper — for prefix-only changes the model
+         isn't what's being tested, the prefix effect transfers (5-10× cheaper)
+       · narrow the `verify:` cmd to the smallest test that covers the change
+       · shorter tasks (10-turn focused, not 76-turn marathon)
+
+  Continuing to scaffold anyway (your call).
+EOF
+  fi
+  # The deletion is, by construction, a prompt-prefix cut → remind the caller the
+  # verify task must exercise it (and escalate if a mandate is in the cut).
+  print_discrimination_warning "$file_rel" "$removed_text"
+  echo "" >&2
+}
+
+# gen_clause_add_arm_b <repo> <exp_dir> <file_rel> <after_line> <text> [<text_file>]
+# Insert content into <file_rel> after line <after_line> (0 = top of file).
+# Source: --text "..." (inline; \n becomes newline) OR --text-file F.
+# Writes the modified file to <exp_dir>/arms/B/<file_rel>. Used by
+# `new --kind clause-add` for INSERTION experiments — the high-magnitude
+# behavior-change cases (mandatory-skill instructions, fast-mode toggles,
+# delegation rules) that prompt-debt-deletion can't express.
+gen_clause_add_arm_b() {
+  local repo="$1" exp_dir="$2" file_rel="$3" after_line="$4" text="$5" text_file="${6:-}"
+  local src="$repo/$file_rel" arm_dir="$exp_dir/arms/B"
+  [ -f "$src" ] || { err "file not found in repo: $file_rel ($src)"; return 1; }
+  case "$after_line" in ''|*[!0-9]*) err "--after-line must be a non-negative integer (got '$after_line')"; return 1 ;; esac
+  local sub_dir; sub_dir="$(dirname "$file_rel")"
+  mkdir -p "$arm_dir/$sub_dir" 2>/dev/null || true
+  local out="$arm_dir/$file_rel"
+  local insert_text=""
+  if [ -n "$text_file" ]; then
+    [ -f "$text_file" ] || { err "--text-file not found: $text_file"; return 1; }
+    insert_text="$(cat "$text_file")"
+  elif [ -n "$text" ]; then
+    # %b interprets backslash escapes (\n → newline) so callers can pass
+    # multi-line content without a temp file.
+    insert_text="$(printf '%b' "$text")"
+  else
+    err "clause-add needs --text or --text-file"; return 1
+  fi
+  # Position 0 = top of file (before line 1). Otherwise insert after line N.
+  # Use head/tail rather than `awk -v insert=...`: BSD awk (macOS) rejects a
+  # multi-line value passed via -v ("newline in string"), so multi-line
+  # --text-file content broke there.
+  if [ "$after_line" -eq 0 ]; then
+    { printf '%s\n' "$insert_text"; cat "$src"; } > "$out"
+  else
+    { head -n "$after_line" "$src"; printf '%s\n' "$insert_text"; tail -n +"$((after_line + 1))" "$src"; } > "$out"
+  fi
+}
+
+# write_spec — emit a complete `spec` file given parsed arguments. Used by both
+# `define` (template) and `new` (one-shot / wizard-driven). Args:
+#   $1 spec path  $2 id  $3 description  $4 repo  $5 replicates  $6 margin
+#   $7 arms (one per line: "label|model|overrides_dir")
+#   $8 tasks (one per line: "id|prompt|verify|timeout_s")
+#   $9 (optional) ledger_key — provenance from an audit finding
+#   ${10} (optional) hypothesis — the full claim in words (the dashboard headline)
+# Field separator is "|" (a non-whitespace IFS so empty fields don't collapse —
+# tab DOES collapse because it's whitespace IFS, that's the bash gotcha).
+write_spec() {
+  local out="$1" id="$2" desc="$3" repo="$4" reps="$5" margin="$6"
+  local arms_blob="$7" tasks_blob="$8" ledger_key="${9:-}" hypothesis="${10:-}"
+  {
+    printf '# header-experiment spec — see ~/.header/experiments/%s/\n' "$id"
+    printf '# Flat "key: value" lines. Sections: [arm:LABEL] and [task:ID].\n'
+    printf '# Edit freely; `header-experiment validate %s` checks it.\n\n' "$id"
+    printf 'id: %s\n' "$id"
+    printf 'description: %s\n' "${desc:-(set me)}"
+    printf 'hypothesis: %s\n' "${hypothesis:-${desc:-(state the full claim being tested)}}"
+    printf 'repo: %s\n' "${repo:-.}"
+    printf 'commit: HEAD\n'
+    printf 'replicates: %s\n' "${reps:-3}"
+    printf 'non_inferiority_margin: %s\n' "${margin:-0.02}"
+    [ -n "$ledger_key" ] && printf 'ledger_key: %s\n' "$ledger_key"
+    printf '# seal_history: off                 # OPTIONAL — default ON. Each replicate gets a\n'
+    printf '                                    # single-root-commit workspace so the agent cannot\n'
+    printf '                                    # `git log` the commit that solves a mined task.\n'
+    printf '                                    # Only turn off for tasks that need real history.\n'
+    printf '# worktree_include:                 # OPTIONAL — comma-sep paths (e.g. venv, .env)\n'
+    printf '                                    # symlinked from repo into each runs worktree.\n'
+    printf '                                    # Needed for editable installs / dotfiles that\n'
+    printf '                                    # git worktree does not bring along.\n'
+    printf '# setup:                            # OPTIONAL — shell cmd; its stdout KEY=VALUE lines\n'
+    printf '#                                   # become env for the adapter+verify (e.g. an\n'
+    printf '#                                   # isolated DATABASE_URL from a throwaway DB/branch).\n'
+    printf '# teardown:                         # OPTIONAL — shell cmd to destroy that infra\n'
+    printf '#                                   # (guaranteed to run, even on Ctrl-C).\n'
+    printf '# setup_scope: experiment           # experiment (provision once) | run (per task,arm,rep)\n'
+    printf '\n'
+    local label model ovd
+    printf '%s\n' "$arms_blob" | while IFS='|' read -r label model ovd; do
+      [ -n "$label" ] || continue
+      printf '[arm:%s]\n' "$label"
+      printf 'model: %s\n' "$model"
+      printf 'overrides_dir: %s\n\n' "$ovd"
+    done
+    local tid prompt verify timeout
+    printf '%s\n' "$tasks_blob" | while IFS='|' read -r tid prompt verify timeout; do
+      [ -n "$tid" ] || continue
+      printf '[task:%s]\n' "$tid"
+      printf 'prompt: %s\n' "$prompt"
+      printf 'verify: %s\n' "$verify"
+      printf 'timeout_s: %s\n\n' "${timeout:-1200}"
+    done
+  } > "$out"
+}
+
+# ── DEFINE ────────────────────────────────────────────────────
+cmd_define() {
+  local id="" desc="" hypothesis="" arms=() tasks=() replicates="3" margin="0.02"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --description) desc="${2:-}"; shift 2 ;;
+      --hypothesis)  hypothesis="${2:-}"; shift 2 ;;
+      --arm)         arms+=("${2:-}"); shift 2 ;;
+      --task)        tasks+=("${2:-}"); shift 2 ;;
+      --replicates)  replicates="${2:-3}"; shift 2 ;;
+      --margin)      margin="${2:-0.02}"; shift 2 ;;
+      -h|--help)     echo "Usage: header-experiment define <id> [--description T] [--hypothesis T] [--arm L=model] [--task ID=prompt:verify] [--replicates N] [--margin F]"; return 0 ;;
+      *) [ -z "$id" ] && id="$1" || { err "unknown arg '$1'"; return 1; }; shift ;;
+    esac
+  done
+  [ -n "$id" ] || { err "<id> required"; return 1; }
+  # id is a directory name — keep it safe.
+  case "$id" in *[!a-zA-Z0-9_.-]*) err "id must be [a-zA-Z0-9_.-]+ (got '$id')"; return 1 ;; esac
+
+  local dir; dir="$(exp_dir "$id")"
+  [ -e "$dir" ] && { err "experiment '$id' already exists ($dir)"; return 1; }
+  mkdir -p "$dir/logs" "$dir/tasks" "$dir/arms"
+
+  # Default to a 2-arm prompt-debt template if user passed no arms — it's the
+  # MVP wedge from the design doc (§8) and makes the file copy-pasteable.
+  [ "${#arms[@]}" -eq 0 ] && arms=("A=" "B=")
+
+  local spec="$dir/spec"
+  {
+    printf '# header-experiment spec — see ~/.header/experiments/%s/\n' "$id"
+    printf '# Flat "key: value" lines. Sections: [arm:LABEL] and [task:ID].\n'
+    printf '# Edit freely; `header-experiment validate %s` checks it.\n\n' "$id"
+    printf 'id: %s\n' "$id"
+    [ -n "$desc" ] && printf 'description: %s\n' "$desc" || printf 'description: (set me)\n'
+    printf 'hypothesis: %s\n' "${hypothesis:-${desc:-(state the full claim being tested)}}"
+    printf 'repo: .\n'
+    printf 'commit: HEAD\n'
+    printf 'replicates: %s\n' "$replicates"
+    printf 'non_inferiority_margin: %s\n' "$margin"
+    printf '\n'
+    local a kv label model
+    for a in "${arms[@]}"; do
+      label="${a%%=*}"; model="${a#*=}"
+      [ "$label" = "$a" ] && model=""
+      printf '[arm:%s]\n' "$label"
+      printf 'model: %s\n' "$model"
+      printf 'overrides_dir: \n\n'
+    done
+    if [ "${#tasks[@]}" -eq 0 ]; then
+      printf '[task:example]\n'
+      printf '# Replace with a real prompt file + verifier (Tier-1 oracle: exit 0 = pass).\n'
+      printf 'prompt: tasks/example.md\n'
+      printf 'verify: true\n'
+      printf 'timeout_s: 1200\n'
+    else
+      local t tid pv prompt verify
+      for t in "${tasks[@]}"; do
+        tid="${t%%=*}"; pv="${t#*=}"
+        prompt="${pv%%:*}"; verify="${pv#*:}"
+        [ "$verify" = "$pv" ] && verify="true"
+        printf '[task:%s]\n' "$tid"
+        printf 'prompt: %s\n' "$prompt"
+        printf 'verify: %s\n' "$verify"
+        printf 'timeout_s: 1200\n\n'
+      done
+    fi
+  } > "$spec"
+
+  echo "Wrote $spec"
+  echo "  edit the spec (set repo, commit, model per arm, prompt + verify per task), then:"
+  echo "    header-experiment validate $id"
+  echo "    header-experiment run $id --aa     # noise-floor / harness check first"
+  echo "    header-experiment run $id          # the A/B"
+  echo "    header-experiment analyze $id && header-experiment report $id"
+  _autosync "$id"        # status: defined (auto when keyed; recommends otherwise)
+}
+
+# ── NEW (audit-aware wizard / one-shot scaffolder) ────────────
+# The friendly front door. Three flavors, all writing a complete, runnable spec
+# in one call (no editor needed for the common case):
+#
+#   header-experiment new <id> --kind prompt-debt-deletion \
+#       --file CLAUDE.md --lines 12,13,14 \
+#       --task <repo-relative-path-or-inline> --verify "npm test"
+#       — auto-generates arm B's overrides_dir by sed-deleting those lines
+#       from <file>. This is the §8 wedge (deletion-as-the-cleanest-A/B).
+#       Prints a magnitude estimate up front; for <5%-of-file deletions, points
+#       at [Apply with review] instead (don't run a $60 experiment to prove a
+#       $0.10 effect).
+#
+#   header-experiment new <id> --kind clause-add \
+#       --file CLAUDE.md --after-line 30 --text "..." \
+#       --task <repo-relative-path-or-inline> --verify "npm test"
+#       — auto-generates arm B by INSERTING content after a given line. Used
+#       for behavior-change experiments (mandatory-skill instructions,
+#       delegation toggles, fast-mode rules) — the high-magnitude side of
+#       the experiment surface.
+#
+#   header-experiment new <id> --kind model-swap \
+#       --from claude-opus-4-7 --to claude-sonnet-4-6 \
+#       --task ./tasks/refactor.md --verify "npm test"
+#       — two arms differing only in model.
+#
+#   header-experiment new <id> \
+#       --arm A:claude-opus-4-7 --arm B:claude-sonnet-4-6 \
+#       --task ./refactor.md --verify "npm test"
+#       — generic: caller specifies arms directly. Same as --kind model-swap
+#       when the only difference is model, but lets you mix overrides too:
+#       --arm B:claude-sonnet-4-6:arms/B  (label:model:overrides_dir).
+#
+#   header-experiment new <id>
+#       — interactive wizard. Asks for description, two arms, a task (inline
+#       OR file path in the repo), verify (auto-detected from manifests), and
+#       replicates. Writes a complete spec.
+#
+# Any missing required field, when a TTY is available, is asked interactively;
+# without a TTY, missing fields fail with an explicit error. Always prints the
+# next-step commands (--aa first, then A/B) when the spec is written.
+cmd_new() {
+  local id="" kind="" file_arg="" lines="" from="" to=""
+  local verify_arg="" replicates="" margin="" desc="" ledger_key="" hypothesis=""
+  local repo_arg=""
+  local after_line="" text_arg="" text_file=""
+  local arms_in=() task_args=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --kind)        kind="${2:-}"; shift 2 ;;
+      --file)        file_arg="${2:-}"; shift 2 ;;
+      --lines)       lines="${2:-}"; shift 2 ;;
+      --after-line)  after_line="${2:-}"; shift 2 ;;
+      --text)        text_arg="${2:-}"; shift 2 ;;
+      --text-file)   text_file="${2:-}"; shift 2 ;;
+      --from)        from="${2:-}"; shift 2 ;;
+      --to)          to="${2:-}"; shift 2 ;;
+      --arm)         arms_in+=("${2:-}"); shift 2 ;;
+      --task)        task_args+=("${2:-}"); shift 2 ;;
+      --verify)      verify_arg="${2:-}"; shift 2 ;;
+      --replicates)  replicates="${2:-}"; shift 2 ;;
+      --margin)      margin="${2:-}"; shift 2 ;;
+      --description) desc="${2:-}"; shift 2 ;;
+      --hypothesis)  hypothesis="${2:-}"; shift 2 ;;
+      --ledger-key)  ledger_key="${2:-}"; shift 2 ;;
+      --repo)        repo_arg="${2:-}"; shift 2 ;;
+      -h|--help)
+        cat <<USAGE
+Usage: header-experiment new <id> [options]
+
+Modes:
+  --kind prompt-debt-deletion --file PATH --lines L1,L2,...
+                              auto-generate arm B by deleting those lines from FILE
+                              (path relative to repo). Use audit HIT lines directly.
+                              Prints a magnitude estimate before scaffolding so you
+                              can decide if a full A/B is worth the spend (see
+                              [Apply with review] in SKILL.md).
+  --kind clause-add --file PATH --after-line N (--text "..." | --text-file F)
+                              auto-generate arm B by INSERTING content after line N
+                              in FILE (N=0 inserts at top). Use for behavior-change
+                              experiments (mandatory-skill instructions, delegation
+                              toggles, fast-mode rules) that need to ADD a clause,
+                              not delete one.
+  --kind model-swap --from MODEL --to MODEL
+                              two-arm spec differing only in model
+  --arm LABEL[:MODEL[:OVERRIDES_DIR]] (repeatable)
+                              generic; caller specifies arms directly
+
+Shared:
+  --task PATH-OR-INLINE       prompt file (relative to repo) OR a one-line
+                              prompt (written to <exp_dir>/tasks/<id>.md)
+  --verify CMD                shell cmd (exit 0 = success); auto-detected
+                              from manifests if omitted
+  --replicates N              default 3
+  --margin F                  non-inferiority margin δ for success (default 0.02)
+  --description T             human description
+  --hypothesis T              the full claim being tested (the dashboard headline;
+                              defaults to --description if omitted)
+  --ledger-key K              record audit-finding provenance in the spec
+  --repo DIR                  repo root (default: current dir)
+
+Any missing field is prompted interactively when stdin is a TTY.
+USAGE
+        return 0 ;;
+      *) [ -z "$id" ] && id="$1" || { err "unknown arg '$1'"; return 1; }; shift ;;
+    esac
+  done
+
+  [ -n "$id" ] || { err "<id> required"; return 1; }
+  case "$id" in *[!a-zA-Z0-9_.-]*) err "id must be [a-zA-Z0-9_.-]+ (got '$id')"; return 1 ;; esac
+
+  local dir; dir="$(exp_dir "$id")"
+  [ -e "$dir" ] && { err "experiment '$id' already exists ($dir)"; return 1; }
+
+  # Determine repo. CLI arg > prompt > git toplevel > $PWD.
+  local repo="${repo_arg:-}"
+  if [ -z "$repo" ]; then
+    repo="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  fi
+  case "$repo" in /*) ;; *) repo="$(cd "$repo" && pwd)" ;; esac
+  [ -d "$repo" ] || { err "repo dir does not exist: $repo"; return 1; }
+
+  # We need to create the dir *before* materialising arm B's files for
+  # prompt-debt-deletion or writing inline tasks. Hold off until after we've
+  # validated --kind args though, so a bad CLI doesn't leave junk behind.
+  if [ -n "$kind" ]; then
+    case "$kind" in
+      prompt-debt-deletion)
+        [ -n "$file_arg" ] || file_arg="$(prompt_user "File to edit (path relative to repo, e.g. CLAUDE.md)" "CLAUDE.md")"
+        [ -n "$lines" ] || lines="$(prompt_user "Lines to delete (comma-separated, e.g. 12,13,14)" "")"
+        [ -n "$lines" ] || { err "--lines is required for prompt-debt-deletion"; return 1; }
+        [ -f "$repo/$file_arg" ] || { err "file not found in repo: $file_arg (repo=$repo)"; return 1; }
+        # Print the magnitude estimate up front so the caller can decide if the
+        # full A/B is worth the spend BEFORE we materialise everything. Honest
+        # framing, not a hard gate.
+        magnitude_estimate_prompt_debt "$repo" "$file_arg" "$lines"
+        ;;
+      clause-add)
+        [ -n "$file_arg" ] || file_arg="$(prompt_user "File to edit (path relative to repo, e.g. CLAUDE.md)" "CLAUDE.md")"
+        [ -n "$after_line" ] || after_line="$(prompt_user "Insert after which line? (0 = top of file)" "0")"
+        [ -f "$repo/$file_arg" ] || { err "file not found in repo: $file_arg (repo=$repo)"; return 1; }
+        case "$after_line" in ''|*[!0-9]*) err "--after-line must be a non-negative integer (got '$after_line')"; return 1 ;; esac
+        [ -n "$text_arg" ] || [ -n "$text_file" ] || {
+          # Last-resort interactive prompt — one line only (multi-line content
+          # belongs in --text-file).
+          text_arg="$(prompt_user "Text to insert (one line; use --text-file for multi-line)" "")"
+          [ -n "$text_arg" ] || { err "clause-add needs --text or --text-file"; return 1; }
+        }
+        ;;
+      model-swap)
+        [ -n "$from" ] || from="$(prompt_user "Current model (arm A)" "claude-opus-4-7")"
+        [ -n "$to" ]   || to="$(prompt_user   "Proposed model (arm B)" "claude-sonnet-4-6")"
+        [ -n "$from" ] && [ -n "$to" ] || { err "--from and --to are required for model-swap"; return 1; }
+        ;;
+      *) err "unknown --kind '$kind' (want: prompt-debt-deletion | clause-add | model-swap)"; return 1 ;;
+    esac
+  fi
+
+  # Ask for at least one task interactively if none were passed via --task.
+  # Repeated --task flags become t1, t2, t3, ... — important for getting above
+  # the soft N=2-4 "limited power" tier (≥5 paired tasks for crisp CIs).
+  if [ "${#task_args[@]}" -eq 0 ]; then
+    local _interactive_task
+    _interactive_task="$(prompt_user "Task — file path (relative to repo) OR a one-line inline prompt" "")"
+    [ -n "$_interactive_task" ] || { err "at least one task is required (use --task PATH-OR-INLINE; repeat for multi-task)"; return 1; }
+    task_args+=("$_interactive_task")
+  fi
+  # Track whether verify came from auto-detection so we can nudge the user
+  # afterwards. Auto-detected verifiers (npm test / pytest / cargo test / ...)
+  # are REGRESSION checks: "the suite still passes". They are NOT task-completion
+  # checks ("the new field exists in the response"). For experiments where the
+  # arm is supposed to MAKE something happen, that distinction matters — the
+  # verifier needs to assert the change, not just absence of regressions.
+  local verify_autodetected=0
+  if [ -z "$verify_arg" ]; then
+    local guess; guess="$(auto_detect_verify "$repo")"
+    verify_arg="$(prompt_user "Verify command (shell; exit 0 = success)" "$guess")"
+    [ -n "$verify_arg" ] || verify_arg="$guess"
+    [ "$verify_arg" = "$guess" ] && verify_autodetected=1
+  fi
+  [ -n "$replicates" ] || replicates="$(prompt_user "Replicates per (task, arm)" "3")"
+  [ -n "$margin" ]     || margin="${margin:-0.02}"
+  [ -n "$desc" ]       || desc="$(prompt_user "Short description" "")"
+
+  # In generic mode (no --kind), arms must be set — ask if not.
+  if [ -z "$kind" ] && [ "${#arms_in[@]}" -eq 0 ]; then
+    local am_a am_b
+    am_a="$(prompt_user "Arm A label[:model]" "A:")"
+    am_b="$(prompt_user "Arm B label[:model]" "B:")"
+    arms_in=("$am_a" "$am_b")
+  fi
+
+  # Time to materialise.
+  mkdir -p "$dir/logs" "$dir/tasks" "$dir/arms"
+
+  # Build arms_blob (label|model|overrides_dir per line; "|" because tab IFS
+  # collapses consecutive empty fields).
+  local arms_blob=""
+  case "$kind" in
+    prompt-debt-deletion)
+      # Arm A = no overrides (control). Arm B = file with lines stripped.
+      gen_prompt_debt_arm_b "$repo" "$dir" "$file_arg" "$lines" || { err "could not generate arm B"; return 1; }
+      arms_blob=$'A||\nB||arms/B'
+      ;;
+    clause-add)
+      # Arm A = no overrides (control). Arm B = file with content inserted.
+      gen_clause_add_arm_b "$repo" "$dir" "$file_arg" "$after_line" "$text_arg" "$text_file" \
+        || { err "could not generate arm B"; return 1; }
+      arms_blob=$'A||\nB||arms/B'
+      ;;
+    model-swap)
+      arms_blob="$(printf 'A|%s|\nB|%s|' "$from" "$to")"
+      ;;
+    *)
+      local a label model ovd rest
+      for a in "${arms_in[@]}"; do
+        label="${a%%:*}"; rest="${a#*:}"
+        [ "$rest" = "$a" ] && rest=""
+        # parse "model[:overrides_dir]"
+        model="${rest%%:*}"; ovd="${rest#*:}"
+        [ "$ovd" = "$rest" ] && ovd=""
+        arms_blob="${arms_blob}${label}|${model}|${ovd}"$'\n'
+      done
+      ;;
+  esac
+
+  # Resolve each task: existing file (absolute or repo-relative) → use as-is;
+  # otherwise inline prompt → write to <exp_dir>/tasks/tN.md. Number tasks t1,
+  # t2, ... in the order --task flags were given.
+  local tasks_blob="" _ta _tid _tpath _idx=0
+  for _ta in "${task_args[@]}"; do
+    _idx=$(( _idx + 1 ))
+    _tid="t${_idx}"
+    if [ -f "$_ta" ]; then
+      _tpath="$_ta"
+    elif [ -f "$repo/$_ta" ]; then
+      _tpath="$_ta"   # store as relative; resolve_task_path finds it under repo
+    else
+      _tpath="$(write_inline_task "$dir" "$_tid" "$_ta")"
+    fi
+    tasks_blob="${tasks_blob}${_tid}|${_tpath}|${verify_arg}|1200"$'\n'
+  done
+
+  local spec="$dir/spec"
+  write_spec "$spec" "$id" "$desc" "$repo" "$replicates" "${margin:-0.02}" "$arms_blob" "$tasks_blob" "$ledger_key" "$hypothesis"
+
+  # Sanity-check the result. Internal call — suppress its auto-sync; cmd_new
+  # fires one of its own at the end (set/unset explicitly: a prefix assignment
+  # on a shell function may persist after return).
+  _HE_INTERNAL_VALIDATE=1
+  cmd_validate "$id" >/dev/null 2>&1; local _v_rc=$?
+  unset _HE_INTERNAL_VALIDATE
+  if [ "$_v_rc" -ne 0 ]; then
+    err "spec was written but failed validation — run 'header-experiment validate $id' to see why"
+    return 1
+  fi
+
+  echo "Wrote $spec"
+  echo "  Repo:      $repo"
+  local _ntasks; _ntasks="$(printf '%s\n' "$tasks_blob" | grep -c .)"
+  if [ "$_ntasks" -eq 1 ]; then
+    echo "  Task:      $(printf '%s' "$tasks_blob" | head -1 | awk -F'|' '{print $2}')"
+  else
+    echo "  Tasks ($_ntasks):"
+    printf '%s\n' "$tasks_blob" | while IFS='|' read -r _tid _tpath _rest1 _rest2; do
+      [ -n "$_tid" ] || continue
+      echo "    $_tid:  $_tpath"
+    done
+  fi
+  echo "  Verify:    $verify_arg"
+  case "$kind" in
+    prompt-debt-deletion) echo "  Arms:      A=control, B=$(basename "$file_arg") with lines [$lines] removed (arms/B/$file_arg)" ;;
+    clause-add)           echo "  Arms:      A=control, B=$(basename "$file_arg") with content inserted after line $after_line (arms/B/$file_arg)" ;;
+    model-swap)           echo "  Arms:      A=$from, B=$to" ;;
+    *)                    echo "  Arms:      $(printf '%s\n' "$arms_blob" | awk -F'|' 'NF>0{print $1"="$2}' | paste -sd ", " -)" ;;
+  esac
+  if [ "$verify_autodetected" -eq 1 ]; then
+    cat <<EOF
+
+  Note: 'verify' was auto-detected from your project manifest. That command
+  is a REGRESSION check ("the suite still passes"), not a TASK-COMPLETION
+  check. If your arm B is supposed to MAKE something happen (e.g. add a new
+  field, change a behaviour), extend 'verify' to assert the change:
+    e.g. verify: $verify_arg && curl -fsS http://localhost:8000/x | jq '.new_field != null'
+  Edit ~/.header/experiments/$id/spec → [task:t1] → verify: ...
+EOF
+  fi
+  echo ""
+  echo "  Next:"
+  echo "    header-experiment run $id --aa     # noise-floor / harness check FIRST"
+  echo "    header-experiment run $id          # the A/B"
+  echo "    header-experiment analyze $id && header-experiment report $id"
+  _autosync "$id"        # status: defined (auto when keyed; recommends otherwise)
+}
+
+# ── MINE (git-history task mining → runnable tests-oracle experiment) ──────────
+# The keystone (design §11): you don't author verifiers, you mine them. A real
+# repo already ships its correctness oracle — its test suite — and its git history
+# is a factory of (task, oracle) pairs. Every commit that fixed code AND touched
+# tests is a task: check out the PARENT, re-apply only that commit's TEST files
+# (so the new tests fail), and the job becomes "make the suite pass." The repo's
+# own suite grades it. That removes the two hand-authoring frictions that blocked
+# "continuous": the task PROMPT (now auto-generated + generic) and the VERIFY
+# command (now the repo's own auto-detected suite). Output: a complete, runnable
+# experiment — by default a model-swap A/B (the #1 named use, "is the cheaper
+# model good enough on my real tasks?").
+
+# _mine_validate <repo> <parent> <child> <verify> <timeout_s> <paths_csv> <include_csv> [<fullval>]
+# Echoes a one-word status: `valid` (the re-applied tests FAIL at the parent → a
+# real fix exists), `nofail` (they pass → nothing to fix → skip), or `error`
+# (couldn't build the worktree / apply the tests → skip). Runs the suite once in a
+# throwaway worktree at the parent, with the child's tests applied; symlinks the
+# dep/artifact dirs git worktrees don't carry so the suite can actually run.
+# When the verify command is a runner we can scope (pytest / go test), the run is
+# NARROWED to the re-applied test paths — the FAIL_TO_PASS question is about
+# those tests, so this is faster AND more precise. <fullval>=1 forces the full
+# suite (the --full-validate flag).
+_mine_validate() {
+  local repo="$1" parent="$2" child="$3" verify="$4" tmo="$5" paths="$6" include="$7" fullval="${8:-0}"
+  local wt rc=0 p arr=() oifs="$IFS"
+  if [ "$fullval" -ne 1 ]; then
+    local tcmd; tcmd="$(_targeted_verify_cmd "$verify" "$paths")"
+    [ -n "$tcmd" ] && verify="$tcmd"
+  fi
+  wt="$(mktemp -d "${TMPDIR:-/tmp}/header-mine.XXXXXX")" && rm -rf "$wt"
+  ( cd "$repo" && git worktree add --detach -q "$wt" "$parent" 2>/dev/null ) || { echo error; return 0; }
+  # Symlink dep/artifact dirs (node_modules, venv, …) so imports resolve.
+  IFS=','
+  for p in $include; do
+    p="$(printf '%s' "$p" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    [ -n "$p" ] && [ -e "$repo/$p" ] && [ ! -e "$wt/$p" ] && ln -s "$repo/$p" "$wt/$p" 2>/dev/null
+  done
+  IFS="$oifs"
+  # Apply the child's test files onto the parent.
+  if ! _oracle_checkout "$wt" "$child" "$paths"; then
+    ( cd "$repo" && git worktree remove --force "$wt" >/dev/null 2>&1 ) || rm -rf "$wt"
+    echo error; return 0
+  fi
+  # Run the suite. A FAILURE means the new tests fail at the parent → real task.
+  if command -v timeout >/dev/null 2>&1; then
+    ( cd "$wt" && timeout "${tmo}s" bash -c "$verify" ) >/dev/null 2>&1; rc=$?
+  else
+    ( cd "$wt" && bash -c "$verify" ) >/dev/null 2>&1; rc=$?
+  fi
+  ( cd "$repo" && git worktree remove --force "$wt" >/dev/null 2>&1 ) || rm -rf "$wt"
+  [ "$rc" -ne 0 ] && echo valid || echo nofail
+}
+
+cmd_mine() {
+  local id="" repo="" limit=150 max_files=5 max_tasks=8 verify_override=""
+  local from="" to="" arm_in=() reps=3 margin=0.02 since="" vtimeout=600
+  local list_only=0 yes=0 desc="" hypothesis="" kind="" fullval=0
+  local adopt=0 effort="" from_effort="" sweep=0 sweep_explicit=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --full-validate) fullval=1; shift ;;
+      --repo)        repo="${2:-}"; shift 2 ;;
+      --limit)       limit="${2:-150}"; shift 2 ;;
+      --max-files)   max_files="${2:-5}"; shift 2 ;;
+      --max-tasks)   max_tasks="${2:-8}"; shift 2 ;;
+      --verify)      verify_override="${2:-}"; shift 2 ;;
+      --from)        from="${2:-}"; shift 2 ;;
+      --to)          to="${2:-}"; shift 2 ;;
+      --adopt)       adopt=1; shift ;;
+      --effort)      effort="${2:-}"; shift 2 ;;
+      --from-effort) from_effort="${2:-}"; shift 2 ;;
+      --sweep)       sweep=1; sweep_explicit=1; shift ;;
+      --no-sweep)    sweep=0; sweep_explicit=1; shift ;;
+      --kind)        kind="${2:-}"; shift 2 ;;
+      --arm)         arm_in+=("${2:-}"); shift 2 ;;
+      --replicates)  reps="${2:-3}"; shift 2 ;;
+      --margin)      margin="${2:-0.02}"; shift 2 ;;
+      --since)       since="${2:-}"; shift 2 ;;
+      --timeout)     vtimeout="${2:-600}"; shift 2 ;;
+      --list)        list_only=1; shift ;;
+      --yes|-y)      yes=1; shift ;;
+      --description) desc="${2:-}"; shift 2 ;;
+      --hypothesis)  hypothesis="${2:-}"; shift 2 ;;
+      -h|--help)
+        cat <<EOF
+Usage: header-experiment mine <id> [options]
+
+Mine this repo's git history into a runnable tests-oracle experiment: each task
+replays a real fix (parent commit + that commit's tests re-applied) and is graded
+by the repo's own suite. No task prompts or verify commands to hand-author.
+
+  --repo DIR        repo to mine (default: cwd's git toplevel)
+  --limit N         commits to scan, newest first (default 150)
+  --max-files N     skip commits changing more than N files (default 5)
+  --max-tasks N     stop after N validated tasks (default 8)
+  --verify CMD      test command (default: auto-detected from manifests)
+  --from M --to N   model-swap arms A=M, B=N (default: opus-4-8 vs sonnet-4-6).
+                    Effort is @-encoded per arm: --from claude-opus-4-7@xhigh.
+  --kind KIND       record an explicit kind: in the spec (e.g. engine-swap)
+  --arm L[:M[:OVD]] explicit arm (repeatable) — overrides --from/--to
+  --replicates N    replicates per (task,arm) (default 3)
+  --since REF       only mine commits in REF..HEAD
+  --timeout S       per-candidate suite timeout during validation (default 600)
+  --full-validate   run the WHOLE suite per candidate during validation. The
+                    default narrows auto-detected runners (pytest / go test) to
+                    the candidate's re-applied test paths — much faster on a
+                    big suite, and more precise (an unrelated broken test can't
+                    masquerade as a real fix).
+  --list            discover candidates and print them; no suite runs, no write
+  --yes             skip the validation confirmation prompt
+
+Engine adoption — "should you move your harness to a newer model?":
+  --adopt           arm A = the model+effort you run TODAY (auto-detected);
+                    arm B = --to MODEL (default claude-fable-5) @ --effort LEVEL
+                    (default high). Writes kind: engine-swap. The card's proof.
+  --effort LEVEL    arm B effort (low|medium|high|xhigh|max; default high)
+  --from MODEL[@E]  override the detected current model (and effort)
+  --from-effort L   override the detected current effort
+  --sweep           offer a 3rd arm at the next effort up (the effort frontier);
+                    interactive by default — --sweep forces it, --no-sweep skips
+EOF
+        return 0 ;;
+      *) [ -z "$id" ] && id="$1" || { err "unknown arg '$1'"; return 1; }; shift ;;
+    esac
+  done
+  # --adopt defaults the id to adopt-<target> so the card's CTA is a bare command.
+  [ "$adopt" -eq 1 ] && [ -z "$id" ] && id="adopt-$(printf '%s' "${to:-claude-fable-5}" | sed 's/^claude-//; s/[^a-zA-Z0-9._-]/-/g')"
+  [ -n "$id" ] || { err "<id> required"; return 1; }
+  case "$id" in *[!a-zA-Z0-9_.-]*) err "id must be [a-zA-Z0-9_.-]+ (got '$id')"; return 1 ;; esac
+  case "$limit$max_files$max_tasks$vtimeout" in *[!0-9]*) err "--limit/--max-files/--max-tasks/--timeout must be integers"; return 1 ;; esac
+
+  # Resolve repo → git toplevel.
+  [ -n "$repo" ] || repo="$(pwd)"
+  repo="$(cd "$repo" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)" \
+    || { err "not a git repository (mine needs git history): ${repo:-$(pwd)}"; return 1; }
+
+  # ── engine-adoption setup (--adopt): resolve arms + guards BEFORE mining, so a
+  # degenerate/invalid config fails fast instead of after the suite-validation pass.
+  local adopt_sweep_eff=""
+  if [ "$adopt" -eq 1 ]; then
+    [ -n "$to" ] || to="claude-fable-5"
+    [ -n "$effort" ] || effort="high"
+    case "$effort" in low|medium|high|xhigh|max) ;; *) err "--effort must be low|medium|high|xhigh|max (got '$effort')"; return 1 ;; esac
+    # Arm A = the engine you run today. Detect unless overridden; an @-suffix on
+    # --from carries its effort. Undetectable → assume pre-4.8 Opus and flag loudly.
+    case "$from" in *@*) from_effort="${from_effort:-${from##*@}}"; from="${from%@*}" ;; esac
+    local _assumed=0
+    [ -n "$from" ] || from="$(detect_current_model "$repo")"
+    [ -n "$from" ] || { from="claude-opus-4-7"; _assumed=1; }
+    [ -n "$from_effort" ] || from_effort="$(detect_current_effort "$from" "$repo")"
+    case "$from_effort" in low|medium|high|xhigh|max) ;; *) err "current effort must be low|medium|high|xhigh|max (got '$from_effort'); pass --from-effort"; return 1 ;; esac
+    [ -n "$kind" ] || kind="engine-swap"
+    [ -n "$hypothesis" ] || hypothesis="'${to}' @${effort} matches your current '${from}' @${from_effort} on this repo's own historical fixes (tests-oracle), at equal-or-lower cost."
+    [ -n "$desc" ] || desc="Adopt ${to}: engine swap vs current ${from}@${from_effort}"
+    if [ "$from" = "$to" ] && [ "$from_effort" = "$effort" ]; then
+      err "arm A ($from@$from_effort) already equals arm B ($to@$effort) — nothing to compare. Use --effort or --to to differ."
+      return 1
+    fi
+    [ "$_assumed" -eq 1 ] && {
+      err "couldn't detect your current model (no ANTHROPIC_MODEL / pinned settings / recent transcript) — ASSUMING arm A = claude-opus-4-7@${from_effort}."
+      err "Re-run with --from <your-model> [--from-effort <level>] if wrong — arm A is the control, and a wrong identity invalidates the comparison."
+    }
+    # --sweep: offer a 3rd arm at the next effort up (the effort frontier).
+    if [ "$sweep" -eq 0 ] && [ "$sweep_explicit" -eq 0 ] && [ "$yes" -ne 1 ] && [ -t 0 ]; then
+      printf 'Also add a 3rd arm above %s@%s to map the effort frontier? [y/N] ' "$to" "$effort" >&2
+      local _sw=""; IFS= read -r _sw; case "$_sw" in [yY]|[yY][eE][sS]) sweep=1 ;; esac
+    fi
+    if [ "$sweep" -eq 1 ]; then
+      case "$effort" in high) adopt_sweep_eff="xhigh" ;; xhigh) adopt_sweep_eff="max" ;; *) adopt_sweep_eff="" ;; esac
+      [ -n "$adopt_sweep_eff" ] || echo "mine --adopt: --sweep has no distinct effort above '$effort' — running 2-arm." >&2
+    fi
+    echo "Engine-adoption — A=${from}@${from_effort} (current)  vs  B=${to}@${effort}$([ -n "$adopt_sweep_eff" ] && printf '  +C=%s@%s' "$to" "$adopt_sweep_eff") (candidate)" >&2
+  fi
+
+  if [ "$list_only" -eq 0 ]; then
+    local dir_pre; dir_pre="$(exp_dir "$id")"
+    [ -e "$dir_pre" ] && { err "experiment '$id' already exists ($dir_pre)"; return 1; }
+  fi
+
+  # Test command (oracle). Auto-detect unless overridden. "true" → can't grade —
+  # but only the build path needs it; --list is pure git discovery, so don't
+  # block a preview just because no manifest was found.
+  local verify="$verify_override"
+  [ -n "$verify" ] || verify="$(auto_detect_verify "$repo")"
+  if [ "$list_only" -eq 0 ] && [ "$verify" = "true" ]; then
+    err "couldn't detect a test command for $repo. Pass --verify 'your test command' (e.g. --verify 'pytest -q')."
+    return 1
+  fi
+
+  beta_banner
+
+  # ── discover candidate commits (cheap; pure git) ──────────────
+  # A candidate touches ≥1 test file AND ≥1 non-test file, ≤ max_files total, and
+  # has exactly one parent (no merges / root). Newest first.
+  echo "Scanning up to $limit commit(s) in $repo for fixes that touch source + tests…" >&2
+  local range="HEAD"; [ -n "$since" ] && range="$since..HEAD"
+  local candidates=() sha
+  while IFS= read -r sha; do
+    [ -n "$sha" ] || continue
+    ( cd "$repo" && git rev-parse -q --verify "${sha}^" >/dev/null 2>&1 ) || continue   # need a parent
+    local changes nfiles tests="" nsrc=0 st path short_child short_parent
+    changes="$(cd "$repo" && git diff-tree -r --no-commit-id --name-status "$sha" 2>/dev/null)"
+    [ -n "$changes" ] || continue
+    nfiles="$(printf '%s\n' "$changes" | grep -c .)"
+    [ "$nfiles" -le "$max_files" ] || continue
+    while IFS="$(printf '\t')" read -r st path; do
+      [ -n "$path" ] || continue
+      if _looks_like_test "$path"; then
+        case "$st" in A|M) tests="${tests:+$tests,}$path" ;; esac   # present at child
+      else
+        case "$st" in A|M|D) nsrc=$(( nsrc + 1 )) ;; esac
+      fi
+    done <<EOF
+$changes
+EOF
+    [ -n "$tests" ] && [ "$nsrc" -ge 1 ] || continue
+    short_child="$(cd "$repo" && git rev-parse --short "$sha")"
+    short_parent="$(cd "$repo" && git rev-parse --short "${sha}^")"
+    candidates+=("$short_child|$short_parent|$nsrc|$tests")
+  done < <(cd "$repo" && git log --no-merges --format=%H -n "$limit" "$range" 2>/dev/null)
+
+  local n_cand="${#candidates[@]}"
+  [ "$n_cand" -gt 0 ] || { err "no candidate commits (scanned $limit; want a fix touching tests + source in ≤ $max_files files). Try a larger --limit or --max-files."; return 1; }
+
+  if [ "$list_only" -eq 1 ]; then
+    printf 'Found %d candidate commit(s) (newest first):\n' "$n_cand"
+    local c child parent nsrc paths
+    for c in "${candidates[@]}"; do
+      IFS='|' read -r child parent nsrc paths <<<"$c"
+      printf '  %-10s (parent %-10s) %s impl file(s)  tests: %s\n' "$child" "$parent" "$nsrc" "$paths"
+    done
+    printf '\n--list: no suite runs, nothing written. Re-run without --list to validate and build.\n'
+    return 0
+  fi
+
+  # dep/artifact dirs that git worktrees don't carry — symlink them so the suite
+  # runs (both during validation and during the real experiment via worktree_include).
+  local include_list="" d
+  for d in node_modules .venv venv vendor target .bundle .yarn; do
+    [ -e "$repo/$d" ] && include_list="${include_list:+$include_list,}$d"
+  done
+
+  # ── validation gate ───────────────────────────────────────────
+  cat >&2 <<EOF
+
+Found $n_cand candidate commit(s). To keep only REAL tasks, mine runs your test
+suite once per candidate at the parent commit, keeping those where the re-applied
+tests FAIL (a fix genuinely exists). Local only — no tokens, no network.
+  verify:  $verify$([ "$fullval" -ne 1 ] && printf '  (narrowed per candidate to its re-applied test paths when the runner supports it; --full-validate forces the whole suite)')
+  stops after $max_tasks valid task(s); $([ -n "$include_list" ] && echo "symlinking: $include_list" || echo "no dep dirs to symlink")
+This can take a while on a large suite.
+EOF
+  if [ "$yes" -ne 1 ] && [ -t 0 ]; then
+    printf 'Proceed with validation? [y/N] ' >&2
+    local ans=""; IFS= read -r ans
+    case "$ans" in [yY]|[yY][eE][sS]) ;; *) err "aborted"; return 1 ;; esac
+  fi
+
+  # ── validate newest-first until max_tasks (soft cap on attempts) ──
+  local valid=() examined=0 n_nofail=0 n_error=0 cap=$(( max_tasks * 5 )); [ "$cap" -lt 10 ] && cap=10
+  local c child parent nsrc paths status
+  for c in "${candidates[@]}"; do
+    [ "${#valid[@]}" -ge "$max_tasks" ] && break
+    [ "$examined" -ge "$cap" ] && { echo "  (reached validation cap of $cap attempts; raise --max-tasks to keep more)" >&2; break; }
+    IFS='|' read -r child parent nsrc paths <<<"$c"
+    examined=$(( examined + 1 ))
+    printf '  [validate %d/%d] %s … ' "$examined" "$n_cand" "$child" >&2
+    status="$(_mine_validate "$repo" "$parent" "$child" "$verify" "$vtimeout" "$paths" "$include_list" "$fullval")"
+    case "$status" in
+      valid)  printf 'tests fail at parent → TASK\n' >&2; valid+=("$child|$parent|$paths") ;;
+      nofail) printf 'tests already pass → skip\n' >&2; n_nofail=$(( n_nofail + 1 )) ;;
+      *)      printf 'could not build/apply → skip\n' >&2; n_error=$(( n_error + 1 )) ;;
+    esac
+    # Early bail: if the first several source+test commits ALL pass cleanly at
+    # their parent (no real FAIL_TO_PASS, zero run errors), the parent's code is
+    # almost certainly not under test — worktree isolation is defeated. Stop now
+    # instead of running the full suite through every remaining candidate for nothing.
+    if [ "${#valid[@]}" -eq 0 ] && [ "$n_error" -eq 0 ] && [ "$n_nofail" -ge 5 ]; then
+      echo "  (stopping early: $n_nofail candidates' tests all PASSED at their parent — see the diagnosis below)" >&2
+      break
+    fi
+  done
+
+  local n_valid="${#valid[@]}"
+  if [ "$n_valid" -lt 1 ]; then
+    if [ "$n_nofail" -gt 0 ]; then
+      # The suite RAN and PASSED at the parent — so the parent's (unfixed) code
+      # wasn't actually under test. The dominant cause is defeated isolation.
+      err "no valid tasks: every examined candidate's re-applied tests PASSED at its parent ($n_nofail/$examined)."
+      err "That means the parent's code wasn't under test — worktree isolation is almost certainly defeated:"
+      err "  • A PEP 660 editable install (a sys.meta_path finder with ABSOLUTE paths), or a globally-installed"
+      err "    copy of your package, shadows the worktree — imports resolve to your CURRENT (fixed) code, not the"
+      err "    checked-out parent. 'worktree_include: venv' does NOT help here (the finder's paths are absolute)."
+      err "    Fix: reinstall editable in compat mode —  pip install -e . --config-settings editable_mode=compat"
+      err "    (a path-based .pth; revert anytime with 'pip install -e .'), or use a per-worktree venv."
+      err "  • Less often: these commits aren't genuine FAIL_TO_PASS fixes (the test doesn't exercise the change)."
+      err "  Confirm:  git worktree add /tmp/wt HEAD~5 && cd /tmp/wt && python -c 'import <pkg>,inspect;print(inspect.getfile(<pkg>))'"
+      err "            — if that path is OUTSIDE /tmp/wt, isolation is the cause."
+    else
+      err "no valid tasks: no candidate's re-applied tests ran to a clean FAIL at its parent ($n_error/$examined errored)."
+      err "Common cause: the suite can't run in a bare worktree (needs deps/build/env)."
+      err "Try: --verify with a command that works standalone, or check that $include_list exists in the repo."
+    fi
+    return 1
+  fi
+
+  # ── arms (default: a model swap; --adopt / --arm / --from/--to override) ──
+  # Effort is @-encoded in the arm's model token ("model@effort"); the spec
+  # writer below splits it back into model: / effort: lines.
+  local arms=()
+  if [ "$adopt" -eq 1 ]; then
+    arms=("A:${from}@${from_effort}" "B:${to}@${effort}")
+    [ -n "$adopt_sweep_eff" ] && arms+=("C:${to}@${adopt_sweep_eff}")
+  elif [ "${#arm_in[@]}" -gt 0 ]; then
+    arms=("${arm_in[@]}")
+  elif [ -n "$from" ] || [ -n "$to" ]; then
+    arms=("A:${from}" "B:${to}")
+  else
+    arms=("A:claude-opus-4-8" "B:claude-sonnet-4-6")
+  fi
+  # Pull each arm's model (the bit between the first and second ':') for the
+  # description/hypothesis prose only — the spec writer re-parses arms itself.
+  local a_model b_model
+  a_model="${arms[0]#*:}"; a_model="${a_model%%:*}"
+  b_model=""; [ "${#arms[@]}" -ge 2 ] && { b_model="${arms[1]#*:}"; b_model="${b_model%%:*}"; }
+
+  # ── descriptions ──
+  local repo_name; repo_name="$(basename "$repo")"
+  [ -n "$desc" ] || desc="Model swap on $n_valid task(s) mined from $repo_name git history (tests-oracle)"
+  if [ -z "$hypothesis" ]; then
+    if [ -n "$b_model" ] && [ "$a_model" != "$b_model" ]; then
+      hypothesis="${b_model} matches ${a_model:-the control} on this repo's own historical fixes (tests-oracle), at lower cost."
+    else
+      hypothesis="$desc"
+    fi
+  fi
+
+  # ── write the experiment ──
+  local dir; dir="$(exp_dir "$id")"
+  mkdir -p "$dir/logs" "$dir/tasks"
+  local prompt_file="$dir/tasks/_oracle.md"
+  cat > "$prompt_file" <<EOF
+# Task: make the test suite pass
+
+This repository is at a known-good commit, except that a few tests are currently
+FAILING. Fix the implementation so the entire test suite passes.
+
+How to work:
+1. Run the suite to see what's failing:  $verify
+2. Edit the IMPLEMENTATION (not the tests) until every test passes.
+3. Re-run the suite to confirm.
+
+Hard rules:
+- Do NOT edit, add, delete, skip, or weaken any test files. Test files are
+  restored to their pinned version before grading — only implementation changes
+  count, so editing tests cannot make you pass.
+- Do NOT change the build or test configuration.
+
+You are done when \`$verify\` exits cleanly with all tests passing.
+EOF
+
+  local spec="$dir/spec"
+  {
+    printf '# header-experiment spec — MINED from git history (tests-oracle, design §11).\n'
+    printf '# Each [task] replays a real fix: check out its parent `commit`, re-apply the\n'
+    printf '# fixing commit'\''s test files (`apply_from`/`apply_paths`), and grade with the\n'
+    printf '# repo'\''s own suite (`verify`). Test files are restored (`lock_paths`) before\n'
+    printf '# grading, so "make the test pass" can'\''t be won by editing the test.\n'
+    printf '# Edit freely; `header-experiment validate %s` checks it.\n\n' "$id"
+    printf 'id: %s\n' "$id"
+    printf 'description: %s\n' "$desc"
+    printf 'hypothesis: %s\n' "$hypothesis"
+    printf 'repo: %s\n' "$repo"
+    printf 'commit: HEAD\n'
+    printf 'replicates: %s\n' "$reps"
+    printf 'non_inferiority_margin: %s\n' "$margin"
+    [ -n "$kind" ] && printf 'kind: %s\n' "$kind"
+    [ -n "$include_list" ] && printf 'worktree_include: %s\n' "$include_list"
+    printf '\n'
+    local arm label restp model ovd eff
+    for arm in "${arms[@]}"; do
+      label="${arm%%:*}"; restp="${arm#*:}"; [ "$restp" = "$arm" ] && restp=""
+      model="${restp%%:*}"; ovd=""
+      case "$restp" in *:*) ovd="${restp#*:}" ;; esac
+      # Effort is @-encoded in the model token: "claude-opus-4-8@xhigh".
+      eff=""; case "$model" in *@*) eff="${model##*@}"; model="${model%@*}" ;; esac
+      printf '[arm:%s]\n' "$label"
+      printf 'model: %s\n' "$model"
+      [ -n "$eff" ] && printf 'effort: %s\n' "$eff"
+      printf 'overrides_dir: %s\n\n' "$ovd"
+    done
+    local v child parent paths
+    for v in "${valid[@]}"; do
+      IFS='|' read -r child parent paths <<<"$v"
+      printf '[task:t-%s]\n' "$child"
+      printf 'title: make tests pass (%s)\n' "$child"
+      printf 'commit: %s\n' "$parent"
+      printf 'apply_from: %s\n' "$child"
+      printf 'apply_paths: %s\n' "$paths"
+      printf 'lock_paths: %s\n' "$paths"
+      printf 'prompt: tasks/_oracle.md\n'
+      printf 'verify: %s\n' "$verify"
+      printf 'timeout_s: 1800\n\n'
+    done
+  } > "$spec"
+
+  _HE_INTERNAL_VALIDATE=1 cmd_validate "$id" >/dev/null 2>&1 \
+    || { err "internal: the generated spec failed validation ($spec) — please file a bug"; return 1; }
+
+  echo "Wrote $spec"
+  echo "  $n_valid task(s) mined from git history (examined $examined candidate(s))."
+  echo "  Oracle: your test suite — verify: $verify"
+  echo "  Arms:   $(printf '%s\n' "${arms[@]}" | awk -F: 'NF{printf "%s=%s ", $1, ($2==""?"(default)":$2)}')"
+  [ -n "$include_list" ] && echo "  worktree_include: $include_list  (dep dirs symlinked into each run)"
+  echo ""
+  echo "  Next:"
+  echo "    header-experiment run $id --aa     # noise-floor / flaky-test check FIRST"
+  echo "    header-experiment run $id          # the matrix (all arms)"
+  if [ "${#arms[@]}" -ge 3 ]; then
+    echo "    header-experiment report $id --frontier   # all arms vs A + the cheapest-that-holds-quality pick"
+  else
+    echo "    header-experiment analyze $id && header-experiment report $id"
+  fi
+  _autosync "$id"        # status: defined
+}
+
+# ── Engine detection (for `mine --adopt`) ─────────────────────────────────────
+# Figure out the model + effort the user's harness runs TODAY, so the adoption
+# A/B's control (arm A) is their real engine, not a guess.
+
+# _recent_transcript_model — the most recent PRIMARY model (opus/sonnet, not the
+# background haiku) in the user's Claude Code transcripts. This is the reliable
+# "what are you actually running" signal: settings often pin nothing (the user
+# rides the default alias), but every session records the model that really ran.
+# Transcripts are NESTED one level per project (~/.claude/projects/<project-key>/
+# <session>.jsonl) — a flat glob matches nothing and detection silently never
+# fires. Glob both layouts; newest mtime across them wins.
+_recent_transcript_model() {
+  local tdir="$HOME/.claude/projects" newest
+  [ -d "$tdir" ] || return 0
+  newest="$(ls -t "$tdir"/*/*.jsonl "$tdir"/*.jsonl 2>/dev/null | head -1)"
+  [ -f "$newest" ] || return 0
+  grep -oE '"model":"claude-(opus|sonnet)-[0-9][^"]*"' "$newest" 2>/dev/null \
+    | tail -1 | sed 's/.*"model":"//; s/"$//'
+}
+
+# detect_current_model <repo> — the model the user's harness runs today. Order:
+# $ANTHROPIC_MODEL → the `model` in repo/user settings → the most recent primary
+# model in their transcripts (what actually ran). Empty only when there's no
+# signal at all (no env, no pinned model, no usage history).
+detect_current_model() {
+  local repo="${1:-.}" m="" s
+  [ -n "${ANTHROPIC_MODEL:-}" ] && { printf '%s' "$ANTHROPIC_MODEL"; return; }
+  for s in "$repo/.claude/settings.json" "$repo/.claude/settings.local.json" "$HOME/.claude/settings.json"; do
+    [ -f "$s" ] || continue
+    m="$(sed -n 's/.*"model"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$s" 2>/dev/null | head -1)"
+    [ -n "$m" ] && { printf '%s' "$m"; return; }
+  done
+  _recent_transcript_model
+}
+
+# detect_current_effort <model> <repo> — the effort the harness runs today:
+# CLAUDE_CODE_EFFORT_LEVEL (highest precedence in Claude Code) → the `effortLevel`
+# setting → the model's documented default (xhigh for Opus 4.7, high otherwise).
+# "auto" is treated as unset (it means "use the model default").
+detect_current_effort() {
+  local model="${1:-}" repo="${2:-.}" e="" s
+  if [ -n "${CLAUDE_CODE_EFFORT_LEVEL:-}" ] && [ "${CLAUDE_CODE_EFFORT_LEVEL}" != "auto" ]; then
+    printf '%s' "$CLAUDE_CODE_EFFORT_LEVEL"; return
+  fi
+  for s in "$repo/.claude/settings.json" "$repo/.claude/settings.local.json" "$HOME/.claude/settings.json"; do
+    [ -f "$s" ] || continue
+    e="$(sed -n 's/.*"effortLevel"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$s" 2>/dev/null | head -1)"
+    [ -n "$e" ] && { printf '%s' "$e"; return; }
+  done
+  case "$(printf '%s' "$model" | tr 'A-Z' 'a-z')" in
+    *opus-4-7*) printf 'xhigh' ;;
+    *)          printf 'high'  ;;
+  esac
+}
+
+# ── VALIDATE ──────────────────────────────────────────────────
+cmd_validate() {
+  local id="${1:-}"; [ -n "$id" ] || { err "<id> required"; return 1; }
+  local spec; spec="$(spec_path "$id")"
+  [ -f "$spec" ] || { err "no spec at $spec (run 'define $id' first)"; return 1; }
+  local dir; dir="$(exp_dir "$id")"
+
+  local rc=0
+  local rep margin commit repo
+  rep="$(spec_get_scalar "$spec" replicates)"
+  margin="$(spec_get_scalar "$spec" non_inferiority_margin)"
+  commit="$(spec_get_scalar "$spec" commit)"
+  repo="$(spec_get_scalar "$spec" repo)"
+
+  case "$rep" in ''|*[!0-9]*) err "replicates must be a positive integer (got '$rep')"; rc=1 ;; esac
+  [ "${rep:-0}" -ge 1 ] 2>/dev/null || { err "replicates must be ≥1"; rc=1; }
+
+  awk -v m="$margin" 'BEGIN{
+    if (m=="") { print "non_inferiority_margin missing" > "/dev/stderr"; exit 1 }
+    if (m+0 < 0 || m+0 > 1) { printf "non_inferiority_margin out of range (got %s)\n", m > "/dev/stderr"; exit 1 }
+  }' || rc=1
+
+  local repo_abs; repo_abs="$(resolve_path "$dir" "${repo:-.}")"
+  [ -d "$repo_abs" ] || { err "repo not found: $repo_abs"; rc=1; }
+
+  # Ephemeral-infra lifecycle: setup_scope, if set, must be experiment|run.
+  local sscope; sscope="$(spec_get_scalar "$spec" setup_scope)"
+  case "$sscope" in ''|experiment|run) ;; *) err "setup_scope must be 'experiment' or 'run' (got '$sscope')"; rc=1 ;; esac
+
+  # Lifecycle keys MUST live in the top block. spec_get_scalar only reads lines
+  # before the first [section], so a setup:/teardown:/setup_scope: placed below
+  # one is silently ignored → NO infra is provisioned and the run hits the repo's
+  # real DB (false isolation — worse than not having the feature). Catch it loudly.
+  local misplaced
+  misplaced="$(awk '/^\[/{s=1} s && /^[[:space:]]*(setup|teardown|setup_scope)[[:space:]]*:/{print}' "$spec")"
+  [ -z "$misplaced" ] || { err "setup/teardown/setup_scope found BELOW a [section] — they must be in the top block (above the first [arm:...]/[task:...]), or they're silently ignored and no infra is provisioned. Move them up."; rc=1; }
+
+  local arms_list tasks_list
+  arms_list="$(spec_list_sections "$spec" arm)"
+  tasks_list="$(spec_list_sections "$spec" task)"
+  local n_arms n_tasks
+  n_arms="$(printf '%s\n' "$arms_list" | grep -c .)"; n_arms="${n_arms:-0}"
+  n_tasks="$(printf '%s\n' "$tasks_list" | grep -c .)"; n_tasks="${n_tasks:-0}"
+  [ "$n_arms" -ge 2 ] || { err "need ≥2 arms (got $n_arms)"; rc=1; }
+  [ "$n_tasks" -ge 1 ] || { err "need ≥1 task (got $n_tasks)"; rc=1; }
+
+  local label
+  for label in $arms_list; do
+    [ -n "$label" ] || continue
+    # model can be empty (use claude default). effort is optional, but if set it
+    # must be a real Claude Code level — a typo would silently degrade to the
+    # model default rather than erroring at the API, corrupting the arm.
+    local eff; eff="$(spec_section_get "$spec" arm "$label" effort)"
+    case "$eff" in
+      ''|low|medium|high|xhigh|max) ;;
+      *) err "arm $label: effort must be low|medium|high|xhigh|max (got '$eff')"; rc=1 ;;
+    esac
+  done
+
+  local tid
+  for tid in $tasks_list; do
+    [ -n "$tid" ] || continue
+    local prompt verify
+    prompt="$(spec_section_get "$spec" task "$tid" prompt)"
+    verify="$(spec_section_get "$spec" task "$tid" verify)"
+    [ -n "$prompt" ] || { err "task $tid: prompt is required"; rc=1; }
+    [ -n "$verify" ] || { err "task $tid: verify is required (use 'true' for no-op)"; rc=1; }
+    local prompt_abs; prompt_abs="$(resolve_task_path "$repo_abs" "$dir" "$prompt")"
+    [ -f "$prompt_abs" ] || { err "task $tid: prompt file not found: $prompt_abs (checked $repo_abs and $dir)"; rc=1; }
+    # Tests-oracle tasks (from `mine`): apply_from needs apply_paths to act on, and
+    # lock_paths only makes sense alongside apply_from. Cheap structural checks —
+    # the miner already validated by running the suite, so we don't re-resolve refs.
+    local t_applyfrom t_applypaths t_lockpaths
+    t_applyfrom="$(spec_section_get "$spec" task "$tid" apply_from)"
+    t_applypaths="$(spec_section_get "$spec" task "$tid" apply_paths)"
+    t_lockpaths="$(spec_section_get "$spec" task "$tid" lock_paths)"
+    if [ -n "$t_applyfrom" ] && [ -z "$t_applypaths" ]; then
+      err "task $tid: apply_from set but apply_paths is empty (nothing to apply)"; rc=1
+    fi
+    if [ -n "$t_lockpaths" ] && [ -z "$t_applyfrom" ]; then
+      err "task $tid: lock_paths set but apply_from is empty (no source ref to lock from)"; rc=1
+    fi
+  done
+
+  # ── pre-flight warnings (informational; never change the exit code) ──
+  # #1 — a 1-task A/B yields a DEGENERATE cost & success CI: the paired-by-task
+  # bootstrap resamples a single task, so the interval collapses to a point and
+  # `analyze` returns "data degenerate" (never "B wins"). Surface it HERE, before
+  # any spend — not at analyze time, after the tokens are gone. (A/A is the
+  # exception: with ≥2 replicates the runner falls back to a replicate-level
+  # bootstrap, so 1 task is legitimate for a noise-floor check.)
+  if [ "$rc" -eq 0 ] && [ "${n_tasks:-0}" -eq 1 ]; then
+    cat >&2 <<'EOF'
+
+Heads-up: 1 task. An A/B run will produce a DEGENERATE cost/success CI — the
+paired-by-task bootstrap resamples one task, so the interval is a point and
+`analyze` returns "data degenerate", never "B wins". Add ≥2 tasks (≥5 for crisp
+CIs) for a real effect estimate. A 1-task run still works as a pass/fail sanity
+check that arm B doesn't break — just don't read it as a measured effect.
+(A/A noise-floor runs are fine at 1 task × ≥2 replicates.)
+EOF
+  fi
+  # #4 — prompt-prefix (CLAUDE.md / AGENTS.md) deletion experiments measure
+  # nothing unless the verify task exercises the deleted lines. Fires for
+  # hand-rolled specs too (the common path for trims).
+  [ "$rc" -eq 0 ] && check_prefix_deletion_discrimination "$spec" "$dir" "$repo_abs"
+
+  if [ "$rc" -eq 0 ]; then
+    echo "OK — $n_arms arm(s), $n_tasks task(s), replicates=$rep, δ=$margin, commit=$commit"
+    # A top-level validate is the "I just edited the spec" hook — sync the edit.
+    # Skipped when cmd_new calls us internally (it syncs once on its own).
+    [ -z "${_HE_INTERNAL_VALIDATE:-}" ] && _autosync "$id"
+  fi
+  return "$rc"
+}
+
+# ── RUN ───────────────────────────────────────────────────────
+# run_one — execute one (task, arm, rep). Print one JSON line to stdout (append
+# this to runs[-aa].jsonl). Side effect: writes the agent + verifier logs.
+run_one() {
+  local exp_dir="$1" repo="$2" commit="$3" task_id="$4" arm_label="$5" rep="$6"
+  local model="$7" overrides_dir="$8" prompt_file="$9" verify_cmd="${10}" timeout_s="${11}"
+  local adapter="${12:-}" effort="${13:-}"
+
+  local logs="$exp_dir/logs"
+  mkdir -p "$logs"
+  local log_base="$logs/${task_id}-${arm_label}-${rep}"
+  local agent_log="${log_base}.json" agent_err="${log_base}.err"
+  local verify_log="${log_base}.verify"
+
+  # Build the worktree. Prefer `git worktree add` (cheap, references the same
+  # objects; isolation per design doc §7). Fall back to a copy. `git worktree
+  # add` refuses an existing path, so we reserve a unique name without creating.
+  local wt
+  wt="$(mktemp -d "${TMPDIR:-/tmp}/header-exp.XXXXXX")" && rm -rf "$wt"
+  local using_worktree=0
+  if (cd "$repo" 2>/dev/null && git rev-parse --git-dir >/dev/null 2>&1); then
+    if (cd "$repo" && git worktree add --detach -q "$wt" "${commit:-HEAD}" 2>/dev/null); then
+      using_worktree=1
+    elif (cd "$repo" && git worktree add --detach -q "$wt" HEAD 2>/dev/null); then
+      using_worktree=1
+    fi
+  fi
+  if [ "$using_worktree" -eq 0 ]; then
+    cp -a "$repo" "$wt" 2>/dev/null || die "could not isolate repo $repo"
+  fi
+  # worktree_include: comma-separated list of repo-relative paths to symlink
+  # into the worktree (read from spec via dynamic-scope $WORKTREE_INCLUDE
+  # exported by cmd_run). Fixes a class of false-success bugs where the
+  # verify cmd needs venv/, node_modules/, .env, or editable installs that
+  # `git worktree add` doesn't bring along.
+  if [ -n "${WORKTREE_INCLUDE:-}" ]; then
+    local _p _pdir _old_ifs="$IFS"
+    IFS=','
+    for _p in $WORKTREE_INCLUDE; do
+      _p="$(printf '%s' "$_p" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+      [ -n "$_p" ] || continue
+      if [ ! -e "$repo/$_p" ]; then
+        echo "worktree_include: '$_p' not found in repo ($repo), skipping" >&2
+        continue
+      fi
+      if [ -e "$wt/$_p" ] && [ ! -L "$wt/$_p" ]; then
+        echo "worktree_include: '$_p' already exists in worktree (tracked file?), skipping" >&2
+        continue
+      fi
+      _pdir="$(dirname "$_p")"
+      [ "$_pdir" != "." ] && mkdir -p "$wt/$_pdir"
+      ln -sf "$repo/$_p" "$wt/$_p"
+    done
+    IFS="$_old_ifs"
+  fi
+  # Apply overrides (files in $overrides_dir overwrite their counterparts in $wt).
+  if [ -n "$overrides_dir" ] && [ -d "$overrides_dir" ]; then
+    # cp -a preserves modes; trailing /. copies the dir contents (not the dir itself).
+    cp -a "$overrides_dir"/. "$wt"/ 2>/dev/null || true
+  fi
+
+  # Tests-oracle setup (git-history reversal tasks from `mine`): bring the FIXING
+  # commit's test files into the worktree on top of the parent state, so the new
+  # tests fail and the agent's job is to fix the implementation. Read via dynamic
+  # scope from cmd_run (per-task), mirroring $WORKTREE_INCLUDE.
+  if [ -n "${ORACLE_APPLY_FROM:-}" ] && [ -n "${ORACLE_APPLY_PATHS:-}" ]; then
+    _oracle_checkout "$wt" "$ORACLE_APPLY_FROM" "$ORACLE_APPLY_PATHS"
+  fi
+
+  # Snapshot the graded (locked) test files out of the repo BEFORE sealing —
+  # _lock_restore reinstates them at grade time without needing the object store
+  # that sealing takes away. A lock that silently stops locking would re-open the
+  # reward-hack it exists to close, so a failed snapshot is fatal.
+  local lock_dir=""
+  if [ -n "${ORACLE_APPLY_FROM:-}" ] && [ -n "${ORACLE_LOCK_PATHS:-}" ]; then
+    lock_dir="$wt.lock"
+    rm -rf "$lock_dir"
+    if ! _lock_snapshot "$repo" "$ORACLE_APPLY_FROM" "$ORACLE_LOCK_PATHS" "$lock_dir"; then
+      rm -rf "$lock_dir" "$wt"
+      (cd "$repo" && git worktree prune >/dev/null 2>&1) || true
+      die "could not snapshot lock_paths from $ORACLE_APPLY_FROM for $task_id — refusing to run with a defeated test lock"
+    fi
+  fi
+
+  # Seal git history — AFTER the oracle (it needs the fixing ref), BEFORE the
+  # agent runs. Otherwise the agent can read the answer commit straight out of
+  # the object store the worktree points at. Unsealed runs are invalid, not
+  # merely risky, so a sealing failure aborts the replicate instead of quietly
+  # measuring a compromised arm.
+  local sealed=0
+  if [ "${HEADER_EXPERIMENT_NO_SEAL:-}" = "1" ] || [ "${SEAL_HISTORY:-}" = "off" ]; then
+    echo "header-experiment: git history NOT sealed (opt-out) — the agent can read the answer commit; results are not trustworthy for mined tasks." >&2
+  else
+    if _seal_history "$wt"; then
+      sealed=1
+    else
+      if [ "$using_worktree" -eq 1 ]; then
+        (cd "$repo" && git worktree remove --force "$wt" >/dev/null 2>&1) || rm -rf "$wt"
+        (cd "$repo" && git worktree prune >/dev/null 2>&1) || true
+      else
+        rm -rf "$wt"
+      fi
+      die "could not seal git history for $task_id/$arm_label/$rep — refusing to run an unsealed replicate (override: HEADER_EXPERIMENT_NO_SEAL=1)"
+    fi
+  fi
+
+  # Ephemeral-infra env: cmd_run's setup step writes KEY=VALUE lines to
+  # <exp_dir>/.run-env; export them so the adapter AND the verifier both see the
+  # provisioned connection info (e.g. an isolated DATABASE_URL pointing at a
+  # throwaway DB/branch). Each line is passed as a single arg to `export`, so a
+  # connection string's &/?/: are NOT re-parsed by the shell.
+  if [ -f "$exp_dir/.run-env" ]; then
+    local _kv
+    while IFS= read -r _kv; do
+      case "$_kv" in [A-Za-z_]*=*) export "$_kv" ;; esac
+    done < "$exp_dir/.run-env"
+  fi
+
+  # Invoke the agent. The adapter seam: tests set $HEADER_EXPERIMENT_ADAPTER to
+  # a stub script. Real use → `claude -p`. The adapter must emit a single JSON
+  # object on stdout with at least input_tokens / output_tokens (cost optional).
+  local start end latency
+  start="$(now_epoch)"
+  local agent_rc=0
+  if [ -n "$adapter" ]; then
+    ( cd "$wt" && "$adapter" "$task_id" "$arm_label" "$rep" "$prompt_file" "$model" "$effort" ) > "$agent_log" 2> "$agent_err"
+    agent_rc=$?
+  else
+    # Real run via claude headless. `--print` is the headless mode; combined
+    # with --output-format json it prints one summary object. We pipe the
+    # prompt on stdin (most portable across versions) and rely on the JSON for
+    # usage. timeout(1) caps wall-clock.
+    local extra_args=()
+    [ -n "$model" ] && extra_args+=(--model "$model")
+    [ -n "$effort" ] && extra_args+=(--effort "$effort")
+    if command -v timeout >/dev/null 2>&1; then
+      ( cd "$wt" && timeout "${timeout_s}s" claude --print --output-format json \
+          --permission-mode bypassPermissions "${extra_args[@]}" \
+          < "$prompt_file" ) > "$agent_log" 2> "$agent_err"
+      agent_rc=$?
+    else
+      ( cd "$wt" && claude --print --output-format json \
+          --permission-mode bypassPermissions "${extra_args[@]}" \
+          < "$prompt_file" ) > "$agent_log" 2> "$agent_err"
+      agent_rc=$?
+    fi
+  fi
+  end="$(now_epoch)"; latency=$(( end - start ))
+
+  # Lock the oracle's test files: restore them to the pinned (fixing-commit)
+  # version right before grading, so any edit the agent made to the tests is
+  # reverted. This is the reward-hacking defense (design §11) — "make the test
+  # pass" cannot be won by weakening or deleting the test.
+  # Restored from the pre-seal snapshot when we have one (the sealed workspace has
+  # no object store to `git checkout` from); otherwise the original git path.
+  if [ -n "${ORACLE_APPLY_FROM:-}" ] && [ -n "${ORACLE_LOCK_PATHS:-}" ]; then
+    if [ -n "$lock_dir" ] && [ -d "$lock_dir" ]; then
+      _lock_restore "$lock_dir" "$wt" \
+        || die "could not restore locked test files for $task_id — refusing to grade a gameable run"
+    else
+      _oracle_checkout "$wt" "$ORACLE_APPLY_FROM" "$ORACLE_LOCK_PATHS"
+    fi
+  fi
+
+  # Verifier — Tier-1 oracle: exit 0 = pass. Run AFTER the agent so it can see
+  # the agent's edits. Run in the worktree so the agent's CWD changes don't
+  # affect us.
+  local verify_rc=0
+  if [ -n "$verify_cmd" ] && [ "$verify_cmd" != "-" ]; then
+    if command -v timeout >/dev/null 2>&1; then
+      ( cd "$wt" && timeout "${timeout_s}s" bash -c "$verify_cmd" ) > "$verify_log" 2>&1
+      verify_rc=$?
+    else
+      ( cd "$wt" && bash -c "$verify_cmd" ) > "$verify_log" 2>&1
+      verify_rc=$?
+    fi
+  fi
+  local success="false"; [ "$verify_rc" -eq 0 ] && success="true"
+
+  # Cleanup. A sealed workspace is no longer a linked worktree (its .git pointer
+  # was replaced by a standalone repo), so `git worktree remove` can't claim it —
+  # delete the dir and prune the parent's now-stale worktree registry entry.
+  [ -n "$lock_dir" ] && rm -rf "$lock_dir"
+  if [ "$using_worktree" -eq 1 ]; then
+    if [ "$sealed" -eq 1 ]; then
+      rm -rf "$wt"
+      (cd "$repo" && git worktree prune >/dev/null 2>&1) || true
+    else
+      (cd "$repo" && git worktree remove --force "$wt" >/dev/null 2>&1) || rm -rf "$wt"
+    fi
+  else
+    rm -rf "$wt"
+  fi
+
+  # Parse usage from the agent log. Schema is the Claude Code headless one;
+  # adapters may emit a flatter variant. Match either shape.
+  awk -v ts="$(now_iso)" -v task="$task_id" -v arm="$arm_label" -v rep="$rep" \
+      -v lat="$latency" -v success="$success" -v agent_rc="$agent_rc" \
+      -v verify_rc="$verify_rc" -v default_model="$model" \
+      -v agent_log="$agent_log" '
+    function jnum(line,key,  re,s){ re="\""key"\"[ \t]*:[ \t]*-?[0-9.]+"
+      if (match(line,re)){ s=substr(line,RSTART,RLENGTH); sub(/.*:[ \t]*/,"",s); return s+0 } return 0 }
+    function jstr(line,key,  re,s){ re="\""key"\"[ \t]*:[ \t]*\"[^\"]*\""
+      if (match(line,re)){ s=substr(line,RSTART,RLENGTH); sub(/.*:[ \t]*"/,"",s); sub(/"$/,"",s); return s } return "" }
+    {
+      # Accumulate across lines so stream-json output also works.
+      m = jstr($0,"model"); if (m!="") model = m
+      v = jnum($0,"input_tokens");                 if (v>0) inp += v
+      v = jnum($0,"output_tokens");                if (v>0) outp += v
+      v = jnum($0,"cache_read_input_tokens");      if (v>0) cr += v
+      v = jnum($0,"cache_read_tokens");            if (v>0) cr += v
+      v = jnum($0,"cache_creation_input_tokens");  if (v>0) cw += v
+      v = jnum($0,"cache_write_tokens");           if (v>0) cw += v
+      v = jnum($0,"ephemeral_5m_input_tokens");    if (v>0) cw5_explicit += v
+      v = jnum($0,"ephemeral_1h_input_tokens");    if (v>0) cw1_explicit += v
+      v = jnum($0,"total_cost_usd");               if (v>0) cost = v
+      v = jnum($0,"cost_usd");                     if (v>0 && cost==0) cost = v
+    }
+    END {
+      if (model=="") model = default_model
+      # Prefer the explicit 5m/1h split when present; otherwise lump under cw5.
+      cw5 = (cw5_explicit>0 || cw1_explicit>0) ? cw5_explicit : cw
+      cw1 = cw1_explicit
+      printf "{\"ts\":\"%s\",\"task\":\"%s\",\"arm\":\"%s\",\"rep\":%d,\"model\":\"%s\",", \
+        ts, task, arm, rep+0, model
+      printf "\"input_tokens\":%d,\"output_tokens\":%d,\"cache_read_tokens\":%d,", inp+0, outp+0, cr+0
+      printf "\"cache_write_5m\":%d,\"cache_write_1h\":%d,", cw5+0, cw1+0
+      printf "\"cost_usd\":%.6f,\"latency_s\":%d,", cost+0, lat+0
+      printf "\"success\":%s,\"agent_exit\":%d,\"verify_exit\":%d,", success, agent_rc+0, verify_rc+0
+      printf "\"log\":\"%s\"}\n", agent_log
+    }' "$agent_log"
+}
+
+# ── Ephemeral-infra lifecycle (setup / teardown) ──────────────
+# Stateful experiments (DB-touching tasks) need an ISOLATED service per
+# experiment — a throwaway Postgres, a Neon branch — not the repo's real DB.
+# `worktree_include` handles files; this handles services. Contract:
+#   setup:        shell cmd, runs in the repo. Its stdout KEY=VALUE lines are
+#                 captured to <exp_dir>/.run-env and exported into every run's
+#                 adapter + verify (so the agent + oracle hit the isolated DB).
+#   teardown:     shell cmd, runs with those same vars exported — destroys the
+#                 infra. GUARANTEED to run (EXIT/INT/TERM trap), even on Ctrl-C.
+#   setup_scope:  experiment (default) → provision once for the whole matrix;
+#                 run → provision/tear down per (task,arm,rep) for write-heavy
+#                 tasks where one run's writes would contaminate the next.
+# The trap reads globals + the on-disk .run-env (not cmd_run locals), so it
+# still works after cmd_run has returned. Teardown is idempotent: it removes
+# .run-env, so the trailing EXIT trap no-ops after an explicit teardown.
+_HDR_TD_DIR=""      # <exp_dir> whose .run-env the trap should tear down
+_HDR_TD_CMD=""      # the teardown shell command (empty = nothing to do)
+
+_run_setup() {
+  # $1 = setup cmd, $2 = exp_dir, $3 = repo. Writes KEY=VALUE → $2/.run-env.
+  local _cmd="$1" _dir="$2" _repo="$3" _out _rc
+  _out="$( cd "$_repo" && bash -c "$_cmd" 2>"$_dir/logs/setup.err" )"; _rc=$?
+  printf '%s\n' "$_out" > "$_dir/logs/setup.out"
+  if [ "$_rc" -ne 0 ]; then
+    err "setup failed (rc=$_rc) — see $_dir/logs/setup.err"
+    return 1
+  fi
+  printf '%s\n' "$_out" | grep -E '^[A-Za-z_][A-Za-z0-9_]*=' > "$_dir/.run-env" 2>/dev/null || : > "$_dir/.run-env"
+  return 0
+}
+
+_run_teardown() {
+  # No args — reads the globals so the EXIT/INT/TERM trap works after cmd_run
+  # has returned and its locals are gone. Idempotent (removes .run-env).
+  [ -n "$_HDR_TD_CMD" ] || return 0
+  local _dir="$_HDR_TD_DIR" _envf="$_HDR_TD_DIR/.run-env"
+  [ -n "$_dir" ] || return 0
+  (
+    if [ -f "$_envf" ]; then
+      local _kv
+      while IFS= read -r _kv; do
+        case "$_kv" in [A-Za-z_]*=*) export "$_kv" ;; esac
+      done < "$_envf"
+    fi
+    bash -c "$_HDR_TD_CMD"
+  ) >> "$_dir/logs/teardown.log" 2>&1 || true
+  rm -f "$_envf"
+}
+
+# run_block — one (task, replicate) block: resolves the per-task config once,
+# then runs every arm SEQUENTIALLY, so the A/B of a pair stays temporally
+# adjacent (§6.2's interleaving survives parallelism across blocks). Reads
+# cmd_run's locals via bash dynamic scope; appends one JSON line per arm to $3.
+#   args: <task> <rep> <out_file> <base_step> <total_runs>
+run_block() {
+  local task="$1" r="$2" out="$3" base="$4" total="$5"
+  local prompt verify timeout_s prompt_abs task_commit task_commit_resolved
+  prompt="$(spec_section_get "$spec" task "$task" prompt)"
+  verify="$(spec_section_get "$spec" task "$task" verify)"
+  timeout_s="$(spec_section_get "$spec" task "$task" timeout_s)"
+  [ -n "$timeout_s" ] || timeout_s="1200"
+  prompt_abs="$(resolve_task_path "$repo" "$dir" "$prompt")"
+  # Per-task base commit: git-history-mined tasks each pin their fix's PARENT
+  # (falls back to the experiment-level commit). Resolve to a short sha.
+  task_commit="$(spec_section_get "$spec" task "$task" commit)"
+  [ -n "$task_commit" ] || task_commit="$commit"
+  task_commit_resolved="$task_commit"
+  if (cd "$repo" 2>/dev/null && git rev-parse --git-dir >/dev/null 2>&1); then
+    task_commit_resolved="$(cd "$repo" && git rev-parse --short "$task_commit" 2>/dev/null || echo "$task_commit")"
+  fi
+  # Tests-oracle keys (apply the fixing commit's tests, lock them at grade
+  # time). run_one picks them up via dynamic scope.
+  local ORACLE_APPLY_FROM ORACLE_APPLY_PATHS ORACLE_LOCK_PATHS
+  ORACLE_APPLY_FROM="$(spec_section_get "$spec" task "$task" apply_from)"
+  ORACLE_APPLY_PATHS="$(spec_section_get "$spec" task "$task" apply_paths)"
+  ORACLE_LOCK_PATHS="$(spec_section_get "$spec" task "$task" lock_paths)"
+  local a_idx arm arm_for_config model effort overrides overrides_abs
+  for (( a_idx=0; a_idx<${#arms[@]}; a_idx++ )); do
+    arm="${arms[$a_idx]}"
+    # Resolve the arm's config. In A/A both slots use first_arm's config.
+    arm_for_config="$arm"
+    [ "$aa" -eq 1 ] && arm_for_config="$first_arm"
+    model="$(spec_section_get "$spec" arm "$arm_for_config" model)"
+    effort="$(spec_section_get "$spec" arm "$arm_for_config" effort)"
+    overrides="$(spec_section_get "$spec" arm "$arm_for_config" overrides_dir)"
+    overrides_abs=""; [ -n "$overrides" ] && overrides_abs="$(resolve_path "$dir" "$overrides")"
+    printf '  [%d/%d] task=%s arm=%s rep=%d\n' "$(( base + a_idx + 1 ))" "$total" "$task" "$arm" "$r" >&2
+    # run scope: isolate infra per (task,arm,rep) for write-heavy tasks where
+    # one run's writes would contaminate the next. (--jobs is forced to 1 in
+    # this mode — the provisioned .run-env is shared state.)
+    if [ -n "$SETUP_CMD" ] && [ "$SETUP_SCOPE" = "run" ]; then
+      _run_setup "$SETUP_CMD" "$dir" "$repo" || { err "setup failed for task=$task arm=$arm rep=$r — aborting"; return 1; }
+    fi
+    run_one "$dir" "$repo" "$task_commit_resolved" "$task" "$arm" "$r" \
+            "$model" "$overrides_abs" "$prompt_abs" "$verify" "$timeout_s" \
+            "$adapter" "$effort" >> "$out"
+    if [ -n "$TEARDOWN_CMD" ] && [ "$SETUP_SCOPE" = "run" ]; then
+      _run_teardown
+    fi
+  done
+}
+
+cmd_run() {
+  local id="" aa=0 k_override="" yes=0 seed="" adapter="${HEADER_EXPERIMENT_ADAPTER:-}" jobs=1
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --aa)      aa=1; shift ;;
+      --k)       k_override="${2:-}"; shift 2 ;;
+      --jobs|-j) jobs="${2:-}"; shift 2 ;;
+      --yes|-y)  yes=1; shift ;;
+      --seed)    seed="${2:-}"; shift 2 ;;
+      --adapter) adapter="${2:-}"; shift 2 ;;
+      -h|--help) echo "Usage: header-experiment run <id> [--aa] [--k N] [--jobs N] [--yes] [--seed N] [--adapter CMD]"; return 0 ;;
+      *) [ -z "$id" ] && id="$1" || { err "unknown arg '$1'"; return 1; }; shift ;;
+    esac
+  done
+  case "$jobs" in ''|*[!0-9]*) err "--jobs must be a positive integer (got '$jobs')"; return 1 ;; esac
+  [ "$jobs" -ge 1 ] || jobs=1
+  [ -n "$id" ] || { err "<id> required"; return 1; }
+  local spec; spec="$(spec_path "$id")"
+  [ -f "$spec" ] || { err "no spec at $spec — run 'define $id' first"; return 1; }
+  cmd_validate "$id" >/dev/null || { err "spec failed validation — run 'header-experiment validate $id'"; return 1; }
+
+  beta_banner
+  local dir; dir="$(exp_dir "$id")"
+  local repo; repo="$(resolve_path "$dir" "$(spec_get_scalar "$spec" repo)")"
+  local commit; commit="$(spec_get_scalar "$spec" commit)"; [ -n "$commit" ] || commit="HEAD"
+  local reps;   reps="$(spec_get_scalar "$spec" replicates)"
+  [ -n "$k_override" ] && reps="$k_override"
+  # worktree_include: symlinked into each (task,arm,rep) worktree by run_one.
+  # Picked up via dynamic scope (run_one reads $WORKTREE_INCLUDE).
+  local WORKTREE_INCLUDE
+  WORKTREE_INCLUDE="$(spec_get_scalar "$spec" worktree_include)"
+
+  # seal_history: on (default) | off. Read via dynamic scope by run_one. Sealing
+  # cuts each replicate's workspace off from repo history so the agent can't read
+  # the commit that solves a mined task. Only turn it off for a task that
+  # legitimately needs history (e.g. "revert commit X") — and distrust the
+  # numbers from any mined task run with it off.
+  local SEAL_HISTORY
+  SEAL_HISTORY="$(spec_get_scalar "$spec" seal_history)"
+
+  # Ephemeral-infra lifecycle (setup/teardown/setup_scope). See _run_setup /
+  # _run_teardown above for the contract.
+  local SETUP_CMD TEARDOWN_CMD SETUP_SCOPE
+  SETUP_CMD="$(spec_get_scalar "$spec" setup)"
+  TEARDOWN_CMD="$(spec_get_scalar "$spec" teardown)"
+  SETUP_SCOPE="$(spec_get_scalar "$spec" setup_scope)"; [ -n "$SETUP_SCOPE" ] || SETUP_SCOPE="experiment"
+  mkdir -p "$dir/logs"
+  # Per-run infra provisioning is shared state (.run-env + the provisioned
+  # service) — parallel blocks would race it. Serialize rather than corrupt.
+  if [ "$jobs" -gt 1 ] && [ -n "$SETUP_CMD" ] && [ "$SETUP_SCOPE" = "run" ]; then
+    echo "run: setup_scope=run provisions infra per (task,arm,rep) — forcing --jobs 1 (parallel blocks would race the provisioned env)." >&2
+    jobs=1
+  fi
+
+  # Resolve real commit hash for the run record. If repo isn't git, leave it.
+  local commit_resolved="$commit"
+  if (cd "$repo" 2>/dev/null && git rev-parse --git-dir >/dev/null 2>&1); then
+    commit_resolved="$(cd "$repo" && git rev-parse --short "$commit" 2>/dev/null || echo "$commit")"
+  fi
+
+  # Resolve arms.
+  local arms_list; arms_list="$(spec_list_sections "$spec" arm)"
+  local first_arm="" arms=()
+  local L
+  for L in $arms_list; do
+    [ -n "$L" ] || continue
+    [ -z "$first_arm" ] && first_arm="$L"
+    arms+=("$L")
+  done
+
+  # In A/A, override arms to be [A, A] using the first arm's config but
+  # relabel the second slot as A2 so the analyser can pair them.
+  if [ "$aa" -eq 1 ]; then
+    arms=("$first_arm" "${first_arm}_2")
+  fi
+
+  # Resolve tasks.
+  local tasks_list; tasks_list="$(spec_list_sections "$spec" task)"
+  local tasks=()
+  local T
+  for T in $tasks_list; do [ -n "$T" ] && tasks+=("$T"); done
+
+  local n_runs=$(( ${#tasks[@]} * ${#arms[@]} * reps ))
+
+  # Worktree-isolation reminder. `git worktree add` only brings TRACKED files
+  # — no venv/, node_modules/, .env, or editable-installed packages. That's a
+  # silent source of "verify passed" lies (the verify ran against the parent
+  # repo's code, not arm B's edits). Print only when worktree_include is unset
+  # so configured users aren't lectured.
+  if [ -z "$WORKTREE_INCLUDE" ]; then
+    cat >&2 <<EOF
+Note: each run's git worktree contains only TRACKED files. If your verify
+needs venv/, node_modules/, .env, or editable-installed packages, set
+'worktree_include:' in the spec (comma-separated paths to symlink from repo,
+e.g. 'worktree_include: venv, .env'). Otherwise verify may silently test
+the parent repo's code rather than arm B's edits.
+
+EOF
+  fi
+
+  # Cost gate — refuse to run silently. Speak BOTH billing modes (mirrors
+  # header-cost's framing: subscription users don't pay $ per token, they spend
+  # usage-limit headroom, so we don't pretend the only cost is dollars). And
+  # surface the load-bearing rule explicitly so the caller can sanity-check
+  # the experiment is worth running. `[ -t 0 ]` is the right TTY check;
+  # `/dev/tty` lies (it exists as a file but open() returns ENXIO with no
+  # controlling terminal, and bash's redirect error message can't be suppressed
+  # by `read 2>/dev/null` because it's emitted by the shell layer).
+  # Cost gate + pre-flight disclosure. The whole block is skipped only when
+  # --adapter is set (stub / testing → no real spend). --yes skips the
+  # confirmation PROMPT, not the disclosure: the spend rationale and any "this
+  # won't be measurable" warning belong on the record BEFORE tokens burn, not
+  # discovered at analyze time.
+  if [ -z "$adapter" ]; then
+    cat >&2 <<EOF
+About to launch $n_runs agent invocation(s): ${#tasks[@]} tasks × ${#arms[@]} arms × $reps replicates.
+  · API / Console (pay-per-token): real \$ spend on tokens for each invocation.
+  · Claude subscription (Pro / Max): no \$, but each invocation burns usage-limit headroom against the rolling + weekly caps. The % savings translates either way.
+
+The load-bearing rule: don't run a \$60 experiment to prove a \$0.10 effect. Experiments are honest only when the proven payoff outweighs the experiment's own cost. For small-magnitude prefix changes (deleting a cargo-cult line in CLAUDE.md), a diff review + one sanity replicate is usually a better fit than a full bootstrap CI. Reserve experiments for behavior changes whose effect isn't visible from the diff (model swaps, delegation toggles, framework migrations).
+
+Levers to make an experiment cheaper without losing its point:
+  · --k 1 (sanity-only), or --k 2 (light power) instead of the default 3
+  · --adapter a Haiku wrapper for prefix-only experiments (prefix effect transfers)
+  · narrow your verify cmd to the smallest test that covers the change
+  · shorter task prompts (10-turn focused, not 76-turn coding marathons)
+EOF
+
+    # #1 echo — the degenerate-CI case is the last thing to miss before spend.
+    if [ "$aa" -eq 0 ] && [ "${#tasks[@]}" -eq 1 ]; then
+      cat >&2 <<'EOF'
+
+  Note: 1 task → this A/B's cost & success CI will be DEGENERATE (analyze returns
+  "data degenerate", never "B wins"). Add ≥2 tasks for a real CI, or read this run
+  as a pass/fail sanity check only.
+EOF
+    fi
+
+    # #3 — surface the MEASURED noise floor (from a prior --aa run) at the A/B
+    # gate, so an effect that can't clear the harness's own run-to-run noise is
+    # visible NOW, not discovered at analyze. No A/A on record → nudge to run it.
+    if [ "$aa" -eq 0 ]; then
+      local aa_json="$dir/result-aa.json"
+      if [ -f "$aa_json" ]; then
+        local floor_ci floor_half
+        floor_ci="$(grep -o '"ci95"[^]]*]' "$aa_json" | head -1 | sed 's/.*\[//; s/].*//; s/ //g')"
+        floor_half="$(awk -F',' 'BEGIN{f="?"} {lo=$1+0; hi=$2+0; w=(hi-lo)/2; if(w<0)w=-w; f=sprintf("%.4f",w)} END{print f}' <<<"$floor_ci")"
+        cat >&2 <<EOF
+
+  Noise floor (from your A/A run): cost CI [$floor_ci] USD/task → half-width ~\$$floor_half/task.
+  An A/B cost effect smaller than ~\$$floor_half/task won't separate from noise (the
+  CI will straddle 0 → "no proven win"). Prefix-only trims often save a few cached
+  tokens/turn — frequently below this floor. If your expected per-task saving is
+  under it, the cost A/B can't prove the win: rely on the diff for cost and use
+  this run for the success / adherence check only.
+EOF
+      else
+        cat >&2 <<EOF
+
+  No A/A noise floor on record. Consider \`header-experiment run $id --aa\` FIRST —
+  it measures whether your effect is even larger than the harness's run-to-run
+  noise. Skipping it risks spending a full A/B to learn the effect was unmeasurable.
+EOF
+      fi
+    fi
+
+    if [ "$yes" -ne 1 ]; then
+      if [ ! -t 0 ]; then
+        err "no TTY for confirmation — re-run with --yes to authorize the spend non-interactively (or set --adapter to use a stub for testing)"
+        return 1
+      fi
+      printf '\nContinue? [y/N] ' >&2
+      local ans=""; IFS= read -r ans
+      case "$ans" in [yY]|[yY][eE][sS]) ;; *) err "aborted"; return 1 ;; esac
+    else
+      echo "" >&2
+      echo "(--yes given — spend authorized non-interactively; the disclosure above is for the record.)" >&2
+    fi
+  fi
+
+  # Check the adapter or claude is available. Fail fast.
+  if [ -z "$adapter" ] && ! command -v claude >/dev/null 2>&1; then
+    err "the default adapter needs 'claude' on PATH (or set --adapter / \$HEADER_EXPERIMENT_ADAPTER)"
+    return 1
+  fi
+
+  # Arm the guaranteed-teardown trap (reads globals + .run-env, so it fires even
+  # after cmd_run returns / on Ctrl-C), then provision once for experiment scope.
+  rm -f "$dir/.run-env"
+  if [ -n "$TEARDOWN_CMD" ]; then
+    _HDR_TD_DIR="$dir"; _HDR_TD_CMD="$TEARDOWN_CMD"
+    trap '_run_teardown' EXIT INT TERM
+  fi
+  if [ -n "$SETUP_CMD" ] && [ "$SETUP_SCOPE" = "experiment" ]; then
+    echo "Provisioning experiment infra (setup, scope=experiment)…" >&2
+    _run_setup "$SETUP_CMD" "$dir" "$repo" || { err "setup failed — aborting before any run"; return 1; }
+  fi
+
+  local out_file
+  out_file="$dir/$([ "$aa" -eq 1 ] && echo runs-aa.jsonl || echo runs.jsonl)"
+  : > "$out_file"
+
+  # Order: per task, interleave arms within a replicate (§6.2). Cache warmup
+  # and time-of-day drift hit both arms symmetrically. We don't randomize task
+  # order yet — keep it deterministic for now; users can shuffle the spec.
+  # The parallel unit is a (task, replicate) BLOCK — arms stay sequential
+  # inside it, so each pair's A/B remains temporally adjacent under --jobs.
+  echo "Running $n_runs invocation(s) → $out_file$([ "$jobs" -gt 1 ] && printf ' (%s parallel blocks)' "$jobs")" >&2
+  local r task t_idx base
+  if [ "$jobs" -le 1 ]; then
+    for (( r=0; r<reps; r++ )); do
+      t_idx=0
+      for task in "${tasks[@]}"; do
+        base=$(( (r * ${#tasks[@]} + t_idx) * ${#arms[@]} ))
+        run_block "$task" "$r" "$out_file" "$base" "$n_runs" || return 1
+        t_idx=$(( t_idx + 1 ))
+      done
+    done
+  else
+    # Wave scheduling (Bash 3.2 portable — no `wait -n`): launch up to --jobs
+    # blocks, wait for the whole wave, repeat. Each block appends to its own
+    # part file, concatenated after the waves — two blocks can never interleave
+    # inside one JSON line, whatever the platform's append semantics.
+    local parts=() pids=() pid wave_n=0 rc_runs=0
+    for (( r=0; r<reps; r++ )); do
+      t_idx=0
+      for task in "${tasks[@]}"; do
+        base=$(( (r * ${#tasks[@]} + t_idx) * ${#arms[@]} ))
+        local part="$dir/.runs-part.$r.$t_idx"
+        : > "$part"; parts+=("$part")
+        run_block "$task" "$r" "$part" "$base" "$n_runs" &
+        pids+=($!)
+        wave_n=$(( wave_n + 1 ))
+        t_idx=$(( t_idx + 1 ))
+        if [ "$wave_n" -ge "$jobs" ]; then
+          for pid in "${pids[@]}"; do wait "$pid" || rc_runs=1; done
+          pids=(); wave_n=0
+        fi
+      done
+    done
+    for pid in "${pids[@]:-}"; do [ -n "$pid" ] && { wait "$pid" || rc_runs=1; }; done
+    cat "${parts[@]}" >> "$out_file" 2>/dev/null
+    rm -f "${parts[@]}"
+    if [ "$rc_runs" -ne 0 ]; then
+      err "one or more parallel blocks failed — partial results kept in $out_file; inspect $dir/logs"
+      return 1
+    fi
+  fi
+
+  # Final teardown (experiment scope) + disarm the trap so script EXIT doesn't
+  # re-run it. Teardown is idempotent (removes .run-env), so this is safe.
+  if [ -n "$TEARDOWN_CMD" ] && [ "$SETUP_SCOPE" = "experiment" ]; then
+    echo "Tearing down experiment infra (teardown)…" >&2
+    _run_teardown
+  fi
+  trap - EXIT INT TERM
+  rm -f "$dir/.run-env"
+
+  echo "Done. Next:  header-experiment analyze $id$([ "$aa" -eq 1 ] && echo ' --aa')" >&2
+  if [ "$aa" -eq 0 ]; then _autosync "$id"; fi   # status: run (skip --aa noise-floor); never alters exit
+}
+
+# ── ANALYZE ───────────────────────────────────────────────────
+# The honest stat per design-doc §6: pair by task (per-task means of B and A),
+# bootstrap the per-task differences. CI = 2.5 / 97.5 percentiles of resampled
+# means. Verdict = §6.5: cost CI < 0 AND success diff CI ≥ −δ.
+cmd_analyze() {
+  local id="" aa=0 seed="42" boots="2000" vs=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --aa)        aa=1; shift ;;
+      --vs)        vs="${2:-}"; shift 2 ;;
+      --seed)      seed="${2:-42}"; shift 2 ;;
+      --bootstrap) boots="${2:-2000}"; shift 2 ;;
+      -h|--help)   echo "Usage: header-experiment analyze <id> [--aa] [--vs ARM] [--seed N] [--bootstrap N]"; return 0 ;;
+      *) [ -z "$id" ] && id="$1" || { err "unknown arg '$1'"; return 1; }; shift ;;
+    esac
+  done
+  [ -n "$id" ] || { err "<id> required"; return 1; }
+  local dir; dir="$(exp_dir "$id")"
+  local spec="$dir/spec"
+  [ -f "$spec" ] || { err "no spec for $id"; return 1; }
+  local margin; margin="$(spec_get_scalar "$spec" non_inferiority_margin)"
+  [ -n "$margin" ] || margin="0.02"
+
+  local runs_file out_file mode
+  if [ "$aa" -eq 1 ]; then
+    runs_file="$dir/runs-aa.jsonl"; out_file="$dir/result-aa.json"; mode="aa"
+  else
+    runs_file="$dir/runs.jsonl"; mode="ab"
+    # --vs ARM compares the control (A) against ARM instead of the 2nd arm, and
+    # writes a side file so the canonical result.json (A vs B, the synced one)
+    # is preserved — for the engine-adoption effort sweep (A vs B@high, A vs C@xhigh).
+    if [ -n "$vs" ]; then out_file="$dir/result-vs-${vs}.json"; else out_file="$dir/result.json"; fi
+  fi
+  [ -f "$runs_file" ] && [ -s "$runs_file" ] || { err "no runs at $runs_file (run first)"; return 1; }
+
+  awk -v seed="$seed" -v boots="$boots" -v margin="$margin" -v mode="$mode" \
+      -v out_file="$out_file" -v target="$vs" '
+    function jnum(line,key,  re,s){ re="\""key"\"[ \t]*:[ \t]*-?[0-9.]+"
+      if (match(line,re)){ s=substr(line,RSTART,RLENGTH); sub(/.*:[ \t]*/,"",s); return s+0 } return 0 }
+    function jstr(line,key,  re,s){ re="\""key"\"[ \t]*:[ \t]*\"[^\"]*\""
+      if (match(line,re)){ s=substr(line,RSTART,RLENGTH); sub(/.*:[ \t]*"/,"",s); sub(/"$/,"",s); return s } return "" }
+    function jbool(line,key,  re,s){ re="\""key"\"[ \t]*:[ \t]*(true|false)"
+      if (match(line,re)){ s=substr(line,RSTART,RLENGTH); sub(/.*:[ \t]*/,"",s); return (s=="true"?1:0) } return 0 }
+    function pct(arr,n,p,  i,sorted,j,t){
+      # arr is 1-indexed length n, contains sample means. Return p-th percentile.
+      for (i=1;i<=n;i++) sorted[i]=arr[i]
+      # selection sort (n is small: bootstraps); fine for our sizes.
+      for (i=1;i<=n-1;i++) for (j=i+1;j<=n;j++) if (sorted[j]<sorted[i]) { t=sorted[i]; sorted[i]=sorted[j]; sorted[j]=t }
+      i = int(p * (n-1)) + 1
+      if (i<1) i=1; if (i>n) i=n
+      return sorted[i]
+    }
+    function mean(arr,n,  i,s){ s=0; for(i=1;i<=n;i++) s+=arr[i]; return (n>0?s/n:0) }
+    {
+      task = jstr($0,"task"); arm = jstr($0,"arm")
+      if (task=="" || arm=="") next
+      agent_exit = jnum($0,"agent_exit")
+      cost = jnum($0,"cost_usd"); succ = jbool($0,"success")
+      key = task SUBSEP arm
+      # SUCCESS axis: EVERY run counts, with the verifier'\''s recorded verdict.
+      # Dropping agent-error rows here would bias the non-inferiority gate
+      # toward "B holds" exactly when B times out / crashes more often — the
+      # verifier (the Tier-1 oracle) is the ground truth either way.
+      RepsS[key]++; SumS[key]+=succ
+      # COST axis: clean runs only. A killed run'\''s JSON carries no
+      # total_cost_usd → cost parses as 0; averaging $0 rows into a real arm
+      # produces a misleading "B is cheaper". Excluded rows are counted and
+      # reported (they stay on the success axis above).
+      if (agent_exit == 0) {
+        RepsC[key]++
+        # Store replicate values for the replicate-level A/A fallback.
+        C[key, RepsC[key]] = cost
+        SumC[key]+=cost
+      } else Excluded++
+      if (!(task in Tseen)) { Tseen[task]=1; Tasks[++nt]=task }
+      if (!(arm  in Aseen)) { Aseen[arm]=1;  Arms[++na]=arm }
+    }
+    END {
+      if (na < 2) {
+        if (Excluded > 0)
+          printf "analyze: need 2 arms in runs.jsonl (only %d after excluding %d agent-error row(s))\n", na, Excluded > "/dev/stderr"
+        else
+          print "analyze: need 2 arms in runs.jsonl" > "/dev/stderr"
+        exit 1
+      }
+      if (target != "" && !(target in Aseen)) { printf "analyze: --vs arm \"%s\" not found in runs.jsonl\n", target > "/dev/stderr"; exit 1 }
+      A = Arms[1]; B = (target != "" ? target : Arms[2])
+      # Pair per METRIC: cost pairs need CLEAN rows in both arms; success pairs
+      # need ANY rows in both arms. RepsS ⊇ RepsC, so npc ≤ nps always — with no
+      # agent errors the two pairings are identical and nothing changes.
+      npc = 0; nps = 0
+      n_per_arm_A = 0; n_per_arm_B = 0
+      for (i=1;i<=nt;i++) {
+        t = Tasks[i]
+        kA = t SUBSEP A; kB = t SUBSEP B
+        if ((kA in RepsS) && (kB in RepsS)) {
+          nps++
+          SA[nps] = SumS[kA]/RepsS[kA]; SB[nps] = SumS[kB]/RepsS[kB]
+          DiffS[nps] = SB[nps] - SA[nps]
+          n_per_arm_A += RepsS[kA]; n_per_arm_B += RepsS[kB]
+        }
+        if ((kA in RepsC) && (kB in RepsC)) {
+          npc++
+          MA[npc] = SumC[kA]/RepsC[kA]; MB[npc] = SumC[kB]/RepsC[kB]
+          DiffC[npc] = MB[npc] - MA[npc]
+          TaskOrder[npc] = t
+          PT_SA[npc] = SumS[kA]/RepsS[kA]; PT_SB[npc] = SumS[kB]/RepsS[kB]
+        }
+      }
+      if (nps == 0) { print "analyze: no tasks have records from both arms" > "/dev/stderr"; exit 1 }
+      n_paired = npc          # the legacy power/tier unit: CLEAN cost pairs
+      cost_mean_diff = mean(DiffC, npc)
+      succ_mean_diff = mean(DiffS, nps)
+      cost_A_mean = mean(MA, npc); cost_B_mean = mean(MB, npc)
+      succ_A_rate = mean(SA, nps); succ_B_rate = mean(SB, nps)
+
+      # Bootstrap on per-task diffs (the analysis unit is the task — §4), each
+      # metric over its own pairing.
+      srand(seed)
+      for (b=1;b<=boots;b++) {
+        sc = 0
+        for (j=1;j<=npc;j++) {
+          idx = int(rand() * npc) + 1
+          if (idx<1) idx=1; if (idx>npc) idx=npc
+          sc += DiffC[idx]
+        }
+        BC[b] = (npc > 0) ? sc / npc : 0
+        ss = 0
+        for (j=1;j<=nps;j++) {
+          idx = int(rand() * nps) + 1
+          if (idx<1) idx=1; if (idx>nps) idx=nps
+          ss += DiffS[idx]
+        }
+        BS[b] = ss / nps
+      }
+      cost_lo = pct(BC, boots, 0.025); cost_hi = pct(BC, boots, 0.975)
+      succ_lo = pct(BS, boots, 0.025); succ_hi = pct(BS, boots, 0.975)
+
+      cost_favorable = (cost_hi < 0) ? 1 : 0
+      # Non-inferiority: lower bound of success-diff CI ≥ −δ (margin).
+      succ_non_inferior = (succ_lo >= -margin) ? 1 : 0
+      # Power tiering — soft, not a hard cliff. The previous <5 cliff produced
+      # "underpowered" verdicts that read as refusals; in reality:
+      #   N=1 → truly degenerate (bootstrap resamples the same task → CI is a point)
+      #   2 ≤ N < 5 → wide CI but honest (~35 distinct resample outcomes at N=4)
+      #   N ≥ 5 → normal nonparametric inference
+      # A/A with N=1 has a special replicate-level fallback below.
+      analysis_method = "paired-by-task"
+      ci_degenerate = (n_paired <= 1) ? 1 : 0
+      low_power     = (n_paired >= 2 && n_paired < 5) ? 1 : 0
+
+      verdict = "no proven win"
+      reason = ""
+      if (ci_degenerate && mode != "aa") {
+        verdict = "data degenerate"
+        reason = sprintf("only %d clean task pair(s) for cost (agent-error rows are excluded from cost means) — paired-by-task bootstrap CI is a single point; need ≥2 tasks", n_paired)
+      } else if (cost_favorable && succ_non_inferior) {
+        verdict = "B wins (cost lower, success non-inferior)"
+        if (low_power) reason = sprintf("WIDE CI / LIMITED POWER at N=%d paired task(s) — confirm with more tasks before merging", n_paired)
+      } else if (!cost_favorable && cost_lo > 0) {
+        verdict = "A wins (B is more expensive)"
+        if (low_power) reason = sprintf("WIDE CI / LIMITED POWER at N=%d paired task(s)", n_paired)
+      } else if (!cost_favorable) {
+        verdict = "no proven win"
+        reason = "cost CI contains 0 — effect not separable from noise"
+        if (low_power) reason = reason " (and WIDE CI / LIMITED POWER at N=" n_paired " paired task(s))"
+      } else if (cost_favorable && !succ_non_inferior) {
+        verdict = "no proven win"
+        reason = sprintf("success regressed beyond δ=%.3f (lower CI %.3f)", margin, succ_lo)
+      }
+
+      # A/A check: if mode=aa, surface whether the harness is clean. A/A should
+      # have a CI containing 0 for cost; if it doesn'\''t, the pipeline is biased.
+      # For N=1 paired task, paired-by-task is degenerate — switch to a
+      # replicate-level unpaired bootstrap on within-task cost values (the
+      # right analysis for "is the harness biased?" when you can only afford
+      # one task with K replicates per arm).
+      if (mode == "aa") {
+        if (n_paired == 1) {
+          task1 = Tasks[1]
+          k_a_r = RepsC[task1, A] + 0
+          k_b_r = RepsC[task1, B] + 0
+          if (k_a_r < 2 || k_b_r < 2) {
+            verdict = "A/A data degenerate"
+            reason = sprintf("only %d task × %d/%d replicates — need ≥2 replicates per arm for replicate-level analysis", n_paired, k_a_r, k_b_r)
+            ci_degenerate = 1
+          } else {
+            # Recompute the cost CI via unpaired bootstrap on K replicates per
+            # arm (within the single task). The success-rate CI stays paired-by-task
+            # since 0/1 outcomes do not need replicate-level analysis.
+            srand(seed)
+            for (b=1; b<=boots; b++) {
+              sa_r = 0; sb_r = 0
+              for (j=1; j<=k_a_r; j++) {
+                idx = int(rand() * k_a_r) + 1
+                if (idx<1) idx=1; if (idx>k_a_r) idx=k_a_r
+                sa_r += C[task1, A, idx]
+              }
+              for (j=1; j<=k_b_r; j++) {
+                idx = int(rand() * k_b_r) + 1
+                if (idx<1) idx=1; if (idx>k_b_r) idx=k_b_r
+                sb_r += C[task1, B, idx]
+              }
+              BC[b] = (sb_r/k_b_r) - (sa_r/k_a_r)
+            }
+            cost_lo = pct(BC, boots, 0.025); cost_hi = pct(BC, boots, 0.975)
+            cost_mean_diff = (cost_B_mean - cost_A_mean)
+            analysis_method = "replicate-level"
+            ci_degenerate = 0
+            aa_clean = (cost_lo <= 0 && cost_hi >= 0) ? 1 : 0
+            verdict = aa_clean ? sprintf("A/A OK — harness clean (replicate-level, 1 task × %d/%d reps)", k_a_r, k_b_r) \
+                                : sprintf("A/A BIASED — fix the harness before trusting any A/B (replicate-level, 1 task × %d/%d reps)", k_a_r, k_b_r)
+            reason = ""
+          }
+        } else {
+          aa_clean = (cost_lo <= 0 && cost_hi >= 0) ? 1 : 0
+          if (low_power) {
+            verdict = aa_clean ? sprintf("A/A OK — harness clean (wide CI, limited power at N=%d)", n_paired) \
+                                : sprintf("A/A BIASED — fix the harness (wide CI, limited power at N=%d)", n_paired)
+          } else {
+            verdict = aa_clean ? "A/A OK — harness clean" \
+                                : "A/A BIASED — fix the harness before trusting any A/B"
+          }
+          reason = ""
+        }
+      }
+
+      # Emit result.json. Multi-line for legibility; jq-parseable.
+      printf "{\n" > out_file
+      printf "  \"mode\": \"%s\",\n", mode >> out_file
+      printf "  \"arms\": [\"%s\", \"%s\"],\n", A, B >> out_file
+      printf "  \"tasks_paired\": %d,\n", n_paired >> out_file
+      printf "  \"tasks_paired_success\": %d,\n", nps >> out_file
+      printf "  \"n_per_arm\": [%d, %d],\n", n_per_arm_A, n_per_arm_B >> out_file
+      printf "  \"excluded_runs\": %d,\n", Excluded+0 >> out_file
+      printf "  \"analysis_method\": \"%s\",\n", analysis_method >> out_file
+      printf "  \"bootstrap_iters\": %d,\n", boots >> out_file
+      printf "  \"non_inferiority_margin\": %s,\n", margin >> out_file
+      printf "  \"cost\": {\n" >> out_file
+      printf "    \"A_mean\": %.6f,\n", cost_A_mean >> out_file
+      printf "    \"B_mean\": %.6f,\n", cost_B_mean >> out_file
+      printf "    \"diff_mean_BA\": %.6f,\n", cost_mean_diff >> out_file
+      printf "    \"ci95\": [%.6f, %.6f],\n", cost_lo, cost_hi >> out_file
+      printf "    \"favorable\": %s\n", (cost_favorable?"true":"false") >> out_file
+      printf "  },\n" >> out_file
+      printf "  \"success\": {\n" >> out_file
+      printf "    \"A_rate\": %.4f,\n", succ_A_rate >> out_file
+      printf "    \"B_rate\": %.4f,\n", succ_B_rate >> out_file
+      printf "    \"diff_BA\": %.4f,\n", succ_mean_diff >> out_file
+      printf "    \"ci95\": [%.4f, %.4f],\n", succ_lo, succ_hi >> out_file
+      printf "    \"non_inferior\": %s\n", (succ_non_inferior?"true":"false") >> out_file
+      printf "  },\n" >> out_file
+      printf "  \"per_task\": [\n" >> out_file
+      for (j=1;j<=n_paired;j++) {
+        printf "    {\"task\":\"%s\",\"A_cost\":%.6f,\"B_cost\":%.6f,\"diff_cost\":%.6f,\"A_succ\":%.4f,\"B_succ\":%.4f}%s\n", \
+          TaskOrder[j], MA[j], MB[j], DiffC[j], PT_SA[j], PT_SB[j], (j<n_paired?",":"") >> out_file
+      }
+      printf "  ],\n" >> out_file
+      printf "  \"verdict\": \"%s\"", verdict >> out_file
+      if (reason != "") printf ",\n  \"reason\": \"%s\"\n", reason >> out_file
+      else              printf "\n" >> out_file
+      printf "}\n" >> out_file
+
+      printf "Wrote %s\n", out_file
+    }' "$runs_file"
+  if [ "$aa" -eq 0 ] && [ -z "$vs" ]; then
+    _autosync "$id"        # sync the canonical A-vs-B result (skip --aa / side --vs); never alters exit
+    _auto_aggregate "$id"  # anonymized library submit — only when aggregate_submit=on
+  fi
+}
+
+# _fmt_engine <model> <effort> → "model@effort" | "model" | "@effort" | "" (empty
+# when the arm pins neither — i.e. it inherits Claude Code's defaults).
+_fmt_engine() {
+  local m="${1:-}" e="${2:-}"
+  if   [ -n "$m" ] && [ -n "$e" ]; then printf '%s@%s' "$m" "$e"
+  elif [ -n "$m" ];                then printf '%s' "$m"
+  elif [ -n "$e" ];                then printf '@%s' "$e"
+  fi
+}
+
+# _result_fields <result.json> → tab line: A_mean  B_mean  favorable(yes/no)
+#   non_inferior(yes/no)  verdict. Parses our own result JSON (stable shape).
+_result_fields() {
+  awk '
+    function num(t,k,  s){ if (match(t, "\""k"\":[[:space:]]*-?[0-9.]+")) { s=substr(t,RSTART,RLENGTH); sub(/.*:[[:space:]]*/,"",s); return s+0 } return 0 }
+    { all = all $0 "\n" }
+    END {
+      cb = all; sub(/.*"cost":[[:space:]]*{/,"",cb); sub(/}.*/,"",cb)
+      sbk = all; sub(/.*"success":[[:space:]]*{/,"",sbk); sub(/}.*/,"",sbk)
+      fav = (cb ~ /"favorable":[[:space:]]*true/) ? "yes" : "no"
+      ni  = (sbk ~ /"non_inferior":[[:space:]]*true/) ? "yes" : "no"
+      v=""; if (match(all, /"verdict":[[:space:]]*"[^"]*"/)) { s=substr(all,RSTART,RLENGTH); sub(/.*"verdict":[[:space:]]*"/,"",s); sub(/"$/,"",s); v=s }
+      printf "%.6f\t%.6f\t%s\t%s\t%s\n", num(cb,"A_mean"), num(cb,"B_mean"), fav, ni, v
+    }
+  ' "$1"
+}
+
+# _report_frontier <id> — the combined effort-frontier view for an N-arm engine
+# experiment: every treatment arm vs the control A, side by side, plus the
+# recommendation (the cheapest arm that holds quality). Auto-analyzes any missing
+# A-vs-arm comparison from the existing runs, so one command does the synthesis.
+_report_frontier() {
+  local id="$1" dir; dir="$(exp_dir "$id")"
+  local spec="$dir/spec"
+  [ -f "$spec" ] || { err "no spec for $id"; return 1; }
+  local arms=() L; for L in $(spec_list_sections "$spec" arm); do arms+=("$L"); done
+  [ "${#arms[@]}" -ge 2 ] || { err "frontier needs ≥2 arms (got ${#arms[@]})"; return 1; }
+  [ -s "$dir/runs.jsonl" ] || { err "no runs yet — run the matrix first: header-experiment run $id"; return 1; }
+  local control="${arms[0]}" a_eng
+  a_eng="$(_fmt_engine "$(spec_section_get "$spec" arm "$control" model)" "$(spec_section_get "$spec" arm "$control" effort)")"
+  [ -n "$a_eng" ] || a_eng="(defaults)"
+
+  beta_banner
+  printf '\nEngine-adoption frontier — %s\n' "$id"
+  printf '  Control A = %s   ·   each treatment vs A (cheapest arm that holds quality wins):\n\n' "$a_eng"
+  printf '  %-4s %-28s %11s %9s   %s\n' "arm" "engine" "cost/task" "vs A" "success"
+
+  local i T rf eng am bm fav ni verdict
+  local best_arm="" best_eng="" best_cost="" best_fav=""
+  for (( i=1; i<${#arms[@]}; i++ )); do
+    T="${arms[$i]}"
+    if [ "$i" -eq 1 ]; then rf="$dir/result.json"; [ -f "$rf" ] || cmd_analyze "$id" >/dev/null 2>&1
+    else rf="$dir/result-vs-${T}.json"; [ -f "$rf" ] || cmd_analyze "$id" --vs "$T" >/dev/null 2>&1; fi
+    [ -f "$rf" ] || { err "couldn't analyze A vs $T (run the matrix first)"; return 1; }
+    eng="$(_fmt_engine "$(spec_section_get "$spec" arm "$T" model)" "$(spec_section_get "$spec" arm "$T" effort)")"
+    [ -n "$eng" ] || eng="(defaults)"
+    IFS=$'\t' read -r am bm fav ni verdict < <(_result_fields "$rf")
+    local pct cost_str ni_str
+    pct="$(awk -v a="$am" -v b="$bm" -v f="$fav" 'BEGIN{ if(a>0){ printf "%+.0f%%%s",(b-a)/a*100,(f=="yes"?" \xe2\x9c\x93":"") } else printf "n/a" }')"
+    cost_str="$(awk -v b="$bm" 'BEGIN{printf "$%.4f", b}')"
+    ni_str="$([ "$ni" = yes ] && echo "hold" || echo "REGRESS")"
+    printf '  %-4s %-28s %11s %9s   %s\n' "$T" "$eng" "$cost_str" "$pct" "$ni_str"
+    if [ "$ni" = yes ] && { [ -z "$best_cost" ] || awk -v a="$bm" -v b="$best_cost" 'BEGIN{exit !(a<b)}'; }; then
+      best_arm="$T"; best_eng="$eng"; best_cost="$bm"; best_fav="$fav"
+    fi
+  done
+
+  printf '\n'
+  if [ -n "$best_arm" ]; then
+    if [ "$best_fav" = yes ]; then
+      printf '  \xe2\x86\x92 Recommendation: adopt %s (%s) — the cheapest effort that holds quality, cost win proven.\n' "$best_arm" "$best_eng"
+    else
+      printf '  \xe2\x86\x92 Recommendation: %s (%s) is the cheapest non-inferior arm, but its cost win is not proven\n     (CI straddles 0) — add tasks before trusting the saving.\n' "$best_arm" "$best_eng"
+    fi
+    printf '     Apply it:  header-experiment merge %s%s\n' "$id" "$([ "$best_arm" != "${arms[1]}" ] && printf ' --vs %s' "$best_arm")"
+  else
+    printf '  \xe2\x86\x92 No arm holds quality (success non-inferior) vs the control — stay on A.\n'
+  fi
+  printf '\n  (Per-arm detail: header-experiment report %s [--vs <arm>])\n' "$id"
+}
+
+# ── REPORT ────────────────────────────────────────────────────
+cmd_report() {
+  local id="" aa=0 vs="" frontier=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --aa)       aa=1; shift ;;
+      --vs)       vs="${2:-}"; shift 2 ;;
+      --frontier) frontier=1; shift ;;
+      -h|--help)  echo "Usage: header-experiment report <id> [--aa] [--vs ARM] [--frontier]"; return 0 ;;
+      *) [ -z "$id" ] && id="$1" || { err "unknown arg '$1'"; return 1; }; shift ;;
+    esac
+  done
+  [ -n "$id" ] || { err "<id> required"; return 1; }
+  [ "$frontier" -eq 1 ] && { _report_frontier "$id"; return $?; }
+  local dir; dir="$(exp_dir "$id")"
+  local rf
+  if [ "$aa" -eq 1 ]; then rf="$dir/result-aa.json"
+  elif [ -n "$vs" ]; then rf="$dir/result-vs-${vs}.json"
+  else rf="$dir/result.json"; fi
+  [ -f "$rf" ] || { err "no result at $rf — run 'analyze $id$([ "$aa" -eq 1 ] && echo ' --aa')$([ -n "$vs" ] && echo " --vs $vs")' first"; return 1; }
+
+  beta_banner
+
+  # Engine descriptors (model@effort), read from the spec so the report names what
+  # each arm actually ran. The treatment is the 2nd arm, or --vs ARM when set.
+  local spec="$dir/spec" eng_a="" eng_b="" _arms=() _l _btgt=""
+  if [ -f "$spec" ]; then
+    for _l in $(spec_list_sections "$spec" arm); do _arms+=("$_l"); done
+    [ "${#_arms[@]}" -ge 1 ] && eng_a="$(_fmt_engine "$(spec_section_get "$spec" arm "${_arms[0]}" model)" "$(spec_section_get "$spec" arm "${_arms[0]}" effort)")"
+    _btgt="${_arms[1]:-}"; [ -n "$vs" ] && _btgt="$vs"
+    [ -n "$_btgt" ] && eng_b="$(_fmt_engine "$(spec_section_get "$spec" arm "$_btgt" model)" "$(spec_section_get "$spec" arm "$_btgt" effort)")"
+  fi
+
+  awk -v eng_a="$eng_a" -v eng_b="$eng_b" '
+    function jnum(line,key,  re,s){ re="\""key"\"[ \t]*:[ \t]*-?[0-9.eE+-]+"
+      if (match(line,re)){ s=substr(line,RSTART,RLENGTH); sub(/.*:[ \t]*/,"",s); return s+0 } return 0 }
+    function jstr(line,key,  re,s){ re="\""key"\"[ \t]*:[ \t]*\"[^\"]*\""
+      if (match(line,re)){ s=substr(line,RSTART,RLENGTH); sub(/.*:[ \t]*"/,"",s); sub(/"$/,"",s); return s } return "" }
+    function jpair(line,key,  re,s,a){ re="\""key"\"[ \t]*:[ \t]*\\[[^]]*\\]"
+      if (match(line,re)){ s=substr(line,RSTART,RLENGTH); sub(/.*\[/,"",s); sub(/\]$/,"",s); return s } return "" }
+    { all = all $0 "\n" }
+    END {
+      blob = all
+      mode = jstr(blob,"mode")
+      arms_pair = jpair(blob,"arms"); split(arms_pair, AR, ","); A=AR[1]; B=AR[2]
+      gsub(/^[[:space:]]+|[[:space:]]+$|"/,"",A); gsub(/^[[:space:]]+|[[:space:]]+$|"/,"",B)
+      tasks = jnum(blob,"tasks_paired"); boots = jnum(blob,"bootstrap_iters")
+      tasks_s = jnum(blob,"tasks_paired_success")
+      margin = jnum(blob,"non_inferiority_margin")
+      excluded = jnum(blob,"excluded_runs")
+      analysis_method = jstr(blob,"analysis_method")
+      if (analysis_method == "") analysis_method = "paired-by-task"
+      verdict = jstr(blob,"verdict"); reason = jstr(blob,"reason")
+      n_per_arm_pair = jpair(blob,"n_per_arm")
+      split(n_per_arm_pair, NPA, ","); n_a = NPA[1]+0; n_b = NPA[2]+0
+      # Suppress the bootstrap CI string only when the analysis is genuinely
+      # degenerate. Two cases:
+      #   1. paired-by-task with N=1 → resamples identical → CI collapses to point
+      #   2. verdict starts with "data degenerate" or "A/A data degenerate"
+      # For 2-4 paired tasks the CI is wide but real — show it with a caveat,
+      # do not suppress (would discard real information). The verdict carries
+      # the "WIDE CI / LIMITED POWER" caveat already.
+      ci_degenerate = ((tasks <= 1 && analysis_method == "paired-by-task") || \
+                       verdict ~ /degenerate/) ? 1 : 0
+      low_power = (tasks >= 2 && tasks < 5 && analysis_method == "paired-by-task") ? 1 : 0
+
+      # Cost block — pull from the {} after "cost":
+      cb = blob; sub(/.*"cost":[[:space:]]*{/,"",cb); sub(/}.*/,"",cb)
+      ca = jnum(cb,"A_mean"); cbm = jnum(cb,"B_mean"); cd = jnum(cb,"diff_mean_BA")
+      cpair = jpair(cb,"ci95"); split(cpair, CI, ","); clo=CI[1]+0; chi=CI[2]+0
+
+      sb_ = blob; sub(/.*"success":[[:space:]]*{/,"",sb_); sub(/}.*/,"",sb_)
+      sar = jnum(sb_,"A_rate"); sbr = jnum(sb_,"B_rate"); sd = jnum(sb_,"diff_BA")
+      spair = jpair(sb_,"ci95"); split(spair, SI, ","); slo=SI[1]+0; shi=SI[2]+0
+
+      printf "\nExperiment report — %s\n", (mode=="aa" ? "A/A (noise floor)" : "A vs B")
+      tp_str = sprintf("%d", tasks)
+      if (tasks_s > tasks) tp_str = sprintf("%d cost / %d success", tasks, tasks_s)
+      printf "  Arms: %s%s vs %s%s   ·   tasks paired: %s   ·   bootstrap: %d iters   ·   δ=%.3f\n", \
+        A, (eng_a!="" ? " [" eng_a "]" : ""), B, (eng_b!="" ? " [" eng_b "]" : ""), tp_str, boots, margin
+      if (analysis_method == "replicate-level") {
+        printf "  Analysis: replicate-level bootstrap (N=1 task; bootstrap on within-task replicates per arm)\n"
+      } else if (low_power) {
+        printf "  Analysis: paired-by-task, LIMITED POWER — N=%d paired task(s), CI is real but wide; confirm with more tasks if the verdict matters\n", tasks
+      }
+      if (excluded > 0) {
+        printf "  Excluded %d run(s) from COST means (agent_exit ≠ 0 — timeout or error). They still count on the\n", excluded
+        printf "  success axis with the verifier'\''s verdict — a crashing arm cannot look non-inferior by crashing.\n"
+      }
+      printf "\n"
+      diff_label = sprintf("%s − %s", B, A)
+      printf "  COST (USD, paired per-task means)\n"
+      printf "    %s mean: %.4f\n", A, ca
+      printf "    %s mean: %.4f\n", B, cbm
+      if (ci_degenerate)
+        printf "    %s   : %.4f   95%% CI (insufficient data)\n\n", diff_label, cd
+      else
+        printf "    %s   : %.4f   95%% CI [%.4f, %.4f]\n\n", diff_label, cd, clo, chi
+      printf "  SUCCESS (rate, paired per-task means)\n"
+      printf "    %s rate: %.3f\n", A, sar
+      printf "    %s rate: %.3f\n", B, sbr
+      if (ci_degenerate)
+        printf "    %s  : %+.3f   95%% CI (insufficient data)\n\n", diff_label, sd
+      else
+        printf "    %s  : %+.3f   95%% CI [%+.3f, %+.3f]\n\n", diff_label, sd, slo, shi
+      printf "  Verdict: %s\n", verdict
+      if (reason != "") printf "    %s\n", reason
+      printf "\n"
+      if (mode != "aa") {
+        printf "  Decision rule (design doc §6.5): merge B iff cost CI upper bound < 0 AND success lower bound ≥ −δ.\n"
+        if (ci_degenerate)
+          printf "  Conservative savings rate: not computed (insufficient data — need ≥2 paired tasks for a CI).\n"
+        else
+          printf "  Conservative savings rate: max(0, -upper_CI(diff_cost)) = %.4f USD/task — never bill the optimistic tail.\n", (chi < 0 ? -chi : 0)
+      } else {
+        printf "  A/A interpretation: a clean A/A has a cost CI containing 0. If it doesn'\''t, ordering /\n"
+        printf "  cache warmup / temporal drift is contaminating the pipeline — fix before trusting the A/B.\n"
+      }
+    }' "$rf"
+
+  # Cost-axis non-discrimination caveat: for a mandate-deletion A/B, a
+  # non-favorable cost result (arm A not measurably costlier than B) is
+  # ambiguous — the mandate may be genuinely cheap, OR the adapter never
+  # PERFORMED the mandated work (a one-shot headless run won't boot a server /
+  # drive a browser), collapsing arm A's cost onto arm B's. Flag it.
+  local _mode _fav
+  _mode="$(grep -o '"mode"[[:space:]]*:[[:space:]]*"[^"]*"' "$rf" | head -1 | sed 's/.*"\([^"]*\)"$/\1/')"
+  _fav="$(grep -o '"favorable"[[:space:]]*:[[:space:]]*\(true\|false\)' "$rf" | head -1 | grep -o 'true\|false')"
+  if [ "$_mode" = "ab" ] && [ "$_fav" = "false" ]; then
+    local _spec="$dir/spec" _repo_abs
+    _repo_abs="$(resolve_path "$dir" "$(spec_get_scalar "$_spec" repo)")"
+    if is_mandate_deletion "$_spec" "$dir" "$_repo_abs"; then
+      cat <<'EOF'
+
+  Cost-axis check: arm A (mandate present) was NOT measurably more expensive than
+  arm B (mandate removed). Two readings, indistinguishable from this result alone:
+    · the mandate is genuinely cheap (a real "nearly free" finding), or
+    · the adapter never PERFORMED the mandated work — a one-shot headless run
+      won't boot a server / drive a browser — so arm A's cost collapsed onto
+      arm B's: a false "the mandate is free."
+  Before concluding the mandate is free, confirm arm A actually exercised it
+  (inspect logs/t*-A-*.json for the expensive work). If it didn't, this is a
+  guardrail-value question, not a cost A/B — measure one real execution directly.
+EOF
+    fi
+  fi
+}
+
+# ── MERGE ─────────────────────────────────────────────────────
+# Apply the winning arm's override files to the repo. Refuses unless the
+# analysed verdict says B wins (override with --force). Shows the diff first
+# and asks for confirmation unless --yes. Does NOT auto-commit — prints the
+# suggested commit command (with the Header-Audit-Finding trailer when a
+# ledger_key is recorded in the spec) so the user retains the final say.
+#
+# Two cases:
+#   - arms/B/ has files → copy them into the repo (the prompt-debt-deletion
+#     case and any generic experiment with override files)
+#   - arms/B/ is empty (model-swap) → no files to copy; print "the win is the
+#     model — update your default to <B's model>" and stop (the harness
+#     doesn't manage your runtime model selection for you).
+# _json_set_str <json-text> <key> <value> → the JSON with top-level "key":"value"
+# set (replaced if present, else inserted after the opening brace). Empty value →
+# unchanged. No jq: good enough for the simple top-level string keys we set
+# (model / effortLevel), and `merge` shows a diff + asks before writing, so the
+# human is the safety net for any edge the text edit doesn't handle.
+_json_set_str() {
+  local json="$1" key="$2" val="$3"
+  [ -n "$val" ] || { printf '%s' "$json"; return; }
+  if printf '%s' "$json" | grep -q "\"$key\"[[:space:]]*:"; then
+    printf '%s' "$json" | sed "s/\"$key\"[[:space:]]*:[[:space:]]*\"[^\"]*\"/\"$key\": \"$val\"/"
+  else
+    printf '%s' "$json" | awk -v k="$key" -v v="$val" '
+      BEGIN{done=0}
+      !done && /{/ {
+        i=index($0,"{"); head=substr($0,1,i); tail=substr($0,i+1)
+        rest=tail; sub(/^[[:space:]]*/,"",rest)
+        if (rest ~ /^}/) printf "%s\n  \"%s\": \"%s\"%s\n", head, k, v, tail
+        else            printf "%s\n  \"%s\": \"%s\",%s\n", head, k, v, tail
+        done=1; next
+      }
+      {print}
+    '
+  fi
+}
+
+# _settings_apply_engine <file> <model> <effortLevel> → the proposed settings.json
+# content (existing content or a bare {} with model/effortLevel set). Empty args
+# are left unset (e.g. effort omitted for a max win — settings can't hold it).
+_settings_apply_engine() {
+  local file="$1" model="$2" eff="$3" json
+  if [ -s "$file" ]; then json="$(cat "$file")"; else json="{}"; fi
+  json="$(_json_set_str "$json" model "$model")"
+  json="$(_json_set_str "$json" effortLevel "$eff")"
+  printf '%s' "$json"
+}
+
+cmd_merge() {
+  local id="" yes=0 force=0 vs=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --yes|-y)  yes=1; shift ;;
+      --force)   force=1; shift ;;
+      --vs)      vs="${2:-}"; shift 2 ;;
+      -h|--help) echo "Usage: header-experiment merge <id> [--yes] [--force] [--vs ARM]"; return 0 ;;
+      *) [ -z "$id" ] && id="$1" || { err "unknown arg '$1'"; return 1; }; shift ;;
+    esac
+  done
+  [ -n "$id" ] || { err "<id> required"; return 1; }
+  local dir; dir="$(exp_dir "$id")"
+  local spec="$dir/spec"
+  local rf="$dir/result.json"; [ -n "$vs" ] && rf="$dir/result-vs-${vs}.json"
+  [ -f "$spec" ] || { err "no spec for $id"; return 1; }
+  [ -f "$rf" ]   || { err "no $(basename "$rf") — run 'analyze $id$([ -n "$vs" ] && echo " --vs $vs")' first"; return 1; }
+
+  # Pull the verdict + arm labels out of result.json. (Simple greps; the file
+  # is written by us so the shape is stable.)
+  local verdict; verdict="$(sed -n 's/.*"verdict"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$rf" | head -1)"
+  local mode;    mode="$(sed -n 's/.*"mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$rf" | head -1)"
+  [ "$mode" = "aa" ] && { err "this is an A/A result (noise-floor check), nothing to merge"; return 1; }
+
+  case "$verdict" in
+    "B wins"*) ;;
+    *)
+      if [ "$force" -ne 1 ]; then
+        err "verdict is '$verdict' — refusing to merge. Pass --force to override (rare; usually means you should reanalyze with more replicates)."
+        return 1
+      fi
+      ;;
+  esac
+
+  local repo; repo="$(spec_get_scalar "$spec" repo)"
+  case "$repo" in /*) ;; *) repo="$dir/$repo" ;; esac
+  [ -d "$repo" ] || { err "repo not found: $repo"; return 1; }
+
+  # Locate the control (A, first arm) and the treatment (2nd arm, or --vs ARM).
+  local arms_list; arms_list="$(spec_list_sections "$spec" arm)"
+  local i=0 first_arm="" second_arm=""
+  local L
+  for L in $arms_list; do
+    [ -n "$L" ] || continue
+    i=$(( i + 1 ))
+    [ "$i" -eq 1 ] && first_arm="$L"
+    [ "$i" -eq 2 ] && second_arm="$L"
+  done
+  if [ -n "$vs" ]; then
+    printf '%s\n' "$arms_list" | grep -qx "$vs" || { err "--vs arm '$vs' is not in the spec"; return 1; }
+    second_arm="$vs"
+  fi
+  [ -n "$second_arm" ] || { err "couldn't find the treatment arm in spec"; return 1; }
+
+  local b_overrides b_model
+  b_overrides="$(spec_section_get "$spec" arm "$second_arm" overrides_dir)"
+  b_model="$(spec_section_get "$spec" arm "$second_arm" model)"
+
+  local ledger_key; ledger_key="$(spec_get_scalar "$spec" ledger_key)"
+
+  # Engine-swap path (model and/or effort, no override files): nothing to copy —
+  # tell the user EXACTLY what to set. Advisory by design: we don't hand-edit the
+  # user's settings.json (no JSON dependency; a bad rewrite is worse than a copy).
+  if [ -z "$b_overrides" ]; then
+    local a_model a_eff b_eff a_eng b_eng
+    a_model="$(spec_section_get "$spec" arm "$first_arm" model)"
+    a_eff="$(spec_section_get "$spec" arm "$first_arm" effort)"
+    b_eff="$(spec_section_get "$spec" arm "$second_arm" effort)"
+    a_eng="$(_fmt_engine "$a_model" "$a_eff")"; [ -n "$a_eng" ] || a_eng="(inherits Claude Code defaults)"
+    b_eng="$(_fmt_engine "$b_model" "$b_eff")"; [ -n "$b_eng" ] || b_eng="(inherits Claude Code defaults)"
+    cat <<EOF
+This experiment's win is an engine change (model and/or effort), not a code change:
+  Arm A (control): $a_eng
+  Arm B (winner):  $b_eng
+
+No override files to copy. Point your harness at arm B's engine:
+EOF
+    [ -n "$b_model" ] && echo "  • model:  \"model\": \"$b_model\"   (or /model $b_model)"
+    if [ -n "$b_eff" ]; then
+      if [ "$b_eff" = "max" ]; then
+        echo "  • effort: /effort max   (session-only — settings.json can't persist max; or export CLAUDE_CODE_EFFORT_LEVEL=max)"
+      else
+        echo "  • effort: \"effortLevel\": \"$b_eff\"   (or /effort $b_eff)"
+      fi
+    fi
+    echo ""
+
+    # Offer to apply it (the user's final call). Persistable levels only — settings
+    # can't hold max — and we show the resulting file + confirm before writing.
+    local settings="$repo/.claude/settings.json"
+    local persist_eff="$b_eff"; [ "$b_eff" = "max" ] && persist_eff=""
+    if [ -n "$b_model" ] || [ -n "$persist_eff" ]; then
+      local proposed; proposed="$(_settings_apply_engine "$settings" "$b_model" "$persist_eff")"
+      echo "── proposed $settings ──"
+      if [ -f "$settings" ]; then diff -u "$settings" <(printf '%s\n' "$proposed") || true
+      else printf '%s\n' "$proposed" | sed 's/^/+ /'; fi
+      echo "────────────────────────"
+      local do_apply=0
+      if [ "$yes" -eq 1 ]; then do_apply=1
+      elif [ -t 0 ]; then
+        printf 'Apply this to %s? [y/N] ' "$settings"
+        local _ans=""; IFS= read -r _ans; case "$_ans" in [yY]|[yY][eE][sS]) do_apply=1 ;; esac
+      else
+        echo "(no TTY — not applying; re-run with --yes to write it, or set the lines above yourself.)"
+      fi
+      if [ "$do_apply" -eq 1 ]; then
+        mkdir -p "$repo/.claude"
+        printf '%s\n' "$proposed" > "$settings"
+        : > "$dir/.merged" 2>/dev/null || true
+        echo "✓ Applied to $settings."
+        [ "$b_eff" = "max" ] && echo "  (effort 'max' is session-only — also run '/effort max'; settings can't persist it.)"
+        echo "  Review & commit:  cd $repo && git add .claude/settings.json && git commit"
+      else
+        echo "Not applied — set it yourself with the lines above."
+      fi
+    fi
+    [ -n "$ledger_key" ] && {
+      echo ""
+      echo "Record the disposition:  header-ledger record applied \"$ledger_key\" --title \"<short title>\""
+    }
+    return 0
+  fi
+
+  # File-overrides path. Resolve the overrides dir and locate the files inside.
+  local b_dir; b_dir="$(resolve_path "$dir" "$b_overrides")"
+  [ -d "$b_dir" ] || { err "arm B overrides_dir not found: $b_dir"; return 1; }
+
+  # Enumerate every regular file under b_dir, relative to it.
+  local files
+  files="$(cd "$b_dir" && find . -type f 2>/dev/null | sed 's|^\./||')"
+  [ -n "$files" ] || { err "no files under $b_dir to merge"; return 1; }
+
+  echo "Merging arm $second_arm overrides from:"
+  echo "  $b_dir"
+  echo "into:"
+  echo "  $repo"
+  echo ""
+  echo "Files to be replaced:"
+  local f
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    if [ -f "$repo/$f" ]; then
+      echo "  ~ $f (replaces existing file)"
+    else
+      echo "  + $f (new file)"
+    fi
+  done <<< "$files"
+  echo ""
+
+  # Show a diff for each file. Use plain `diff -u` so the user gets unified
+  # diffs they can sanity-check. If the file is new (no prior in repo), show
+  # the whole thing.
+  echo "── DIFF ──────────────────────────────────────────────"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    if [ -f "$repo/$f" ]; then
+      diff -u "$repo/$f" "$b_dir/$f" || true
+    else
+      printf -- '--- /dev/null\n+++ %s (new file)\n' "$f"
+      sed 's/^/+/' "$b_dir/$f"
+    fi
+    echo ""
+  done <<< "$files"
+  echo "──────────────────────────────────────────────────────"
+  echo ""
+
+  if [ "$yes" -ne 1 ]; then
+    if [ ! -t 0 ]; then
+      err "no TTY for confirmation — pass --yes to apply non-interactively"
+      return 1
+    fi
+    printf 'Apply these changes to the repo? [y/N] '
+    local ans=""; IFS= read -r ans
+    case "$ans" in [yY]|[yY][eE][sS]) ;; *) echo "Aborted — nothing written." ; return 1 ;; esac
+  fi
+
+  # Apply: cp each file, creating parent dirs if needed.
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    local sub; sub="$(dirname "$f")"
+    [ "$sub" != "." ] && mkdir -p "$repo/$sub"
+    cp -a "$b_dir/$f" "$repo/$f"
+  done <<< "$files"
+  : > "$dir/.merged" 2>/dev/null || true   # lifecycle marker → status: merged
+
+  echo "Applied. Next steps:"
+  echo "  cd $repo"
+  if [ -n "$ledger_key" ]; then
+    cat <<EOF
+  git add <changed files>
+  git commit                              # message body, then a trailer:
+                                          #   Header-Audit-Finding: $ledger_key — https://joinheader.com
+  header-ledger record applied "$ledger_key" --title "<short title>"
+EOF
+  else
+    echo "  git add <changed files> && git commit"
+  fi
+  _autosync "$id"        # status: merged
+}
+
+# ── dispatch ──────────────────────────────────────────────────
+# ── PUSH (cloud sync — opt-in, account-scoped, metadata only) ─────────────────
+# Send an experiment's lineage to the user's Header account so it shows up in the
+# web UI. NOT a runner — nothing executes server-side. NOT the cross-customer
+# aggregate submit (that's anonymized + still out, design §7.3); this is the
+# user's OWN identified experiments on their OWN dashboard. Gated on an API key.
+#
+# What goes: which experiment (id/kind/description/arms/status) · which hypothesis
+# (the full claim in words from the spec's `hypothesis:`/`description`, plus
+# audit-finding provenance from the ledger) · what it was based on (topic + goal +
+# briefing) · what repo (normalized git remote + commit) · what machine
+# (installation id + host/os/arch) · the result (verdict + CIs), embedded verbatim.
+# What NEVER goes: task prompt BODIES, override file contents, agent logs, verify
+# output. Task prompts are identified by title (authored → derived → id) + a
+# sha256 + byte count, never the text.
+
+# num_or_null — emit a bare JSON number, or `null` for empty / non-numeric.
+num_or_null() { case "${1:-}" in ''|*[!0-9.]*) printf 'null' ;; *) printf '%s' "$1" ;; esac; }
+
+# sha256_of / bytes_of — best-effort content identity for a prompt file (so the
+# UI can dedupe identical prompts) WITHOUT shipping the body.
+sha256_of() {
+  if   command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" 2>/dev/null | cut -d' ' -f1
+  elif command -v shasum    >/dev/null 2>&1; then shasum -a 256 "$1" 2>/dev/null | cut -d' ' -f1
+  else printf ''; fi
+}
+bytes_of() { wc -c < "$1" 2>/dev/null | tr -d ' '; }
+
+# normalize_remote — same stable host/path key header-repo uses (clone-agnostic).
+normalize_remote() {
+  printf '%s' "$1" | sed -E 's#\.git$##; s#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#^[^@/]*@##; s#:#/#'
+}
+
+# machine_install_id — the stable per-machine id (shared with header-telemetry's
+# file). Created on first need; this is identified, account-scoped sync, so a
+# machine id is expected — not the anonymity-sensitive telemetry path.
+machine_install_id() {
+  local f="$STATE_DIR/installation-id" id
+  [ -f "$f" ] && { cat "$f"; return; }
+  id="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null \
+        || od -An -tx1 -N16 /dev/urandom 2>/dev/null | tr -d ' \n')"
+  [ -n "$id" ] && { mkdir -p "$STATE_DIR"; printf '%s' "$id" > "$f"; }
+  printf '%s' "$id"
+}
+
+# resolve_key — env first, then the credentials file (parsed, never sourced).
+resolve_key() {
+  if [ -n "${HEADER_API_KEY:-}" ]; then printf '%s' "$HEADER_API_KEY"; return; fi
+  sed -n 's/^HEADER_API_KEY=//p' "$STATE_DIR/credentials" 2>/dev/null | head -1
+}
+
+# infer_kind — read a `kind:` scalar if the spec carries one; else infer from the
+# arms (≥2 distinct models → model-swap; any arm has overrides → harness-change;
+# else generic). Good enough for a UI label; SKILL.md may persist a precise kind.
+infer_kind() {
+  local spec="$1" k lbl m o n_models any_ovd=0
+  k="$(spec_get_scalar "$spec" kind)"; [ -n "$k" ] && { printf '%s' "$k"; return; }
+  n_models="$(for lbl in $(spec_list_sections "$spec" arm); do spec_section_get "$spec" arm "$lbl" model; done | sed '/^$/d' | sort -u | grep -c .)"
+  for lbl in $(spec_list_sections "$spec" arm); do
+    o="$(spec_section_get "$spec" arm "$lbl" overrides_dir)"; [ -n "$o" ] && any_ovd=1
+  done
+  if   [ "${n_models:-0}" -ge 2 ]; then printf 'model-swap'
+  elif [ "$any_ovd" -eq 1 ];       then printf 'harness-change'
+  else                                  printf 'generic'; fi
+}
+
+# derive_task_title — a SAFE one-line summary of a prompt file: first markdown
+# heading, else first non-empty prose line; code fences skipped; whitespace
+# collapsed; truncated to 140 chars. Best-effort, low-leak — NOT the body. The
+# authored `title:` spec field is the zero-leak alternative.
+derive_task_title() {
+  local p="${1:-}"
+  [ -n "$p" ] && [ -f "$p" ] || return 0
+  awk '
+    function emit(s){ gsub(/^[[:space:]]+|[[:space:]]+$/,"",s); gsub(/[[:cntrl:]]/," ",s)
+      if (s=="") return; if (length(s)>140) s=substr(s,1,137) "..."; print s; exit }
+    /^[[:space:]]*```/ { fence=!fence; next }     # skip fenced code blocks
+    fence { next }
+    /^[[:space:]]*#+[[:space:]]/ { h=$0; sub(/^[[:space:]]*#+[[:space:]]*/,"",h); emit(h) }
+    /[^[:space:]]/ { emit($0) }
+  ' "$p" 2>/dev/null | head -1
+}
+
+# build_payload <id> <topic_ovr> <goal_ovr> <briefing_ovr> → JSON on stdout.
+# Returns 1 if <id> has no spec.
+build_payload() {
+  local id="$1" topic_ovr="${2:-}" goal_ovr="${3:-}" briefing_ovr="${4:-}"
+  local dir spec; dir="$(exp_dir "$id")"; spec="$dir/spec"
+  [ -f "$spec" ] || return 1
+
+  local desc reps margin lk commit_ref kind status
+  desc="$(spec_get_scalar "$spec" description)"
+  reps="$(spec_get_scalar "$spec" replicates)"
+  margin="$(spec_get_scalar "$spec" non_inferiority_margin)"
+  lk="$(spec_get_scalar "$spec" ledger_key)"
+  commit_ref="$(spec_get_scalar "$spec" commit)"; commit_ref="${commit_ref:-HEAD}"
+  kind="$(infer_kind "$spec")"
+  status="defined"
+  [ -f "$dir/runs.jsonl" ]  && status="run"
+  [ -f "$dir/result.json" ] && status="analyzed"
+  [ -f "$dir/.merged" ]     && status="merged"
+
+  # ── repo identity (tolerant of non-git / placeholder paths) ──
+  local repo_spec repo_abs r_url r_top repo_key repo_name repo_branch repo_commit
+  repo_spec="$(spec_get_scalar "$spec" repo)"
+  repo_abs="$(resolve_path "$dir" "$repo_spec")"
+  r_url="$(git -C "$repo_abs" config --get remote.origin.url 2>/dev/null || true)"
+  r_top="$(git -C "$repo_abs" rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -n "$r_url" ]; then repo_key="$(normalize_remote "$r_url")"; else repo_key="${r_top:-$repo_abs}"; fi
+  repo_name="$(basename "${r_top:-${repo_abs:-unknown}}" 2>/dev/null || printf 'unknown')"
+  repo_branch="$(git -C "$repo_abs" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  repo_commit="$(git -C "$repo_abs" rev-parse --short "$commit_ref" 2>/dev/null || true)"
+
+  # ── machine ──
+  local iid host os arch
+  iid="$(machine_install_id)"
+  host="$(uname -n 2>/dev/null || echo unknown)"
+  os="$(uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')"; [ -n "$os" ] || os=unknown
+  arch="$(uname -m 2>/dev/null || echo unknown)"
+
+  # ── hypothesis + audit basis: recover from the ledger via ledger_key ──
+  local h_title h_src h_disp topic goal briefing rec sv
+  topic=""; goal=""; briefing=""
+  if [ -n "$lk" ]; then
+    # Pass the repo DIRECTORY: header-ledger resolves it to the stable identity
+    # (normalized remote, legacy-basename fallback), so an experiment in
+    # ~/oss/api can't recover ~/work/api's finding provenance any more.
+    rec="$("$LEDGER_BIN" get "$lk" --repo "$repo_abs" 2>/dev/null)"
+    [ -n "$rec" ] || rec="$("$LEDGER_BIN" get "$lk" 2>/dev/null)"
+    h_title="$(printf '%s' "$rec"  | sed -n 's/.*"title":"\([^"]*\)".*/\1/p')"
+    h_src="$(printf '%s' "$rec"    | sed -n 's/.*"source_url":"\([^"]*\)".*/\1/p')"
+    h_disp="$(printf '%s' "$rec"   | sed -n 's/.*"action":"\([^"]*\)".*/\1/p')"
+    topic="$(printf '%s' "$rec"    | sed -n 's/.*"topic_id":"\([^"]*\)".*/\1/p')"
+    briefing="$(printf '%s' "$rec" | sed -n 's/.*"briefing_id":"\([^"]*\)".*/\1/p')"
+  fi
+  # spec scalars override the ledger; explicit flags win over everything.
+  sv="$(spec_get_scalar "$spec" topic_id)";    [ -n "$sv" ] && topic="$sv"
+  sv="$(spec_get_scalar "$spec" goal_id)";     [ -n "$sv" ] && goal="$sv"
+  sv="$(spec_get_scalar "$spec" briefing_id)"; [ -n "$sv" ] && briefing="$sv"
+  [ -n "$topic_ovr" ]    && topic="$topic_ovr"
+  [ -n "$goal_ovr" ]     && goal="$goal_ovr"
+  [ -n "$briefing_ovr" ] && briefing="$briefing_ovr"
+
+  # ── arms ──
+  local arms_json="" first=1 lbl model eff ovd role
+  for lbl in $(spec_list_sections "$spec" arm); do
+    model="$(spec_section_get "$spec" arm "$lbl" model)"
+    eff="$(spec_section_get "$spec" arm "$lbl" effort)"
+    ovd="$(spec_section_get "$spec" arm "$lbl" overrides_dir)"
+    role="treatment"; [ "$lbl" = "A" ] && role="control"
+    [ "$first" -eq 1 ] || arms_json="$arms_json,"
+    arms_json="$arms_json{\"label\":\"$(json_escape "$lbl")\",\"model\":\"$(json_escape "$model")\",\"effort\":\"$(json_escape "$eff")\",\"role\":\"$role\",\"overrides\":"
+    if [ -n "$ovd" ]; then arms_json="$arms_json\"$(json_escape "$ovd")\"}"; else arms_json="${arms_json}null}"; fi
+    first=0
+  done
+
+  # ── tasks (title: authored → derived → id; the body NEVER leaves) ──
+  local tasks_json="" tid prompt verify ppath title tsrc psha pbytes
+  first=1
+  for tid in $(spec_list_sections "$spec" task); do
+    prompt="$(spec_section_get "$spec" task "$tid" prompt)"
+    verify="$(spec_section_get "$spec" task "$tid" verify)"
+    title="$(spec_section_get "$spec" task "$tid" title)"
+    ppath="$(resolve_task_path "$repo_abs" "$dir" "$prompt")"
+    psha=""; pbytes=0
+    if [ -n "$ppath" ] && [ -f "$ppath" ]; then psha="$(sha256_of "$ppath")"; pbytes="$(bytes_of "$ppath")"; fi
+    if [ -n "$title" ]; then tsrc="authored"
+    else
+      title="$(derive_task_title "$ppath")"
+      if [ -n "$title" ]; then tsrc="derived"; else title="$tid"; tsrc="id"; fi
+    fi
+    [ "$first" -eq 1 ] || tasks_json="$tasks_json,"
+    tasks_json="$tasks_json{\"id\":\"$(json_escape "$tid")\",\"title\":\"$(json_escape "$title")\",\"title_source\":\"$tsrc\",\"verify\":\"$(json_escape "$verify")\",\"prompt_ref\":\"$(json_escape "$prompt")\",\"prompt_sha256\":\"$(json_escape "$psha")\",\"prompt_bytes\":${pbytes:-0}}"
+    first=0
+  done
+
+  # ── result (verbatim; already valid JSON) or null ──
+  local result_blob="null"
+  [ -f "$dir/result.json" ] && result_blob="$(cat "$dir/result.json")"
+
+  # ── hypothesis object ──
+  # `statement` is the human-readable hypothesis, front-and-center: the spec's
+  # own `hypothesis:` field, falling back to `description` so every experiment
+  # carries its claim in words — NOT reconstructed from the ledger (the ledger
+  # only ever held a borrowed `title`, and a later disposition could clobber it
+  # to empty). ledger_key/title/source_url/disposition stay as provenance, blank
+  # unless the experiment traces to an audit finding.
+  local h_statement; h_statement="$(spec_get_scalar "$spec" hypothesis)"
+  [ -n "$h_statement" ] || h_statement="$desc"
+  local hypo="null"
+  if [ -n "$h_statement" ] || [ -n "$lk" ]; then
+    hypo="{\"statement\":\"$(json_escape "$h_statement")\",\"ledger_key\":\"$(json_escape "$lk")\",\"title\":\"$(json_escape "${h_title:-}")\",\"source_url\":\"$(json_escape "${h_src:-}")\",\"disposition\":\"$(json_escape "${h_disp:-}")\"}"
+  fi
+
+  local ver iid_key
+  ver="$(tr -d '[:space:]' < "$VERSION_FILE" 2>/dev/null || echo unknown)"
+  iid_key="${iid:-unknown}"
+
+  printf '{\n'
+  printf '  "v": 1,\n'
+  printf '  "client_key": "%s:%s",\n' "$(json_escape "$iid_key")" "$(json_escape "$id")"
+  printf '  "skill_version": "%s",\n' "$(json_escape "$ver")"
+  printf '  "submitted_at": "%s",\n' "$(now_iso)"
+  printf '  "experiment": {\n'
+  printf '    "id": "%s",\n'          "$(json_escape "$id")"
+  printf '    "kind": "%s",\n'        "$(json_escape "$kind")"
+  printf '    "description": "%s",\n' "$(json_escape "$desc")"
+  printf '    "status": "%s",\n'      "$status"
+  printf '    "replicates": %s,\n'    "$(num_or_null "$reps")"
+  printf '    "non_inferiority_margin": %s,\n' "$(num_or_null "$margin")"
+  printf '    "commit_ref": "%s",\n'  "$(json_escape "$commit_ref")"
+  printf '    "arms": [%s],\n'        "$arms_json"
+  printf '    "tasks": [%s]\n'        "$tasks_json"
+  printf '  },\n'
+  printf '  "hypothesis": %s,\n'      "$hypo"
+  printf '  "audit_basis": {"topic_id": "%s", "goal_id": "%s", "briefing_id": "%s"},\n' \
+    "$(json_escape "$topic")" "$(json_escape "$goal")" "$(json_escape "$briefing")"
+  printf '  "repo": {"key": "%s", "name": "%s", "branch": "%s", "commit": "%s"},\n' \
+    "$(json_escape "$repo_key")" "$(json_escape "$repo_name")" "$(json_escape "$repo_branch")" "$(json_escape "$repo_commit")"
+  printf '  "machine": {"installation_id": "%s", "hostname": "%s", "os": "%s", "arch": "%s"},\n' \
+    "$(json_escape "$iid")" "$(json_escape "$host")" "$(json_escape "$os")" "$(json_escape "$arch")"
+  printf '  "result": %s\n' "$result_blob"
+  printf '}\n'
+}
+
+# _sync_one <id> <quiet> <topic_ovr> <goal_ovr> <briefing_ovr> — build + POST one
+# experiment. Writes a local .last-sync marker (<iso> <http_code>) so the last
+# status is inspectable offline. Returns: 0 sent · 1 send failed · 2 no key ·
+# 3 no spec. quiet=1 → one faint status line (auto-sync); 0 → verbose (push).
+_sync_one() {
+  local id="$1" quiet="$2" t="${3:-}" g="${4:-}" b="${5:-}"
+  local key; key="$(resolve_key)"
+  [ -n "$key" ] || return 2
+  local payload; payload="$(build_payload "$id" "$t" "$g" "$b")" || return 3
+  local dir; dir="$(exp_dir "$id")"
+  [ "$quiet" = 1 ] || echo "Syncing '$id' → $EXPERIMENTS_URL  (account-scoped; metadata only, no code)…" >&2
+  local tmp code body url maxt=20
+  [ "$quiet" = 1 ] && maxt=8                          # auto-sync must not hang a command
+  tmp="$(mktemp)"
+  code="$(printf '%s' "$payload" | curl -sS -o "$tmp" -w '%{http_code}' --max-time "$maxt" \
+    -X POST "$EXPERIMENTS_URL" \
+    -H "Authorization: Bearer $key" \
+    -H 'Content-Type: application/json' \
+    --data @- 2>/dev/null || echo 000)"
+  body="$(cat "$tmp" 2>/dev/null)"; rm -f "$tmp"
+  printf '%s %s\n' "$(now_iso)" "$code" > "$dir/.last-sync" 2>/dev/null || true
+  case "$code" in
+    2*) url="$(printf '%s' "$body" | sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+        if [ "$quiet" = 1 ]; then echo "⤴ dashboard: synced${url:+ — $url}" >&2
+        else                       echo "  ✓ synced${url:+ — view at $url}"; fi
+        return 0 ;;
+    *)  if [ "$quiet" = 1 ]; then
+          case "$code" in
+            404|405) echo "⤴ dashboard: HTTP $code from the sync endpoint (it's live in production — stale deployment or proxy?) — saved locally, will retry on next edit" >&2 ;;
+            000)     echo "⤴ dashboard: offline — saved locally, will retry on next edit" >&2 ;;
+            401)     echo "⤴ dashboard: API key rejected (401) — fix the key or set 'header-config set experiment_sync off'" >&2 ;;
+            *)       echo "⤴ dashboard: HTTP $code — saved locally" >&2 ;;
+          esac
+        else
+          case "$code" in
+            401) err "  key rejected (401) — check HEADER_API_KEY / credentials" ;;
+            403) err "  forbidden (403)${body:+ — $(printf '%s' "$body" | head -c 200)}" ;;
+            404|405) err "  HTTP $code from $EXPERIMENTS_URL — the endpoint is live in production, so this usually means a stale deployment, a proxy in the way, or a HEADER_API_BASE/HEADER_EXPERIMENTS_URL override pointing elsewhere" ;;
+            000) err "  network error reaching $EXPERIMENTS_URL" ;;
+            *)   err "  HTTP $code${body:+ — $(printf '%s' "$body" | head -c 200)}" ;;
+          esac
+        fi
+        return 1 ;;
+  esac
+}
+
+# _recommend_account <id> — shown once per experiment when there's no key, so the
+# user learns auto-sync exists without being nagged on every command.
+_recommend_account() {
+  local id="$1" dir; dir="$(exp_dir "$id")"
+  [ -f "$dir/.sync-recommended" ] && return 0
+  : > "$dir/.sync-recommended" 2>/dev/null || true
+  {
+    echo "💡 Connect a Header account to auto-track this experiment on your dashboard —"
+    echo "   each edit/run/analyze would sync its status to the web UI (metadata only, no code)."
+    echo "   Create a key at https://joinheader.com, then: export HEADER_API_KEY=hdr_sk_..."
+  } >&2
+}
+
+# _autosync <id> — fire-and-track sync after a lifecycle change. Only when the
+# user has opted into `experiment_sync auto` AND a key is present; auto + no key →
+# recommend an account. Default `off` → no-op. Never affects the caller's exit
+# status. Once opted in there is no per-run prompt — the visible '⤴ dashboard:'
+# line + the 'experiment_sync off' switch are the transparency/opt-out. Fails
+# CLOSED: if the config can't be read, treat egress as off.
+_autosync() {
+  local id="${1:-}"; [ -n "$id" ] || return 0
+  [ -n "${HEADER_EXPERIMENT_NOSYNC:-}" ] && return 0     # test/CI egress guard
+  [ "$("$SELF_DIR/header-config" get experiment_sync 2>/dev/null || echo off)" = "auto" ] || return 0
+  if [ -z "$(resolve_key)" ]; then _recommend_account "$id"; return 0; fi
+  _sync_one "$id" 1 "" "" "" || true
+  return 0
+}
+
+# ── AGGREGATE (anonymized cross-customer submit — the proven-changes library) ──
+# Design §7.3: pool ANONYMIZED effect sizes across customers so the audit can say
+# "deleting this pattern is proven to save ~X% across N repos" — and no single
+# user has to re-run a $60 A/B for a change the library already measured. This is
+# NOT `push`: push is the user's own identified dashboard (API-key-resolved
+# account, machine id, repo identity). Aggregate carries NO identity at all:
+#   sent:  kind · curated category · ecosystem · harness · task class · verifier
+#          tier · arm engines (public model ids + effort) · N/replicates/δ · the
+#          reduced result (verdict + means + CIs; per_task STRIPPED — mined task
+#          ids embed commit shas) · skill version.
+#   never: installation id, hostname/os/arch, repo key/name/branch/commit, task
+#          titles, prompt hashes/bytes, override paths, description/hypothesis
+#          free text, API key (the POST is UNAUTHENTICATED by design — identity
+#          off the wire entirely; the server applies k-anonymity before serving).
+# Consent: config `aggregate_submit` (default off; personal-only — a committed
+# team config cannot enable it). `on` → auto-submit after each analyze; the
+# manual verb asks interactively (or --yes) when the config isn't on.
+
+# model_family <id> — coarse family label (kept alongside the public model id).
+model_family() {
+  case "$(printf '%s' "${1:-}" | tr 'A-Z' 'a-z')" in
+    '')       printf '' ;;
+    *opus*)   printf 'opus' ;;
+    *sonnet*) printf 'sonnet' ;;
+    *haiku*)  printf 'haiku' ;;
+    *)        printf 'other' ;;
+  esac
+}
+
+# detect_repo_ecosystem <repo> — coarse stack label for pooling (mirrors
+# header-audit's primary-ecosystem precedence). A label, never a path.
+detect_repo_ecosystem() {
+  local repo="${1:-.}" p
+  for p in pyproject.toml requirements.txt setup.cfg setup.py Pipfile; do
+    [ -f "$repo/$p" ] && { printf 'python'; return; }
+  done
+  [ -f "$repo/package.json" ] && { printf 'npm'; return; }
+  [ -f "$repo/go.mod" ]       && { printf 'go'; return; }
+  [ -f "$repo/Cargo.toml" ]   && { printf 'cargo'; return; }
+  [ -f "$repo/Gemfile" ]      && { printf 'bundler'; return; }
+  printf 'unknown'
+}
+
+# _curated_category <ledger_key> — echo the key ONLY when it names a pattern in
+# the curated vocabulary (header-audit's built-in + briefing-supplied pattern
+# ids). User-typed ledger keys are NOT a controlled vocabulary and could carry
+# project hints ("delete-acme-deploy-rule"), so anything else maps to the empty
+# category — privacy by construction, not by trust.
+_curated_category() {
+  local k="${1:-}" au="$SELF_DIR/header-audit"
+  [ -n "$k" ] || return 0
+  [ -x "$au" ] || return 0
+  "$au" patterns 2>/dev/null | awk -v k="$k" '$1==k{print k; exit}'
+}
+
+# reduced_result_json <result.json> — result.json minus the per_task array.
+# Mined task ids embed commit shas (t-<sha>), which could fingerprint a public
+# repo; the aggregate only needs the effect (verdict + means + CIs + power).
+reduced_result_json() {
+  awk 'BEGIN{skip=0}
+       /"per_task"[[:space:]]*:/ { skip=1; next }
+       skip && /^[[:space:]]*\],?[[:space:]]*$/ { skip=0; next }
+       !skip' "$1"
+}
+
+# build_aggregate_payload <id> → JSON on stdout. 1 = no spec, 2 = not analyzed.
+build_aggregate_payload() {
+  local id="$1" dir spec; dir="$(exp_dir "$id")"; spec="$dir/spec"
+  [ -f "$spec" ] || return 1
+  [ -f "$dir/result.json" ] || return 2
+
+  local kind reps margin lk category repo_spec repo_abs eco ver
+  kind="$(infer_kind "$spec")"
+  reps="$(spec_get_scalar "$spec" replicates)"
+  margin="$(spec_get_scalar "$spec" non_inferiority_margin)"
+  lk="$(spec_get_scalar "$spec" ledger_key)"
+  category="$(_curated_category "$lk")"
+  repo_spec="$(spec_get_scalar "$spec" repo)"
+  repo_abs="$(resolve_path "$dir" "${repo_spec:-.}")"
+  eco="$(detect_repo_ecosystem "$repo_abs")"
+  ver="$(tr -d '[:space:]' < "$VERSION_FILE" 2>/dev/null || echo unknown)"
+
+  # arms: role + the PUBLIC engine vocabulary (model id, family, effort) only.
+  local arms_json="" first=1 lbl model eff role
+  for lbl in $(spec_list_sections "$spec" arm); do
+    model="$(spec_section_get "$spec" arm "$lbl" model)"
+    eff="$(spec_section_get "$spec" arm "$lbl" effort)"
+    role="treatment"; [ "$lbl" = "A" ] && role="control"
+    [ "$first" -eq 1 ] || arms_json="$arms_json,"
+    arms_json="$arms_json{\"role\":\"$role\",\"model\":\"$(json_escape "$model")\",\"model_family\":\"$(model_family "$model")\",\"effort\":\"$(json_escape "$eff")\"}"
+    first=0
+  done
+
+  # task class: tests-oracle (mined; apply_from present) vs authored vs mixed.
+  local n_tasks=0 n_oracle=0 tid task_class
+  for tid in $(spec_list_sections "$spec" task); do
+    n_tasks=$(( n_tasks + 1 ))
+    [ -n "$(spec_section_get "$spec" task "$tid" apply_from)" ] && n_oracle=$(( n_oracle + 1 ))
+  done
+  if   [ "$n_oracle" -eq 0 ];         then task_class="authored"
+  elif [ "$n_oracle" -eq "$n_tasks" ]; then task_class="tests-oracle"
+  else                                      task_class="mixed"; fi
+
+  printf '{\n'
+  printf '  "v": 1,\n'
+  printf '  "skill_version": "%s",\n' "$(json_escape "$ver")"
+  printf '  "submitted_at": "%s",\n'  "$(now_iso)"
+  printf '  "kind": "%s",\n'          "$(json_escape "$kind")"
+  printf '  "category": "%s",\n'      "$(json_escape "$category")"
+  printf '  "harness": "claude-code",\n'
+  printf '  "ecosystem": "%s",\n'     "$(json_escape "$eco")"
+  printf '  "task_class": "%s",\n'    "$task_class"
+  printf '  "verifier_tier": 1,\n'
+  printf '  "tasks": %s,\n'           "$n_tasks"
+  printf '  "replicates": %s,\n'      "$(num_or_null "$reps")"
+  printf '  "non_inferiority_margin": %s,\n' "$(num_or_null "$margin")"
+  printf '  "arms": [%s],\n'          "$arms_json"
+  printf '  "result": %s\n'           "$(reduced_result_json "$dir/result.json")"
+  printf '}\n'
+}
+
+# _send_aggregate <id> <quiet> — build + POST one aggregate record. NO
+# Authorization header — identity stays off the wire. Writes .last-aggregate
+# (<iso> <http_code>). Returns 0 sent · 1 failed · 2 no result · 3 no spec.
+_send_aggregate() {
+  local id="$1" quiet="$2" payload rc
+  payload="$(build_aggregate_payload "$id")"; rc=$?
+  [ "$rc" -eq 0 ] || return $(( rc + 1 ))
+  local dir; dir="$(exp_dir "$id")"
+  [ "$quiet" = 1 ] || echo "Submitting anonymized aggregate for '$id' → $AGGREGATE_URL  (no identity, no repo, no prompts)…" >&2
+  local tmp code maxt=20; [ "$quiet" = 1 ] && maxt=8
+  tmp="$(mktemp)"
+  code="$(printf '%s' "$payload" | curl -sS -o "$tmp" -w '%{http_code}' --max-time "$maxt" \
+    -X POST "$AGGREGATE_URL" -H 'Content-Type: application/json' --data @- 2>/dev/null || echo 000)"
+  rm -f "$tmp"
+  printf '%s %s\n' "$(now_iso)" "$code" > "$dir/.last-aggregate" 2>/dev/null || true
+  case "$code" in
+    2*) if [ "$quiet" = 1 ]; then echo "⤲ library: aggregate submitted (anonymized)" >&2
+        else echo "  ✓ submitted — thanks; the library serves it back as proven-change evidence"; fi
+        return 0 ;;
+    *)  if [ "$quiet" = 1 ]; then
+          case "$code" in
+            404|405) echo "⤲ library: endpoint not live yet (HTTP $code) — saved locally" >&2 ;;
+            000)     echo "⤲ library: offline — will retry on a later analyze" >&2 ;;
+            *)       echo "⤲ library: HTTP $code — saved locally" >&2 ;;
+          esac
+        else
+          case "$code" in
+            404|405) err "  endpoint not live yet (HTTP $code) — $AGGREGATE_URL is not implemented server-side; the payload contract is exercised and recorded locally" ;;
+            000)     err "  network error reaching $AGGREGATE_URL" ;;
+            *)       err "  HTTP $code" ;;
+          esac
+        fi
+        return 1 ;;
+  esac
+}
+
+# _auto_aggregate <id> — after a successful canonical analyze, submit when the
+# user opted in (config aggregate_submit = on; default off → no-op). Never
+# affects the caller's exit status; HEADER_EXPERIMENT_NOSYNC disables it (CI).
+_auto_aggregate() {
+  local id="${1:-}"; [ -n "$id" ] || return 0
+  [ -n "${HEADER_EXPERIMENT_NOSYNC:-}" ] && return 0
+  [ "$("$SELF_DIR/header-config" get aggregate_submit 2>/dev/null || echo off)" = "on" ] || return 0
+  _send_aggregate "$id" 1 || true
+  return 0
+}
+
+cmd_aggregate() {
+  local id="" dry=0 yes=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --dry-run) dry=1; shift ;;
+      --yes|-y)  yes=1; shift ;;
+      -h|--help) echo "Usage: header-experiment aggregate <id> [--dry-run] [--yes]"; return 0 ;;
+      *) [ -z "$id" ] && id="$1" || { err "unknown arg '$1'"; return 1; }; shift ;;
+    esac
+  done
+  [ -n "$id" ] || { err "<id> required"; return 1; }
+  local dir; dir="$(exp_dir "$id")"
+  [ -f "$dir/spec" ] || { err "no spec at $(spec_path "$id")"; return 1; }
+  [ -f "$dir/result.json" ] || { err "aggregate needs an analyzed experiment — run 'header-experiment analyze $id' first (only measured effects are poolable)"; return 1; }
+
+  beta_banner
+
+  if [ "$dry" -eq 1 ]; then
+    local payload
+    payload="$(build_aggregate_payload "$id")" || { err "could not build the payload"; return 1; }
+    printf '# POST %s   (UNAUTHENTICATED by design — no identity on the wire)\n' "$AGGREGATE_URL"
+    printf '%s\n' "$payload"
+    echo "# dry run — nothing sent" >&2
+    return 0
+  fi
+
+  # Consent: config on, --yes, or an interactive confirmation. Refusal is an
+  # opt-out, not an error (mirrors push's no-key gate).
+  if [ "$("$SELF_DIR/header-config" get aggregate_submit 2>/dev/null || echo off)" != "on" ] && [ "$yes" -ne 1 ]; then
+    if [ -t 0 ]; then
+      cat >&2 <<EOF
+Share this experiment's ANONYMIZED effect size with the cross-customer
+proven-changes library? Sent: change kind/category, ecosystem, arm engines,
+N, and the result CIs. Never sent: your identity, machine, repo, prompts, or
+any free text. Preview the exact payload: header-experiment aggregate $id --dry-run
+Enable always: header-config set aggregate_submit on
+EOF
+      printf 'Submit? [y/N] ' >&2
+      local ans=""; IFS= read -r ans
+      case "$ans" in [yY]|[yY][eE][sS]) ;; *) echo "Not submitted — your call. ('header-config set aggregate_submit on' enables auto-submit after each analyze.)" >&2; return 0 ;; esac
+    else
+      err "aggregate submit is opt-in — re-run with --yes, or enable it with: header-config set aggregate_submit on"
+      echo "Preview the exact payload (nothing sent): header-experiment aggregate $id --dry-run" >&2
+      return 0
+    fi
+  fi
+
+  _send_aggregate "$id" 0
+}
+
+cmd_push() {
+  local all=0 dry=0 yes=0 topic_ovr="" goal_ovr="" briefing_ovr="" id=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --all)      all=1; shift ;;
+      --dry-run)  dry=1; shift ;;
+      --yes|-y)   yes=1; shift ;;
+      --topic)    topic_ovr="${2:-}"; shift 2 ;;
+      --goal)     goal_ovr="${2:-}"; shift 2 ;;
+      --briefing) briefing_ovr="${2:-}"; shift 2 ;;
+      -h|--help)  echo "Usage: header-experiment push <id> | --all [--dry-run] [--yes] [--topic T] [--goal G] [--briefing B]"; return 0 ;;
+      *) [ -z "$id" ] && id="$1" || { err "unknown arg '$1'"; return 1; }; shift ;;
+    esac
+  done
+
+  beta_banner
+
+  local ids=""
+  if [ "$all" -eq 1 ]; then
+    [ -d "$EXP_ROOT" ] || { err "no experiments at $EXP_ROOT"; return 1; }
+    ids="$(for d in "$EXP_ROOT"/*/; do [ -f "${d}spec" ] && basename "$d"; done)"
+  else
+    [ -n "$id" ] || { err "<id> required (or --all)"; return 1; }
+    ids="$id"
+  fi
+  [ -n "$ids" ] || { err "nothing to push"; return 1; }
+
+  # Key needed for a live send; --dry-run renders the payload without one.
+  local key; key="$(resolve_key)"
+  if [ "$dry" -eq 0 ] && [ -z "$key" ]; then
+    err "no Header API key — cloud sync needs an account (experiments stay local until you connect one)."
+    {
+      echo "To enable sync:"
+      echo "  • create a key at https://joinheader.com  (Settings ▸ API Keys, read+write)"
+      echo "  • export HEADER_API_KEY=hdr_sk_...   (or save it to ~/.header/credentials)"
+      echo "Preview exactly what WOULD be sent — no key needed:"
+      echo "  header-experiment push ${id:-<id>} --dry-run"
+    } >&2
+    return 0   # no key is an opt-out, not an error
+  fi
+
+  local one rc=0 n=0
+  for one in $ids; do
+    if [ "$dry" -eq 1 ]; then
+      local payload
+      payload="$(build_payload "$one" "$topic_ovr" "$goal_ovr" "$briefing_ovr")" \
+        || { err "skip '$one' — no spec at $(spec_path "$one")"; rc=1; continue; }
+      printf '\n# ── %s ─────────────────────────────────────────\n' "$one"
+      printf '# POST %s   (headers: Authorization: Bearer hdr_sk_… · Content-Type: application/json)\n' "$EXPERIMENTS_URL"
+      printf '%s\n' "$payload"
+      n=$((n + 1)); continue
+    fi
+    _sync_one "$one" 0 "$topic_ovr" "$goal_ovr" "$briefing_ovr"
+    case "$?" in 0) n=$((n + 1)) ;; 3) err "skip '$one' — no spec at $(spec_path "$one")"; rc=1 ;; *) rc=1 ;; esac
+  done
+
+  if [ "$dry" -eq 1 ]; then echo "" >&2; echo "# dry run — $n experiment(s) rendered; nothing sent" >&2; fi
+  return "$rc"
+}
+
+usage() {
+  # `usage 0` → help on stdout, exit 0 (explicit --help is a success action).
+  # Default → usage error on stderr, exit 1 (no/unknown subcommand).
+  _rc="${1:-1}"; _fd=2; [ "$_rc" = 0 ] && _fd=1
+  cat >&"$_fd" <<EOF
+Usage: header-experiment <command> ...
+
+  mine <id>       MINE git history → a runnable tests-oracle experiment (no task
+                    prompts or verify commands to author). --list to preview
+                    candidates; --from/--to to set the model-swap arms.
+                    --adopt → "should you move to a newer model?": A/B your
+                    CURRENT engine vs a target (default fable-5 @high); --sweep
+                    offers a 3rd effort arm. (The engine-adoption card's proof.)
+  new <id>        audit-aware scaffolder (RECOMMENDED — interactive or one-shot)
+                    --kind prompt-debt-deletion --file F --lines L1,L2,...
+                    --kind model-swap --from M --to N
+                    or generic: --arm A:model --arm B:model --task P --verify CMD
+  define <id>     low-level placeholder spec (template to edit by hand)
+  validate <id>   lint the spec
+  run <id>        execute the matrix (--aa for noise-floor check, --yes to skip
+                    cost gate, --jobs N to run (task,rep) blocks in parallel —
+                    arms stay sequential within a block so pairs interleave)
+  analyze <id>    write result.json (paired bootstrap CI, §6 of design)
+  report <id>     pretty scorecard
+  merge <id>      apply arm B's override files to the repo (after a B-wins verdict)
+  push <id>       sync this experiment's lineage to your Header account (opt-in,
+                    API-key-gated, metadata only). --all to sync every experiment;
+                    --dry-run to preview the exact JSON payload without sending.
+  aggregate <id>  submit an ANONYMIZED effect-size record to the cross-customer
+                    proven-changes library (design §7.3) — kind, curated category,
+                    ecosystem, arm engines, result CIs. No identity, no repo, no
+                    prompts, no free text; the POST carries no API key. Opt-in:
+                    interactive y/N or --yes; 'header-config set aggregate_submit
+                    on' auto-submits after each analyze. --dry-run previews.
+
+BETA — see docs/experiments-design.md.
+EOF
+  exit "$_rc"
+}
+
+cmd="${1:-}"; shift 2>/dev/null || true
+case "$cmd" in
+  mine)     cmd_mine     "$@" ;;
+  new)      cmd_new      "$@" ;;
+  define)   cmd_define   "$@" ;;
+  validate) cmd_validate "$@" ;;
+  run)      cmd_run      "$@" ;;
+  analyze)  cmd_analyze  "$@" ;;
+  report)   cmd_report   "$@" ;;
+  merge)    cmd_merge    "$@" ;;
+  push)     cmd_push     "$@" ;;
+  aggregate) cmd_aggregate "$@" ;;
+  -h|--help) usage 0 ;;
+  "")        usage ;;
+  *) err "unknown subcommand '$cmd'"; usage ;;
+esac

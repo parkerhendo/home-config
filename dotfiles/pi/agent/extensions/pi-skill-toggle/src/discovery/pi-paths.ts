@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { SkillSource } from "../types.ts";
 
 export interface SkillRoot {
@@ -15,21 +15,23 @@ export function getAgentDir(): string {
 
 export function getSkillRoots(cwd: string): SkillRoot[] {
   const resolvedCwd = resolve(cwd);
+  const agentSkills = join(getAgentDir(), "skills");
+  const globalAgentsSkills = join(homedir(), ".agents", "skills");
+  const projectSkills = resolve(resolvedCwd, ".pi", "skills");
   const roots: SkillRoot[] = [
     {
-      path: join(getAgentDir(), "skills"),
-      source: { kind: "user", root: join(getAgentDir(), "skills") },
+      path: agentSkills,
+      source: { kind: "user", root: agentSkills },
     },
     {
-      path: resolve(resolvedCwd, ".pi", "skills"),
-      source: { kind: "project", root: resolve(resolvedCwd, ".pi", "skills") },
+      path: globalAgentsSkills,
+      source: { kind: "user", root: globalAgentsSkills },
     },
-    // Pi's current loader focuses on .pi/skills, but README-era installs may still
-    // have .agents/skills. Include it as a local editable convenience.
     {
-      path: resolve(resolvedCwd, ".agents", "skills"),
-      source: { kind: "project-legacy", root: resolve(resolvedCwd, ".agents", "skills") },
+      path: projectSkills,
+      source: { kind: "project", root: projectSkills },
     },
+    ...getAncestorSkillRoots(resolvedCwd),
   ];
 
   const seen = new Set<string>();
@@ -39,6 +41,25 @@ export function getSkillRoots(cwd: string): SkillRoot[] {
     seen.add(key);
     return true;
   });
+}
+
+function getAncestorSkillRoots(cwd: string): SkillRoot[] {
+  const roots: SkillRoot[] = [];
+  let current = cwd;
+
+  while (true) {
+    const path = join(current, ".agents", "skills");
+    roots.push({
+      path,
+      source: { kind: "project", root: path },
+    });
+
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+
+  return roots;
 }
 
 function expandHome(input: string): string {

@@ -1,0 +1,256 @@
+#!/usr/bin/env bash
+# header-config — read/write the Header skill config.
+#
+# Two layers:
+#   * Personal  ~/.header/config       — per machine. get / set / list / defaults.
+#   * Team      <repo>/.header/config  — COMMITTED to the repo so a whole team
+#                                        shares one topic + a few settings. team-*.
+#
+# Usage:
+#   header-config get <key>            read the personal value (built-in default if absent)
+#   header-config set <key> <value>    write the personal value
+#   header-config list                 show the personal file + active values
+#   header-config defaults             show the built-in defaults
+#   header-config team-get <key>       read an allow-listed key from <repo>/.header/config
+#   header-config team-set <key> <val> write an allow-listed key to <repo>/.header/config
+#   header-config team-init [topic]    scaffold <repo>/.header/config (then commit it)
+#   header-config team-path            print <repo>/.header/config if it exists
+#   header-config team-show            human view: honored keys + any ignored sensitive ones
+#
+# The config files are flat `key: value` lines — NOT YAML. Nested structures are
+# not supported; only the keys below are recognized.
+#
+# SECURITY — the team file is committed, so a pushed change is attacker-reachable.
+# It is only ever READ AS DATA (grep/sed), never sourced. Only an allow-list of
+# team-relevant keys is honored; consent / code-execution keys (telemetry,
+# auto_update, auto_tune, update_check) are IGNORED from a committed file, so a
+# bad commit can't flip a teammate's privacy or run code. Env vars and the
+# personal ~/.header/config still override per developer.
+#
+# Env:
+#   HEADER_HOME       state dir for the personal config (default: $HOME/.header)
+#   HEADER_TEAM_DIR   repo dir for the team config (default: git toplevel, else $PWD)
+#
+# Secrets note: this script never reads or writes ~/.header/credentials.
+set -euo pipefail
+
+STATE_DIR="${HEADER_HOME:-$HOME/.header}"
+CONFIG_FILE="$STATE_DIR/config"
+
+# Keys a COMMITTED team config may set — team-relevant and safe to share.
+TEAM_ALLOWED="default_topic staleness_days schedule_frequency_days language"
+# Keys NEVER honored from a committed file — consent + code execution + egress.
+# If one appears there it is ignored on read and `team-show` flags it.
+# `experiment_sync` controls identified egress to the account, and
+# `aggregate_submit` controls anonymized egress to the cross-customer library —
+# a committed file must not be able to flip either on for every teammate.
+# `auto_register` / `enrich_mode` gate anonymous-account creation + the
+# codebase-tuned enrichment that egresses a stack summary, so a committed file
+# must not be able to opt a whole team into either.
+TEAM_SENSITIVE="telemetry auto_update auto_tune update_check experiment_sync aggregate_submit auto_register enrich_mode"
+
+# Terse header, written once when a file is first created. Defaults are NOT
+# documented here on purpose — lookup_default() is the single source of truth.
+CONFIG_HEADER='# Header skill config — flat "key: value" lines, edit freely.
+# Run `header-config defaults` to see every key and its default value.
+# Docs: https://github.com/Header-inc/Header-skill
+'
+
+# Header for the committed team file — explains the share + the allow-list.
+TEAM_HEADER='# Header TEAM config — committed to the repo so everyone here shares it.
+# Flat "key: value" lines. Put only TEAM-relevant settings here; personal
+# preferences and consent (telemetry, auto_update, auto_tune, update_check)
+# belong in ~/.header/config and are IGNORED if set here.
+# Honored keys: default_topic, staleness_days, schedule_frequency_days, language.
+# Docs: https://github.com/Header-inc/Header-skill
+'
+
+# lookup_default — the single source of truth for default values. `get` returns
+# this when a key is absent from the config file.
+lookup_default() {
+  case "$1" in
+    default_topic)           echo "" ;;        # empty → SKILL.md falls back to its built-in public topic pair
+    language)                echo "English" ;;
+    staleness_days)          echo "7" ;;
+    schedule_frequency_days) echo "" ;;        # team-only; no personal default
+    auto_update)             echo "false" ;;
+    update_check)            echo "true" ;;
+    ledger)                  echo "true" ;;
+    telemetry)               echo "off" ;;
+    auto_tune)               echo "false" ;;
+    repo_memory)             echo "true" ;;     # remember a repo's bound topic across sessions
+    experiment_sync)         echo "off" ;;      # off (default): never syncs — matches the telemetry/consent posture. auto: when an API key is present, sync each experiment edit to the account. Opt in explicitly.
+    aggregate_submit)        echo "off" ;;      # on: after each analyze, submit the ANONYMIZED effect size to the cross-customer library. off (default): never.
+    auto_register)           echo "true" ;;     # true (default): the skill may offer codebase-tuned enrichment, which mints an anonymous trial account. false: never register; generic public topics only. Any non-`false` value enables.
+    enrich_mode)             echo "" ;;         # global default for the generic-vs-custom enrichment choice: custom | generic | "" (unset → ask per repo). A per-repo `header-repo enrich-mode` value wins over this.
+    *)                       echo "" ;;
+  esac
+}
+
+# Keys recognized by `list` and `defaults` (the personal config surface).
+KNOWN_KEYS="default_topic language staleness_days auto_update update_check ledger telemetry auto_tune repo_memory experiment_sync aggregate_submit auto_register enrich_mode"
+
+valid_key() { printf '%s' "$1" | grep -qE '^[a-zA-Z0-9_]+$'; }
+# A topic id is a UUID or bare slug — hyphens allowed (config keys are not).
+valid_topic() { printf '%s' "$1" | grep -qE '^[a-zA-Z0-9_-]+$'; }
+
+# in_list <needle> <space-separated-haystack>
+in_list() { case " $2 " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+
+# read_from <file> <key> — echo <key>'s value from <file> (last wins), or nothing.
+# Strips the `key:` prefix and surrounding whitespace.
+read_from() {
+  [ -f "$1" ] || return 0
+  grep -E "^$2:" "$1" 2>/dev/null | tail -1 \
+    | sed -E "s/^$2:[[:space:]]*//; s/[[:space:]]+\$//" || true
+}
+
+# upsert <file> <header> <key> <value> — set <key> in <file>, creating it (with
+# <header>) if absent. Replace-in-place via temp + mv (portable across GNU/BSD sed).
+upsert() {
+  local file="$1" header="$2" key="$3" value="$4" esc tmp
+  value="$(printf '%s' "$value" | head -1)"   # a config value is never multi-line
+  mkdir -p "$(dirname "$file")"
+  [ -f "$file" ] || printf '%s' "$header" > "$file"
+  if grep -qE "^$key:" "$file" 2>/dev/null; then
+    esc="$(printf '%s' "$value" | sed -e 's/[&/\]/\\&/g')"   # escape & / \ for sed RHS
+    tmp="$(mktemp "${file}.XXXXXX")"
+    sed "/^$key:/s/.*/$key: $esc/" "$file" > "$tmp" && mv "$tmp" "$file"
+  else
+    printf '%s: %s\n' "$key" "$value" >> "$file"
+  fi
+}
+
+# team_repo_dir / team_config_file — locate the committed team config. The repo
+# dir is the HEADER_TEAM_DIR override (testing), else the git toplevel, else $PWD.
+team_repo_dir() {
+  if [ -n "${HEADER_TEAM_DIR:-}" ]; then printf '%s\n' "$HEADER_TEAM_DIR"; return; fi
+  local root; root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  [ -n "$root" ] && { printf '%s\n' "$root"; return; }
+  pwd
+}
+team_config_file() { printf '%s/.header/config\n' "$(team_repo_dir)"; }
+
+case "${1:-}" in
+  get)
+    KEY="${2:?Usage: header-config get <key>}"
+    valid_key "$KEY" || { echo "header-config: invalid key '$KEY' (use [a-zA-Z0-9_])" >&2; exit 1; }
+    VALUE="$(read_from "$CONFIG_FILE" "$KEY")"
+    [ -n "$VALUE" ] || VALUE="$(lookup_default "$KEY")"
+    printf '%s\n' "$VALUE"
+    ;;
+  set)
+    KEY="${2:?Usage: header-config set <key> <value>}"
+    VALUE="${3:?Usage: header-config set <key> <value>}"
+    valid_key "$KEY" || { echo "header-config: invalid key '$KEY' (use [a-zA-Z0-9_])" >&2; exit 1; }
+    # Whitelist closed-domain keys.
+    if [ "$KEY" = "telemetry" ]; then
+      case "$VALUE" in off|anonymous|full) ;; *) echo "header-config: telemetry must be off|anonymous|full; using off" >&2; VALUE="off" ;; esac
+    fi
+    if [ "$KEY" = "experiment_sync" ]; then
+      case "$VALUE" in auto|off) ;; *) echo "header-config: experiment_sync must be auto|off; using off" >&2; VALUE="off" ;; esac
+    fi
+    if [ "$KEY" = "aggregate_submit" ]; then
+      case "$VALUE" in on|off) ;; *) echo "header-config: aggregate_submit must be on|off; using off" >&2; VALUE="off" ;; esac
+    fi
+    if [ "$KEY" = "enrich_mode" ]; then
+      case "$VALUE" in custom|generic) ;; *) echo "header-config: enrich_mode must be custom|generic; clearing (will ask per repo)" >&2; VALUE="" ;; esac
+    fi
+    upsert "$CONFIG_FILE" "$CONFIG_HEADER" "$KEY" "$VALUE"
+    ;;
+
+  # ── Team config (committed <repo>/.header/config) ────────────────────────
+  team-get)
+    # Silent value resolver used on the hot path (preamble, Step 0). Returns the
+    # value only for an allow-listed key in the committed file; empty otherwise.
+    KEY="${2:?Usage: header-config team-get <key>}"
+    valid_key "$KEY" || exit 0
+    in_list "$KEY" "$TEAM_ALLOWED" || exit 0
+    read_from "$(team_config_file)" "$KEY"
+    ;;
+  team-set)
+    KEY="${2:?Usage: header-config team-set <key> <value>}"
+    VALUE="${3:?Usage: header-config team-set <key> <value>}"
+    valid_key "$KEY" || { echo "header-config: invalid key '$KEY' (use [a-zA-Z0-9_])" >&2; exit 1; }
+    if ! in_list "$KEY" "$TEAM_ALLOWED"; then
+      if in_list "$KEY" "$TEAM_SENSITIVE"; then
+        echo "header-config: refusing to put '$KEY' in a committed team config — it controls consent/updates and must stay personal (~/.header/config)." >&2
+      else
+        echo "header-config: '$KEY' is not a team-shareable key. Allowed: $TEAM_ALLOWED" >&2
+      fi
+      exit 1
+    fi
+    case "$KEY" in
+      staleness_days|schedule_frequency_days)
+        case "$VALUE" in ''|*[!0-9]*) echo "header-config: $KEY must be a positive integer" >&2; exit 1 ;; esac ;;
+    esac
+    upsert "$(team_config_file)" "$TEAM_HEADER" "$KEY" "$VALUE"
+    echo "Wrote $KEY to $(team_config_file)"
+    ;;
+  team-init)
+    TOPIC="${2:-}"
+    file="$(team_config_file)"
+    if [ -f "$file" ]; then
+      echo "header-config: $file already exists — edit it or use 'header-config team-set'." >&2
+      exit 1
+    fi
+    if [ -n "$TOPIC" ]; then valid_topic "$TOPIC" || { echo "header-config: topic '$TOPIC' is not a bare id/UUID" >&2; exit 1; }; fi
+    mkdir -p "$(dirname "$file")"
+    {
+      printf '%s' "$TEAM_HEADER"
+      [ -n "$TOPIC" ] && printf 'default_topic: %s\n' "$TOPIC"
+    } > "$file"
+    echo "Created $file"
+    echo "Commit it so your team shares this topic:"
+    echo "  git add .header/config && git commit -m 'Add Header team config'"
+    ;;
+  team-path)
+    file="$(team_config_file)"
+    [ -f "$file" ] && printf '%s\n' "$file" || true
+    ;;
+  team-show)
+    file="$(team_config_file)"
+    if [ ! -f "$file" ]; then echo "No team config (.header/config) in this repo."; exit 0; fi
+    echo "Team config: $file"
+    echo "Honored (team-shareable):"
+    any=0
+    for KEY in $TEAM_ALLOWED; do
+      v="$(read_from "$file" "$KEY")"
+      [ -n "$v" ] && { printf '  %-24s %s\n' "$KEY:" "$v"; any=1; }
+    done
+    [ "$any" = 0 ] && echo "  (none set)"
+    warned=0
+    for KEY in $TEAM_SENSITIVE; do
+      v="$(read_from "$file" "$KEY")"
+      [ -n "$v" ] || continue
+      [ "$warned" = 0 ] && { echo "Ignored (personal-only — a committed file cannot set these):"; warned=1; }
+      printf '  ⚠ %s: %s\n' "$KEY" "$v"
+    done
+    ;;
+
+  list)
+    [ -f "$CONFIG_FILE" ] && cat "$CONFIG_FILE"
+    echo ""
+    echo "# Active values (config-file value, or built-in default):"
+    for KEY in $KNOWN_KEYS; do
+      VALUE="$(read_from "$CONFIG_FILE" "$KEY")"
+      SOURCE="default"
+      if [ -n "$VALUE" ]; then SOURCE="set"; else VALUE="$(lookup_default "$KEY")"; fi
+      printf '  %-16s %-14s (%s)\n' "$KEY:" "${VALUE:-(empty)}" "$SOURCE"
+    done
+    ;;
+  defaults)
+    echo "# header-config built-in defaults"
+    for KEY in $KNOWN_KEYS; do
+      printf '  %-16s %s\n' "$KEY:" "$(lookup_default "$KEY")"
+    done
+    ;;
+  -h|--help)
+    echo "Usage: header-config {get|set|list|defaults|team-get|team-set|team-init|team-path|team-show} [key] [value]"
+    exit 0
+    ;;
+  *)
+    echo "Usage: header-config {get|set|list|defaults|team-get|team-set|team-init|team-path|team-show} [key] [value]" >&2
+    exit 1
+    ;;
+esac

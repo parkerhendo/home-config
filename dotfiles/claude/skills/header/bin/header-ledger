@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+# header-ledger — local record of which briefing recommendations the user
+# applied / dismissed / snoozed. Local-only; it never leaves the machine. The
+# briefing flow uses it to stop re-surfacing dismissed items and to follow up
+# on applied ones. Phase 3 telemetry can aggregate it (with consent).
+#
+# Usage:
+#   header-ledger record <surfaced|applied|dismissed|snoozed|wanted> <key> \
+#       [--title T] [--briefing B] [--topic TP] [--source URL] [--repo R]
+#       ("wanted" = the user asked for the experiment behind a hypothesis —
+#        captures demand for the experimentation platform, still local-only.)
+#   header-ledger status <key> [--repo R]            latest action for <key>, or "none"
+#   header-ledger get <key> [--repo R]               latest FULL JSON record for
+#       <key> (the whole ledger line — title, briefing_id, topic_id, source_url),
+#       or nothing. Used to recover a finding's provenance (e.g. when syncing an
+#       experiment that tests it to the cloud).
+#   header-ledger list [--action A] [--since-days N] [--repo R]
+#       latest-disposition rows: <action>\t<key>\t<title>
+#
+# Storage: ~/.header/ledger.jsonl (append-only, one JSON object per line).
+# Env: HEADER_HOME (default ~/.header)
+#
+# REPO IDENTITY — records are keyed by the same stable identity header-repo
+# uses for topic bindings: the normalized git remote (clone-agnostic, e.g.
+# github.com/org/repo), falling back to the repo's toplevel path, then the
+# directory itself. The pre-0.24.3 key was just `basename <toplevel>`, so two
+# repos sharing a folder name (api, app, web…) read and wrote each other's
+# dispositions — a dismissal in ~/work/api silently suppressed the same finding
+# in ~/oss/api, and experiment sync could recover the wrong provenance. Reads
+# still MATCH the legacy basename so existing ledgers aren't orphaned; writes
+# use the stable key. `--repo R` semantics: a directory resolves to that repo's
+# identity (stable + legacy); any other value is matched/written literally, as
+# before.
+set -uo pipefail
+
+STATE_DIR="${HEADER_HOME:-$HOME/.header}"
+LEDGER="$STATE_DIR/ledger.jsonl"
+
+json_escape() { printf '%s' "$1" | tr -d '\n\r' | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+# normalize_remote — header-repo's convention, duplicated here (the bins are
+# standalone): git@github.com:me/repo.git → github.com/me/repo.
+normalize_remote() {
+  printf '%s' "$1" | sed -E 's#\.git$##; s#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#^[^@/]*@##; s#:#/#'
+}
+
+# repo_keys <dir> — line 1: the stable identity (remote → toplevel → the dir);
+# line 2: the legacy basename key (matched on reads for back-compat).
+repo_keys() {
+  local d="$1" url top
+  url="$(git -C "$d" config --get remote.origin.url 2>/dev/null || true)"
+  top="$(git -C "$d" rev-parse --show-toplevel 2>/dev/null || true)"
+  if   [ -n "$url" ]; then printf '%s\n' "$(normalize_remote "$url")"
+  elif [ -n "$top" ]; then printf '%s\n' "$top"
+  else                     printf '%s\n' "$d"; fi
+  basename "${top:-$d}"
+}
+
+# write_key <raw --repo value or empty> — the identity new records are written
+# under: literal when given a non-directory, resolved otherwise.
+write_key() {
+  local r="${1:-}"
+  if   [ -z "$r" ];  then repo_keys "$PWD" | sed -n 1p
+  elif [ -d "$r" ];  then repo_keys "$r"   | sed -n 1p
+  else                    printf '%s\n' "$r"; fi
+}
+
+# repo_grep <raw --repo value or empty> — ledger lines whose "repo" field
+# matches the resolved identity: the literal value, or (for a directory / the
+# cwd) the stable key OR the legacy basename, so pre-0.24.3 records keep
+# matching. Two same-named repos still share their pre-upgrade records — the
+# writer didn't record which one they came from — but every new record is
+# properly scoped.
+repo_grep() {
+  local r="${1:-}" keys k1 k2=""
+  [ -f "$LEDGER" ] || return 0
+  if [ -z "$r" ]; then
+    keys="$(repo_keys "$PWD")"
+  elif [ -d "$r" ]; then
+    keys="$(repo_keys "$r")"
+  else
+    keys="$r"
+  fi
+  k1="$(printf '%s\n' "$keys" | sed -n 1p)"
+  k2="$(printf '%s\n' "$keys" | sed -n 2p)"
+  if [ -n "$k2" ] && [ "$k2" != "$k1" ]; then
+    grep -F -e "\"repo\":\"$(json_escape "$k1")\"" -e "\"repo\":\"$(json_escape "$k2")\"" "$LEDGER" 2>/dev/null
+  else
+    grep -F -e "\"repo\":\"$(json_escape "$k1")\"" "$LEDGER" 2>/dev/null
+  fi
+  return 0
+}
+
+cmd="${1:-}"
+shift 2>/dev/null || true
+
+case "$cmd" in
+  record)
+    action="${1:-}"; key="${2:-}"
+    shift 2 2>/dev/null || true
+    case "$action" in
+      surfaced|applied|dismissed|snoozed|wanted) ;;
+      *) echo "header-ledger: action must be surfaced|applied|dismissed|snoozed|wanted" >&2; exit 1 ;;
+    esac
+    [ -n "$key" ] || { echo "header-ledger: <key> required" >&2; exit 1; }
+    # Respect the ledger toggle — local recording can be turned off.
+    [ "$("$(dirname "$0")/header-config" get ledger 2>/dev/null || echo true)" = "false" ] && exit 0
+    title=""; briefing=""; topic=""; source=""; repo=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --title)    title="${2:-}"; shift 2 ;;
+        --briefing) briefing="${2:-}"; shift 2 ;;
+        --topic)    topic="${2:-}"; shift 2 ;;
+        --source)   source="${2:-}"; shift 2 ;;
+        --repo)     repo="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    repo="$(write_key "$repo")"
+    mkdir -p "$STATE_DIR"
+    printf '{"ts":"%s","epoch":%s,"repo":"%s","action":"%s","key":"%s","title":"%s","briefing_id":"%s","topic_id":"%s","source_url":"%s"}\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(date +%s)" \
+      "$(json_escape "$repo")" "$action" "$(json_escape "$key")" "$(json_escape "$title")" \
+      "$(json_escape "$briefing")" "$(json_escape "$topic")" "$(json_escape "$source")" \
+      >> "$LEDGER"
+    ;;
+
+  status)
+    key="${1:-}"
+    shift 2>/dev/null || true
+    repo=""
+    while [ $# -gt 0 ]; do case "$1" in --repo) repo="${2:-}"; shift 2 ;; *) shift ;; esac; done
+    { [ -n "$key" ] && [ -f "$LEDGER" ]; } || { echo "none"; exit 0; }
+    # Last matching line wins (file is append-only / chronological).
+    latest="$(repo_grep "$repo" \
+      | grep -F "\"key\":\"$(json_escape "$key")\"" \
+      | tail -1 | sed -n 's/.*"action":"\([^"]*\)".*/\1/p')"
+    echo "${latest:-none}"
+    ;;
+
+  get)
+    key="${1:-}"
+    shift 2>/dev/null || true
+    repo=""
+    while [ $# -gt 0 ]; do case "$1" in --repo) repo="${2:-}"; shift 2 ;; *) shift ;; esac; done
+    { [ -n "$key" ] && [ -f "$LEDGER" ]; } || exit 0
+    # Latest full line matching repo + key (append-only ⇒ last wins). Prints the
+    # raw JSON record so callers recover a finding's provenance (title, briefing,
+    # topic, source) in one shot. A valid query with no match is success (empty
+    # output, exit 0) — not an error — so capture, then print.
+    latest="$(repo_grep "$repo" \
+      | grep -F "\"key\":\"$(json_escape "$key")\"" \
+      | tail -1)"
+    [ -n "$latest" ] && printf '%s\n' "$latest"
+    exit 0
+    ;;
+
+  list)
+    action=""; since_days=""; repo=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --action)     action="${2:-}"; shift 2 ;;
+        --since-days) since_days="${2:-}"; shift 2 ;;
+        --repo)       repo="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -f "$LEDGER" ] || exit 0
+    cutoff=0
+    case "$since_days" in ''|*[!0-9]*) ;; *) cutoff=$(( $(date +%s) - since_days * 86400 )) ;; esac
+    # Collapse to the latest event per key, then filter by action + recency.
+    repo_grep "$repo" | awk \
+      -v want="$action" -v cutoff="$cutoff" '
+      {
+        a=""; k=""; t=""; e=0
+        if (match($0, /"action":"[^"]*"/)) a=substr($0, RSTART+10, RLENGTH-11)
+        if (match($0, /"key":"[^"]*"/))    k=substr($0, RSTART+7,  RLENGTH-8)
+        if (match($0, /"title":"[^"]*"/))  t=substr($0, RSTART+9,  RLENGTH-10)
+        if (match($0, /"epoch":[0-9]+/))   e=substr($0, RSTART+8,  RLENGTH-8)+0
+        if (k=="") next
+        la[k]=a; lt[k]=t; le[k]=e
+      }
+      END {
+        for (k in la) {
+          if (want!="" && la[k]!=want) continue
+          if (cutoff>0 && le[k]<cutoff) continue
+          printf "%s\t%s\t%s\n", la[k], k, lt[k]
+        }
+      }'
+    ;;
+
+  reset)
+    # Archive the current ledger and start fresh — for when finding shapes change
+    # (a Header update introduces new keys / retires old ones) and stale dedup
+    # entries should not linger. Best-effort, local-only; never destroys (archives).
+    if [ -f "$LEDGER" ]; then
+      n="$(grep -c . "$LEDGER" 2>/dev/null || echo 0)"
+      bak="$LEDGER.bak-$(date +%Y%m%d%H%M%S 2>/dev/null || echo old)"
+      if mv "$LEDGER" "$bak" 2>/dev/null; then
+        echo "ledger: archived $n entries → $bak; starting fresh"
+      else
+        echo "ledger: could not archive (read-only state dir?)" >&2; exit 1
+      fi
+    else
+      echo "ledger: nothing to reset (no ledger yet)"
+    fi
+    ;;
+
+  -h|--help)
+    echo "Usage: header-ledger {record|status|get|list|reset} ..."
+    exit 0
+    ;;
+  *)
+    echo "Usage: header-ledger {record|status|get|list|reset} ..." >&2
+    exit 1
+    ;;
+esac

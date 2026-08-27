@@ -1,0 +1,2144 @@
+#!/usr/bin/env bash
+# header-audit — BETA. Deterministic scan behind the skill's `audit` mode. It
+# does NOT judge or rewrite anything; it locates files, measures them, and flags
+# known patterns, then the agent (via SKILL.md) curates findings, proposes fixes,
+# and records them. Two scans:
+#
+#   header-audit harness [--repo DIR]
+#       Agent-harness / prompt-config debt. Locates CLAUDE.md, AGENTS.md, Claude
+#       Code settings/commands/agents, MCP config, etc.; reports each file's size
+#       and a rough token estimate; greps for known cargo-cult prompt patterns;
+#       follows @imports; flags hooks, installed skills, model staleness, and
+#       stale references. Output lines (tab-separated):
+#         FILE       <path>  <bytes>  <est_tokens>      (always-loaded harness file)
+#         IMPORT     <parent>  <imported-path>          (@import edge; child is always-loaded)
+#         NESTED     <path>  <bytes>  <est_tokens>      (subdir CLAUDE.md/AGENTS.md; on-demand)
+#         ONDEMAND   <path>  <bytes>  <est_tokens>      (slash-command / subagent body — loads
+#                    only when invoked, NOT summed as always-loaded; still trim/debt-scanned.
+#                    The per-turn cost is only its registry frontmatter — see CONTEXT-TAX.)
+#         MODEL      <value>  <source>                  (source: project=repo-pinned in committed
+#                    settings.json; local=settings.local.json override or most-recent transcript)
+#         MODEL-STALE <value>  <why>                    (model id is a superseded tier)
+#         MODEL-UPGRADE <value>  <recommended>  <why>   (newer same-family model shipped)
+#         HIT        <path>  <lineno>  <pattern_id>  <excerpt>
+#         STALE-REF  <path>  <lineno>  <ref>  <why>     (referenced path / @import not found)
+#         HOOK       <event>  <command-excerpt>  <file> (shell run on an agent event)
+#         SKILL      <name>  <path>  <has-bin>  <scope> (installed skill: supply-chain surface)
+#         SKILL-TAX  <name>  <scope>  <bytes>  <est_tokens>   (skill frontmatter loaded
+#                    every session; scope = repo|user)
+#         CONTEXT-TAX <kind>  <scope>  <count>  <bytes>  <est_tokens>   (always-loaded
+#                    registry/skill frontmatter tax; kind = registry|skills, scope =
+#                    repo|user; STATIC, scope-split — repo→project, user→local; never graded)
+#         SECURITY / SECURITY-DETAIL                    (Bash-tool permission posture)
+#         PROVEN     <pattern_id>  <effect>  <n_repos>  <ci>   (cross-customer
+#                    library evidence for a pattern, from a 6-field patterns.tsv
+#                    row — cite it next to a HIT instead of running a local A/B)
+#
+#   header-audit deps [--repo DIR]
+#       Dependency / supply-chain posture. Detects ecosystems, tool versions, and
+#       whether an install-cooldown gate is in place. TOOL and GATE rows are
+#       scoped to ecosystems the repo actually has (npm also detected one dir
+#       level deep, for monorepos); an undetected ecosystem gets GATE … n/a —
+#       "checked, doesn't apply", same contract as the rails scan — instead of
+#       a spurious `absent` that prompts an irrelevant recommendation. Output:
+#         ECOSYSTEM <name>  <manifest>
+#         TOOL      <name>  <version|->  <ok|too-old|absent>   (detected only)
+#         GATE      <name>  <present|absent|n/a>  <path|->
+#
+#   header-audit cost [--repo DIR] [--all-projects] [--harness NAME] [--input F] [--since T]
+#       Cost-awareness. Wraps `header-cost report --json` over Claude Code
+#       transcripts and reformats spend-by-model so the audit can open with where
+#       tokens actually go and turn the top line into a model-routing experiment.
+#       Scope is THIS repo by default: it reads only the current repo's transcript
+#       dir ($HOME/.claude/projects/<repo-key>); a missing dir is a NOTE, never a
+#       silent machine-wide aggregate. --all-projects opts into the global total;
+#       --input F prices an explicit usage file. --harness overrides harness
+#       detection (codex|claude). Output lines:
+#         COST-SCOPE      repo  <repo>                    (default: this repo only)
+#         COST-SCOPE      global  <dir>  <n>  project dirs (--all-projects)
+#         COST-SCOPE      input  <path>                   (--input)
+#         COST-INPUT      <dir>  <n>  files               (repo-scoped transcript dir)
+#         COST-HARNESS    <harness>  claude-transcripts    (whose usage this is)
+#         COST-NOTE       harness-mismatch  <why>          (Codex over Claude data)
+#         SPEND-TOTAL     <usd>  <calls>  [<since>]
+#         SPEND           <model>  <calls>  <usd>  <share_pct>
+#         ROUTE-CANDIDATE <model>  <usd>  <share_pct>   (top spend line)
+#         NOTE  cost  <reason>                          (no usage / tool missing)
+#
+#   header-audit waste [--repo DIR] [--all-projects] [--input F] [--since T]
+#       Transcript-mined waste: what the harness PAYS FOR vs what it USES, read
+#       from the same Claude Code transcripts `cost` prices. Deterministic
+#       accounting, not behavior prediction — every row is evidence from the
+#       user's own sessions. Scope discipline mirrors `cost` (HEA-435): THIS
+#       repo's transcript dir by default; a missing dir is a NOTE, never a
+#       silent machine-wide aggregate; --all-projects opts into global.
+#       Output lines (tab-separated):
+#         WASTE-SCOPE   repo <repo> | global <dir> <n> project dirs | input <path>
+#         WASTE-INPUT   <dir> <n> files                (repo-scoped transcript dir)
+#         TOOL-USE      <tool> <calls> <errors>        (per tool seen, calls desc)
+#         MCP-SERVER    <server> <calls> <errors>      (per MCP server seen in use)
+#         MCP-UNUSED    <server> <config-file>         (configured in .mcp.json, 0 calls
+#                                                       — its tool schemas are loaded
+#                                                       every turn for nothing)
+#         SKILL-USE     <name> <invocations>           (Skill-tool invocations seen)
+#         SKILL-UNUSED  <name> <path>                  (repo-installed skill, 0 uses here)
+#         ERROR-RATE    <tool> <errors> <calls> <pct>  (>=10 calls and >=20% errors)
+#         COMPACTIONS   <count> <files>                (context-pressure signal)
+#         NOTE          waste <reason>                 (no transcripts / no input)
+#         SCAN-DEGRADED waste <detail>                 (tool_use blocks the parser could
+#                                                       not read — counts are an UNDERCOUNT,
+#                                                       never silent evidence of low usage)
+#         (the always-loaded SKILL-TAX / CONTEXT-TAX rows moved to `harness` — see above)
+#
+#   header-audit patterns          list the built-in (+ briefing-supplied) patterns
+#   header-audit gate <npm|pip> [days]
+#                                  print the recommended supply-chain snippet
+#
+#   header-audit rails [--repo DIR]
+#       Determinism rails (guardrails). Detects whether the repo has the
+#       guardrails that make AI-written code reliable: a pre-commit quality gate,
+#       a test ratchet (can't green the suite by deleting/skipping the failing
+#       test), a compounding-memory discipline, and a ROUND-TRIP INVARIANT over any
+#       value pipeline found in the source. Absence is an OPPORTUNITY the
+#       audit surfaces as [Apply with review] (opinionated). Output lines:
+#         RAIL-ENV   <key>  <value>  (ecosystem/ecosystem-all/git-remote/hooks-path/claude/tests)
+#         RAIL       <name>  <present|likely-present|absent|n/a>  <evidence>
+#           (likely-present = word-match evidence only — e.g. the ratchet signature
+#           vocabulary — honest about being unverified)
+#         RAIL-INERT <name>  <path>  <why>   — machinery that is PRESENT and CANNOT
+#           FAIL: a gate whose checks end in `|| true` (or `set +e`), CI with
+#           continue-on-error, a ratchet whose override is armed in the committed
+#           env. Strictly WORSE than an absent rail — it earns rails credit while
+#           enforcing nothing, so everyone downstream believes they are covered.
+#           Graded identically to absent. (Precedent: `TOOL npm too-old` is this
+#           same finding — a cooldown gate present and silently ignored.)
+#   header-audit rail <precommit-gate|test-ratchet|compound-memory|roundtrip-invariant>
+#                     [--ecosystem E] [--delivery git|pretooluse|both] [--ratchet on|off]
+#       Print the scaffold to install for a rail (stack-adapted), the analogue of
+#       `gate` for supply-chain. Reads header/scaffold/ templates.
+#
+#   header-audit drift [--repo DIR]
+#       INVARIANT COVERAGE — the one scan that grades whether the machinery covers
+#       what the ARCHITECTURE depends on, rather than whether machinery exists. It
+#       locates a value pipeline in the SOURCE (not the harness files `harness`
+#       greps) and asks whether anything asserts that a value survives it intact.
+#       The target bug: a chain of hand-maintained hops (wire schema → column →
+#       import mapping → export query → serializer → UI) where a field must be
+#       added in every hop or none, nothing enforces that, and so fields silently
+#       drift — a column with no wire field, or a wire field the exporter
+#       hardcodes. It stays invisible because no test round-trips the pipeline AND
+#       because the schema silently strips unknown keys, so a config authored with
+#       the dropped field still parses clean and LOOKS complete.
+#       n/a (a NOTE, no rows) unless a pipeline is actually detected — a repo
+#       without one is never nagged and its grade never moves. Output lines:
+#         DRIFT-ENV   <key>  <value>                   (ecosystem / tests)
+#         PIPELINE    <kind>  <n_files>  <example>     (schema | persist | serde)
+#         ROUNDTRIP   <likely-present|absent|n/a>  <evidence> (the headline;
+#                     likely-present = word-match, not verified to round-trip a value)
+#         SCHEMA-LAX  <path>  <lineno>  <lib>  <why>   (parses unknown keys silently)
+#
+#   header-audit silence [--repo DIR]
+#       THE SILENCE AXIS — information discarded without a signal. The
+#       generalization of SCHEMA-LAX (a schema that silently strips unknown keys is
+#       ONE instance of a wider class): code that throws information away and says
+#       nothing. The defect is not that something broke — it is that NOTHING TOLD
+#       YOU, so it surfaces later, somewhere expensive. Deterministic, read-only.
+#         SILENCE-SCOPE   repo  <repo>
+#         ENV-UNDECLARED  <var>  <path>  <lineno>  <why>  — the code reads a config
+#           var that nothing declares. The classic silent prod break: it's in your
+#           shell, so it works on your laptop and dies in the runner. Fires ONLY when
+#           the repo HAS declaration files (.env.example / compose / Dockerfile / CI)
+#           — no declaration discipline means no invariant to violate, and inventing
+#           one would be noise. Ambient vars (HOME/PATH/CI/...) and test-only reads
+#           are never findings.
+#         SWALLOW         <path>  <lineno>  <why>  — an exception handler with an
+#           EMPTY body. Precision is the whole product decision: a handler that logs,
+#           re-raises, or returns a fallback is a DECISION, not a swallow. Only a
+#           truly empty one counts. Anchors on the `except`/`catch` line.
+#
+#   header-audit grade [--repo DIR]
+#       TWO composite, deterministic SETUP GRADES over the five scorecard axes
+#       (context / model / security / deps / rails), split by what is being graded:
+#         · PROJECT — the repo's checked-in agent config (CLAUDE.md, AGENTS.md,
+#           committed .claude/settings.json, .mcp.json, editor rules, .npmrc gate,
+#           determinism rails). Reproducible across machines — a property of the
+#           repo. This is the headline "Setup grade B+".
+#         · LOCAL — your machine harness (~/.claude/CLAUDE.md & settings, the
+#           settings.local.json override, the model YOU run, package-tool versions).
+#           Machine-dependent by design; reported alongside, never folded into the
+#           project grade.
+#       Re-runs harness+deps+rails (cheap, read-only), partitions each finding by
+#       scope (path under ~/.claude or a settings.local.json = local; else project;
+#       MODEL carries its own source), and reduces each scope to one +/- letter
+#       grade. STATIC-CONFIG ONLY: the transcript-mined scans (cost/waste/retro)
+#       are excluded so the PROJECT grade is identical whether or not the repo has
+#       session history. Start at 100, deduct per finding, clamp 0..100, map to a
+#       +/- band. The weights + bands are a STABILITY CONTRACT (changing one moves
+#       every user's grade), so they live here — computed, never model-assigned.
+#         GRADE-AXIS       <axis>  <delta>  <note>   (project, per-axis; 5 rows)
+#         GRADE            <letter>  <score>  100     (project composite; 100 = clean)
+#         GRADE-AXIS-LOCAL <axis>  <delta>  <note>   (local harness, per-axis; 5 rows)
+#         GRADE-LOCAL      <letter>  <score>  100     (local harness composite)
+#
+# CANONICAL LEDGER KEYS — every line that can become a recommendation carries a
+# final tab field `key=<canonical-key>`, derived deterministically from the
+# line's own fields (slug: lowercase, runs of non-alphanumerics → '-'). The
+# SKILL.md flow uses it verbatim as the recommendation-ledger key; model-minted
+# per-run keys fragment the ledger's cross-run dedup (the same finding gets
+# re-pitched as new under a fresh name). Evidence/context lines (IMPORT, MODEL,
+# SPEND, TOOL-USE, RAIL-ENV, present/n-a GATE and RAIL rows, …) carry none.
+#
+# Reads only (harness/deps/cost/waste/rails never write). Nothing leaves the machine.
+# Env: HEADER_HOME (state dir, default $HOME/.header — used for the optional
+# briefing-supplied patterns file), HEADER_PATTERNS_FILE (override its path),
+# HOME (for user-global config). Token estimate is bytes/4 — a rough proxy.
+set -uo pipefail
+
+TAB="$(printf '\t')"
+HEADER_HOME="${HEADER_HOME:-$HOME/.header}"
+PATTERNS_FILE="${HEADER_PATTERNS_FILE:-$HEADER_HOME/patterns.tsv}"
+
+# ── built-in prompt-debt patterns ─────────────────────────────
+# id <TAB> extended-regex (grep -iE) <TAB> why-it's-debt
+_patterns_raw() {
+  cat <<EOF
+step-by-step${TAB}think step.?by.?step|step.?by.?step|reason step by step${TAB}Modern models reason by default; explicit "step by step" is usually a no-op or bloats output.
+deep-breath${TAB}take a deep breath${TAB}Cargo-cult motivation prompt with no measured effect on current models.
+role-puffery${TAB}you are an? (expert|skilled|senior|world.?class|professional|brilliant|10x)${TAB}Role puffery rarely changes current-model behavior; it just costs tokens every turn.
+helpful-assistant${TAB}you are a helpful (assistant|ai)${TAB}Default persona boilerplate — redundant on modern assistants.
+tip-bribe${TAB}tip you|i will tip|\\\$[0-9]+ (tip|bonus|reward)|reward you${TAB}Tip/reward bribery was a quirk of older models; no effect now.
+no-hallucinate${TAB}do(n.?t| not) hallucinate|never hallucinate${TAB}"Don't hallucinate" does not reduce hallucination; it's noise.
+json-nag${TAB}respond only (in|with) json|output only json|must (respond|reply) with (valid )?json|only valid json${TAB}Newer models honor structured-output natively; repeated format nagging is debt.
+ai-language-model${TAB}as an ai language model${TAB}Stale phrasing copied from old completions; remove.
+think-first${TAB}before (you )?(answer|respond)[, ]+think|let.?s think${TAB}Redundant with native reasoning on current models.
+EOF
+  # Briefing-supplied patterns (optional). The audit flow writes new debt patterns
+  # the briefing names to PATTERNS_FILE so the hypothesis set updates without a
+  # skill release. Two row shapes, both tab-separated:
+  #   id<TAB>regex<TAB>why                                  (hypothesis row)
+  #   id<TAB>regex<TAB>why<TAB>effect<TAB>n_repos<TAB>ci    (PROVEN row — the
+  #     cross-customer library has measured this change: median effect, sample
+  #     size, CI; re-emitted as a PROVEN line so a HIT can cite the evidence)
+  # Skip comments/blanks and anything that isn't exactly 3 or 6 fields (a stray
+  # tab in `why` is rejected rather than silently mis-parsed). n_repos must be
+  # an integer for a proven row to count.
+  if [ -f "$PATTERNS_FILE" ]; then
+    while IFS="$TAB" read -r id rx why eff n ci extra; do
+      case "${id:-}" in ''|'#'*) continue ;; esac
+      [ -n "${rx:-}" ] && [ -n "${why:-}" ] || continue
+      if [ -n "${eff:-}" ]; then
+        { [ -n "${n:-}" ] && [ -n "${ci:-}" ] && [ -z "${extra:-}" ]; } || continue
+        case "$n" in ''|*[!0-9]*) continue ;; esac
+      else
+        { [ -z "${n:-}" ] && [ -z "${ci:-}" ] && [ -z "${extra:-}" ]; } || continue
+      fi
+      printf '%s\t%s\t%s\n' "$id" "$rx" "$why"
+    done < "$PATTERNS_FILE"
+  fi
+}
+
+# _patterns — _patterns_raw de-duplicated by id (first occurrence wins, so a
+# built-in keeps its regex). A briefing-supplied row may reuse a built-in id on
+# purpose — the 6-field form attaches PROVEN evidence to an existing pattern —
+# and must not make the scan double-report every HIT for it.
+_patterns() { _patterns_raw | awk -F'\t' '!seen[$1]++'; }
+
+# _proven_patterns — id<TAB>effect<TAB>n_repos<TAB>ci for the 6-field (proven)
+# rows of PATTERNS_FILE: changes the cross-customer library has measured. The
+# `harness` scan re-emits them as PROVEN lines so the presentation can cite the
+# evidence next to a HIT instead of scaffolding a local experiment for a change
+# the library has already proven at scale.
+_proven_patterns() {
+  [ -f "$PATTERNS_FILE" ] || return 0
+  while IFS="$TAB" read -r id rx why eff n ci extra; do
+    case "${id:-}" in ''|'#'*) continue ;; esac
+    [ -n "${rx:-}" ] && [ -n "${why:-}" ] && [ -n "${eff:-}" ] && [ -n "${n:-}" ] && [ -n "${ci:-}" ] && [ -z "${extra:-}" ] || continue
+    case "$n" in ''|*[!0-9]*) continue ;; esac
+    printf '%s\t%s\t%s\t%s\n' "$id" "$eff" "$n" "$ci"
+  done < "$PATTERNS_FILE"
+}
+
+# ── version compare: ver_ge HAVE WANT → "ge" | "lt" ───────────
+ver_ge() {
+  awk -v a="${1:-0}" -v b="${2:-0}" 'BEGIN{
+    na=split(a,A,"."); nb=split(b,B,"."); n=(na>nb)?na:nb
+    for(i=1;i<=n;i++){x=(i<=na)?A[i]+0:0; y=(i<=nb)?B[i]+0:0
+      if(x>y){print "ge"; exit} if(x<y){print "lt"; exit}}
+    print "ge"
+  }'
+}
+
+# ── canonical ledger keys ─────────────────────────────────────
+# _slug: lowercase; runs of non-alphanumerics → '-'; trimmed at both ends. The
+# basis of every `key=` field — derivations must be stable across runs, models,
+# and machines (no timestamps, no model-minted text).
+_slug() { printf '%s' "$1" | tr 'A-Z' 'a-z' | sed -e 's/[^a-z0-9]\{1,\}/-/g' -e 's/^-//' -e 's/-$//'; }
+# _slugn <s> <n> — _slug capped at n chars (long hook commands / refs), re-trimmed.
+_slugn() { _slug "$1" | cut -c1-"$2" | sed 's/-$//'; }
+# _relslug <path> — slug of the path relative to the repo root ($HOME-anchored
+# files get a `user-` prefix), so a key never bakes in a machine-specific prefix.
+_relslug() {
+  _rp="$1"
+  case "$_rp" in
+    "$REPO"/*) _rp="${_rp#"$REPO/"}" ;;
+    "$HOME"/*) _rp="user/${_rp#"$HOME/"}" ;;
+  esac
+  _slug "$_rp"
+}
+
+# ── detect_harness → "codex" | "claude" ───────────────────────
+# The active agent harness. Codex installs the skill under a `.codex/` tree and
+# exports CODEX_HOME; everything else is treated as Claude Code. Used by `cost`
+# to label whose usage the priced transcripts actually represent (header-cost
+# only parses Claude Code transcripts, so a Codex session over them is a
+# cross-harness mismatch). Overridable via `--harness` for SKILL.md and tests.
+detect_harness() {
+  case "$(dirname "$0")" in *.codex*|*/codex/*) echo codex; return ;; esac
+  [ -n "${CODEX_HOME:-}" ] && { echo codex; return; }
+  echo claude
+}
+
+# parse optional --repo
+REPO=""
+sub="${1:-}"; shift 2>/dev/null || true
+args_rest=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo) REPO="${2:-}"; shift 2 ;;
+    *) args_rest="$args_rest $1"; shift ;;
+  esac
+done
+[ -n "$REPO" ] || REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+scan_file() {
+  f="$1"
+  # Row type: FILE = always-loaded harness file (the `grade` context axis sums it
+  # as per-turn tokens). ONDEMAND = a slash-command / subagent whose BODY loads
+  # only when invoked — size it and pattern-scan it for trim/debt, but the grade
+  # must NOT count it as always-loaded (only its registry frontmatter is paid each
+  # turn, reported via CONTEXT-TAX like a skill's tax). Defaults to FILE.
+  rowtype="${2:-FILE}"
+  [ -f "$f" ] || return 0
+  bytes="$(wc -c < "$f" 2>/dev/null | tr -d ' ')"; [ -n "$bytes" ] || bytes=0
+  printf '%s\t%s\t%s\t%s\tkey=trim-%s\n' "$rowtype" "$f" "$bytes" "$(( bytes / 4 ))" "$(_relslug "$f")"
+  _patterns | while IFS="$TAB" read -r id rx why; do
+    [ -n "${id:-}" ] || continue
+    grep -niE "$rx" "$f" 2>/dev/null | while IFS=: read -r ln rest; do
+      ex="$(printf '%s' "$rest" | tr '\t\r' '  ' | sed 's/^[[:space:]]*//' | cut -c1-70)"
+      printf 'HIT\t%s\t%s\t%s\t%s\tkey=delete-%s\n' "$f" "$ln" "$id" "$ex" "$(_slug "$id")"
+    done
+  done
+}
+
+# ── @import resolution + stale-reference detection ────────────
+# Claude Code (and AGENTS.md) treat a line beginning `@path` as an inline import:
+# the referenced file's content is loaded *every turn*, just like the host file.
+# The audit must follow these so the always-loaded token sum isn't undercounted.
+SEEN_FILES=""
+_seen() { case " $SEEN_FILES " in *" $1 "*) return 0 ;; *) SEEN_FILES="$SEEN_FILES $1"; return 1 ;; esac; }
+
+_resolve_import() {
+  # _resolve_import <importing-file> <raw-path> → resolved path on stdout.
+  _bd="$(dirname "$1")"; _raw="$2"
+  case "$_raw" in
+    '~/'*) printf '%s\n' "$HOME/${_raw#\~/}" ;;
+    /*)    printf '%s\n' "$_raw" ;;
+    *)     printf '%s\n' "$_bd/$_raw" ;;
+  esac
+}
+
+# _stale_refs <file> — flag backtick-quoted tokens that name an in-repo *file*
+# the instructions still reference after it was moved or deleted. Tuned hard for
+# precision: two real audit sessions produced 12/12 false positives (example
+# branch names `feat/add-login`, gitignore/folder-tree tokens `dist/` `to_do/`,
+# forbidden-file examples `.cursor/rules`), all of them *mentioned* in prose or
+# code fences, none a live reference. A false STALE-REF is negative-value — the
+# host model must re-read the file to adjudicate it — so a missed stale dir-ref
+# (invisible, harmless) is the right trade. Three precision gates beyond the
+# original path-shape guards:
+#   1. Skip fenced code blocks (``` / ~~~): their contents are illustrative —
+#      folder-tree diagrams, gitignore snippets, command examples — not live refs.
+#   2. Require an extension on the *basename* (`a/b.ext`): a real stale-ref names
+#      a file (`scripts/gone.sh`, `docs/old.md`); branch names, directory tokens,
+#      and `word/word` examples are extensionless and are suppressed.
+#   3. (retained) URL / glob / placeholder / flag / whitespace guards.
+# An extensioned ref that lives ONLY inside a fence is the one true positive this
+# can miss; acceptable given the FP-vs-FN cost asymmetry. @import stale-refs
+# (scan_tree) are unaffected — an import that fails to load is high-signal.
+_stale_refs() {
+  f="$1"; [ -f "$f" ] || return 0
+  _fd="$(dirname "$f")"
+  # Line numbers that fall *inside* a fenced code block (delimiter lines excluded).
+  _fenced="$(awk '/^[[:space:]]*```/||/^[[:space:]]*~~~/{infence=!infence;next}{if(infence)printf "%d ",NR}' "$f" 2>/dev/null)"
+  grep -noE '`[^`]+`' "$f" 2>/dev/null | while IFS=: read -r ln tok; do
+    case " $_fenced " in *" $ln "*) continue ;; esac      # inside a code fence → illustrative
+    t="${tok#\`}"; t="${t%\`}"
+    case "$t" in
+      *' '*|*'	'*) continue ;;                         # has whitespace → prose, not a path
+      http://*|https://*|*://*) continue ;;             # URL
+      *'*'*|*'?'*|*'<'*|*'>'*|*'{'*|*'}'*|*'$'*|*'|'*|*'('*) continue ;; # glob/placeholder/expr
+      *'path/to/'*|*'...'*|*'…'*) continue ;;            # documentation placeholder
+      -*|@*) continue ;;                                 # flag / handled-elsewhere import
+      */*) : ;;                                          # has a slash → path-shaped
+      *) continue ;;                                     # bare word → not treated as a ref
+    esac
+    t="${t%[.,:;]}"                                      # strip trailing sentence punctuation
+    case "${t##*/}" in                                   # require a file extension on the basename
+      *.*) : ;;                                          # `a/b.ext` → a real file ref
+      *) continue ;;                                     # extensionless (dir / branch / example)
+    esac
+    [ -e "$REPO/$t" ] && continue
+    [ -e "$_fd/$t" ] && continue
+    [ -e "$t" ] && continue
+    printf 'STALE-REF\t%s\t%s\t%s\t%s\tkey=stale-ref-%s\n' "$f" "$ln" "$(printf '%s' "$t" | cut -c1-60)" "referenced path not found" "$(_slugn "$t" 40)"
+  done
+}
+
+# scan_tree <file> [depth] — scan_file + stale_refs, then follow @imports inline
+# (depth-guarded, cycle-guarded). Imported files are scanned as always-loaded
+# FILE rows so the token sum is whole; an @import that doesn't resolve is a
+# STALE-REF, which is usually a higher-signal finding than any pattern HIT.
+scan_tree() {
+  # Locals are essential: this recurses, and a global `f`/`ln` would be clobbered
+  # by the recursive call and then mis-attribute the next import's STALE-REF.
+  local f depth imports line ln rest raw res
+  f="$1"; depth="${2:-0}"
+  [ -f "$f" ] || return 0
+  _seen "$f" && return 0
+  scan_file "$f"
+  _stale_refs "$f"
+  [ "$depth" -ge 5 ] && return 0
+  imports="$(grep -nE '^[[:space:]]*@[^[:space:]]+' "$f" 2>/dev/null || true)"
+  [ -n "$imports" ] || return 0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    ln="${line%%:*}"; rest="${line#*:}"
+    raw="$(printf '%s' "$rest" | sed 's/^[[:space:]]*@//; s/[[:space:]].*//')"
+    [ -n "$raw" ] || continue
+    res="$(_resolve_import "$f" "$raw")"
+    if [ -f "$res" ]; then
+      printf 'IMPORT\t%s\t%s\n' "$f" "$res"
+      scan_tree "$res" "$(( depth + 1 ))"
+    else
+      printf 'STALE-REF\t%s\t%s\t%s\t%s\tkey=stale-ref-%s\n' "$f" "$ln" "@$raw" "@import target not found" "$(_slugn "$raw" 40)"
+    fi
+  done <<EOF
+$imports
+EOF
+}
+
+# _hooks <settings.json> — emit configured hook commands (best-effort; no JSON
+# parser, like _bash_security). HOOK lines surface arbitrary shell wired to agent
+# events — a bigger unguarded execution + supply-chain surface than the Bash
+# allow/deny list, and one the rest of the scan was blind to. event<TAB>command.
+_hooks() {
+  [ -f "$1" ] || return 0
+  awk '
+    { all = all $0 "\n" }
+    END {
+      if (all !~ /"hooks"[[:space:]]*:/) exit
+      n = split(all, L, "\n"); inh = 0; ev = "?"; armed = 0
+      for (i = 1; i <= n; i++) {
+        line = L[i]
+        if (line ~ /"hooks"[[:space:]]*:/) inh = 1
+        if (!inh) continue
+        if (match(line, /"(PreToolUse|PostToolUse|UserPromptSubmit|Notification|Stop|SubagentStop|PreCompact|SessionStart|SessionEnd)"[[:space:]]*:/)) {
+          ev = substr(line, RSTART, RLENGTH); gsub(/[":[:space:]]/, "", ev)
+        }
+        # Only the "command" of a {"type":"command", ...} entry is a hook command;
+        # this anchor excludes e.g. an mcpServers "command" key sharing the file.
+        if (line ~ /"type"[[:space:]]*:[[:space:]]*"command"/) armed = 1
+        if (armed && match(line, /"command"[[:space:]]*:[[:space:]]*"/)) {
+          rest = substr(line, RSTART + RLENGTH)
+          q = index(rest, "\""); cmd = (q > 0) ? substr(rest, 1, q - 1) : rest
+          gsub(/\t/, " ", cmd)
+          printf "%s\t%s\n", ev, substr(cmd, 1, 70)
+          armed = 0
+        }
+      }
+    }
+  ' "$1"
+}
+
+# _skills <skills-dir> <scope> — list installed skills. Each carries its own
+# instructions (loaded when invoked) and optional bin scripts (arbitrary code on
+# PATH-of-trust); an installed skill is a supply-chain surface the audit should
+# see, the more so because Header is itself a skill. name<TAB>path<TAB>has-bin<TAB>scope.
+_skills() {
+  d="$1"; scope="$2"
+  [ -d "$d" ] || return 0
+  for sk in "$d"/*/; do
+    [ -d "$sk" ] || continue
+    name="$(basename "$sk")"
+    hb=no
+    [ -d "${sk}bin" ] && ls "${sk}bin/"* >/dev/null 2>&1 && hb=yes
+    printf 'SKILL\t%s\t%s\t%s\t%s\tkey=review-skill-%s\n' "$name" "${sk%/}" "$hb" "$scope" "$(_slug "$name")"
+  done
+}
+
+# _nested — subdir CLAUDE.md / AGENTS.md. Unlike the repo-root and @imported
+# files, these load on demand when the agent works in that subtree, so they're
+# reported apart (NESTED, not FILE) and excluded from the always-loaded sum.
+# Vendored / build trees are pruned; depth is bounded.
+_nested() {
+  find "$REPO" -maxdepth 6 \
+    \( -name node_modules -o -name .git -o -name vendor -o -name dist \
+       -o -name build -o -name .next -o -name target -o -name .venv \) -prune -o \
+    \( -name CLAUDE.md -o -name AGENTS.md \) -type f -print 2>/dev/null | while IFS= read -r f; do
+    case "$f" in "$REPO/CLAUDE.md"|"$REPO/AGENTS.md") continue ;; esac
+    b="$(wc -c < "$f" 2>/dev/null | tr -d ' ')"; [ -n "$b" ] || b=0
+    printf 'NESTED\t%s\t%s\t%s\tkey=trim-%s\n' "$f" "$b" "$(( b / 4 ))" "$(_relslug "$f")"
+  done
+}
+
+# _model_staleness <model-id> — flag a superseded tier. Conservative + matched on
+# the id alone (the briefing supplies the *current* target): Claude 3.x / 2.x /
+# instant, and early Opus 4 (4.0/4.1, superseded by Opus 4.5+). Current ids
+# (opus-4-5+, sonnet-4-x, haiku-4-5) are deliberately left unflagged.
+_model_staleness() {
+  lm="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
+  case "$lm" in
+    *claude-3*|*-3-opus*|*-3-sonnet*|*-3-haiku*|*opus-3*|*sonnet-3*|*haiku-3*)
+      printf 'MODEL-STALE\t%s\t%s\tkey=migrate-%s\n' "$1" "Claude 3.x tier — superseded; check the briefing for the current model and weigh a model-swap experiment." "$(_slug "$1")" ;;
+    *claude-2*|*claude-instant*)
+      printf 'MODEL-STALE\t%s\t%s\tkey=migrate-%s\n' "$1" "Claude 2.x / instant — long superseded; migrate to a current tier." "$(_slug "$1")" ;;
+    *opus-4-0*|*opus-4-1*)
+      printf 'MODEL-STALE\t%s\t%s\tkey=migrate-%s\n' "$1" "Early Opus 4 (4.0/4.1) — superseded by Opus 4.5+; weigh a model-swap experiment." "$(_slug "$1")" ;;
+  esac
+}
+
+# _model_upgrade <model-id> — flag an in-tier OPPORTUNITY (not debt): a newer
+# model has shipped that the current engine could move to. Distinct from
+# MODEL-STALE — the current model is fine, not superseded; this is "a better
+# default may exist, weigh it." Conservative: fires only for recognized tiers
+# with a newer engine above them, and is honest about price — pre-4.8 Opus gets
+# the SAME-PRICE move (Opus 4.8); Opus 4.8 gets the tier above (Fable 5, 2x
+# token price, so the message says so). The card (`/header fable-5`,
+# `/header opus-4.8`) and the briefing carry the actual case + caveats; the
+# audit just surfaces that an opportunity exists and routes it to a provable
+# experiment.
+_model_upgrade() {
+  lm="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
+  case "$lm" in
+    *fable-5*) : ;;                                    # already the top tier
+    *opus-4-8*)
+      printf 'MODEL-UPGRADE\t%s\t%s\t%s\tkey=adopt-claude-fable-5\n' "$1" "claude-fable-5" \
+        "Fable 5 has shipped — a tier above Opus at 2x the token price, but even medium effort beats Opus 4.8 at any effort on FrontierCode. Weigh it: '/header fable-5', then prove it on your repo with 'header-experiment mine --adopt'." ;;
+    *opus-4-5*|*opus-4-6*|*opus-4-7*)
+      printf 'MODEL-UPGRADE\t%s\t%s\t%s\tkey=adopt-claude-opus-4-8\n' "$1" "claude-opus-4-8" \
+        "Opus 4.8 has shipped (same price; stronger coding/agentic + ~4x fewer unremarked code flaws). Weigh it: '/header opus-4.8', then prove it on your repo with 'header-experiment mine --adopt'. (Fable 5 is the further, 2x-price jump: '/header fable-5'.)" ;;
+  esac
+}
+
+# _recent_transcript_model — the most recent PRIMARY model (opus/sonnet, not the
+# background haiku) in the user's Claude Code transcripts. Lets MODEL / staleness
+# / upgrade detection work for users who pin no `model` in settings (they ride the
+# default alias) — what actually ran. Mirrors header-experiment's detector.
+# Transcripts are NESTED one level per project (~/.claude/projects/<project-key>/
+# <session>.jsonl) — a flat glob matches nothing and detection silently never
+# fires. Glob both layouts; newest mtime across them wins.
+_recent_transcript_model() {
+  tdir="$HOME/.claude/projects"
+  [ -d "$tdir" ] || return 0
+  newest="$(ls -t "$tdir"/*/*.jsonl "$tdir"/*.jsonl 2>/dev/null | head -1)"
+  [ -f "$newest" ] || return 0
+  grep -oE '"model":"claude-(opus|sonnet)-[0-9][^"]*"' "$newest" 2>/dev/null \
+    | tail -1 | sed 's/.*"model":"//; s/"$//'
+}
+
+# _bash_security <settings.json> — emit raw Bash-tool permission signals, one per
+# line, by tracking which permissions sub-array each Bash(...) entry sits in:
+#   BYPASS               defaultMode = bypassPermissions (no gating)
+#   allow<TAB>Bash(...)  an allow-list (whitelist) entry
+#   deny<TAB>Bash(...)   a deny-list (blacklist) entry
+# Works on pretty-printed JSON (the usual settings.json shape); no JSON parser.
+_bash_security() {
+  [ -f "$1" ] || return 0
+  # Atomize JSON tokens onto their own lines first (so inline `"allow":[...],
+  # "deny":[...]` is tracked correctly), then walk the stream keeping the
+  # current allow/deny/ask array as context; `]`/`}` close it.
+  awk '
+    { all = all $0 "\n" }
+    END {
+      s = all
+      gsub(/\[/, "\n[\n", s); gsub(/\]/, "\n]\n", s); gsub(/,/, ",\n", s)
+      n = split(s, L, "\n"); st = ""
+      for (i = 1; i <= n; i++) {
+        line = L[i]
+        if (line ~ /"defaultMode"[[:space:]]*:[[:space:]]*"bypassPermissions"/) print "BYPASS"
+        if (line ~ /"allow"[[:space:]]*:/)     st = "allow"
+        else if (line ~ /"deny"[[:space:]]*:/) st = "deny"
+        else if (line ~ /"ask"[[:space:]]*:/)  st = "ask"
+        if (line ~ /^[[:space:]]*[]}]/) { st = ""; continue }
+        if (line ~ /Bash\(/) {
+          t = line
+          while (match(t, /Bash\([^)]*\)/)) {
+            if (st != "") printf "%s\t%s\n", st, substr(t, RSTART, RLENGTH)
+            t = substr(t, RSTART + RLENGTH)
+          }
+        }
+      }
+    }
+  ' "$1"
+}
+
+# ── determinism rails (guardrails) ────────────────────────────
+# Detect whether the repo has the guardrails that make AI-written code reliable.
+# Conservative by design: a false "present" (re-nagging a repo that already has a
+# gate) is worse than a false "absent". The `rail` printer emits the scaffold.
+_rail_ecosystems() {
+  _re=""
+  [ -f "$REPO/package.json" ] && _re="$_re npm"
+  for p in requirements.txt pyproject.toml setup.cfg setup.py Pipfile; do
+    [ -f "$REPO/$p" ] && { _re="$_re python"; break; }
+  done
+  [ -f "$REPO/go.mod" ]     && _re="$_re go"
+  [ -f "$REPO/Cargo.toml" ] && _re="$_re cargo"
+  [ -f "$REPO/Gemfile" ]    && _re="$_re bundler"
+  printf '%s' "${_re# }"
+}
+_rail_primary_ecosystem() {
+  # One stack to adapt the gate to, by precedence (most mature check/ratchet set).
+  _all=" $(_rail_ecosystems) "
+  for e in python npm go cargo bundler; do
+    case "$_all" in *" $e "*) printf '%s' "$e"; return ;; esac
+  done
+  printf 'unknown'
+}
+_rail_testpath() {
+  # A representative test location, or "none" (drives the ratchet n/a case).
+  # A false "none" silently drops the ratchet rail, so detection errs toward
+  # finding a suite: top-level dirs, then one level deep (a repo that nests its
+  # suite — e.g. header/test/ — still has tests to ratchet), then per-stack globs.
+  for d in tests test spec __tests__; do
+    [ -d "$REPO/$d" ] && { printf '%s/' "$d"; return; }
+  done
+  _td="$(find "$REPO" -maxdepth 2 \
+    \( -name node_modules -o -name .git -o -name vendor -o -name dist -o -name target \) -prune -o \
+    -type d \( -name tests -o -name test -o -name spec -o -name __tests__ \) -print 2>/dev/null | head -1)"
+  [ -n "$_td" ] && { printf '%s/' "${_td#"$REPO"/}"; return; }
+  for g in '*_test.go' 'test_*.py' '*_spec.rb' '*.test.sh' '*_test.sh' '*.bats'; do
+    find "$REPO" -maxdepth 3 \
+      \( -name node_modules -o -name .git -o -name vendor -o -name dist -o -name target \) -prune -o \
+      -name "$g" -type f -print 2>/dev/null | grep -q . && { printf '%s' "$g"; return; }
+  done
+  find "$REPO" -maxdepth 4 \( -name node_modules -o -name .git \) -prune -o \
+    \( -name '*.test.ts' -o -name '*.test.tsx' -o -name '*.test.js' -o -name '*.spec.ts' \) \
+    -type f -print 2>/dev/null | grep -q . && { printf '*.test.*'; return; }
+  printf 'none'
+}
+_rail_hookspath() { git -C "$REPO" config --get core.hooksPath 2>/dev/null || true; }
+_rail_settings_gate_hook() {
+  # yes if a PreToolUse hook command looks like a commit quality gate.
+  for s in "$REPO/.claude/settings.json" "$REPO/.claude/settings.local.json"; do
+    [ -f "$s" ] || continue
+    _hooks "$s" | awk -F"$TAB" '$1=="PreToolUse"{print $2}' \
+      | grep -qiE 'pre-commit|pre_commit|pytest|black|flake8|npm run (lint|test)|go test|cargo test|rspec|rubocop|pre-commit-gate' \
+      && { printf 'yes'; return; }
+  done
+}
+_rail_gate_scripts() {
+  # Shell pre-commit gate scripts present (for ratchet-signature detection).
+  _gs=""; _hp="$(_rail_hookspath)"
+  for c in "$REPO/.githooks/pre-commit" "$REPO/.git/hooks/pre-commit" \
+           ${_hp:+"$REPO/$_hp/pre-commit"} "$REPO/scripts/pre-commit-gate.sh"; do
+    [ -f "$c" ] && _gs="$_gs $c"
+  done
+  for c in "$REPO"/scripts/*pre-commit*; do [ -f "$c" ] && _gs="$_gs $c"; done
+  # De-duplicate: scripts/pre-commit-gate.sh matches both the explicit path above
+  # AND the glob, so it was listed twice — which made RAIL-INERT emit the same
+  # finding twice and double-deduct it from the rails grade.
+  printf '%s' "$_gs" | tr ' ' '\n' | grep -v '^$' | awk '!seen[$0]++' | tr '\n' ' ' | sed 's/ $//'
+}
+_rail_precommit_status() {
+  _hp="$(_rail_hookspath)"
+  [ -f "$REPO/.githooks/pre-commit" ]    && { printf 'present\t.githooks/pre-commit'; return; }
+  [ -n "$_hp" ] && [ -f "$REPO/$_hp/pre-commit" ] && { printf 'present\tcore.hooksPath %s/pre-commit' "$_hp"; return; }
+  [ -f "$REPO/.git/hooks/pre-commit" ]   && { printf 'present\t.git/hooks/pre-commit (local, not committed)'; return; }
+  [ -f "$REPO/.husky/pre-commit" ]       && { printf 'present\t.husky/pre-commit'; return; }
+  [ -f "$REPO/.pre-commit-config.yaml" ] && { printf 'present\t.pre-commit-config.yaml'; return; }
+  { [ -f "$REPO/lefthook.yml" ] || [ -f "$REPO/.lefthook.yml" ]; } && { printf 'present\tlefthook'; return; }
+  [ "$(_rail_settings_gate_hook)" = yes ] && { printf 'present\tPreToolUse gate hook'; return; }
+  printf 'absent\tno pre-commit quality gate (git hook / husky / pre-commit / lefthook / PreToolUse) found'
+}
+_rail_ratchet_status() {
+  _tp="$1"
+  [ "$_tp" = none ] && { printf 'n/a\tno test suite detected'; return; }
+  # Word-match only: the signature vocabulary is Header's own scaffold plus a few
+  # generics, so this cannot verify the ratchet actually blocks anything (and a
+  # differently-named ratchet reads as absent). The status says so — a scan must
+  # not claim more confidence than its evidence carries.
+  for g in $(_rail_gate_scripts); do
+    grep -qiE 'ratchet|net_removed|new_skips|RATCHET_OVERRIDE|xfail' "$g" 2>/dev/null \
+      && { printf 'likely-present\t%s (word-match — verify the ratchet actually blocks)' "$g"; return; }
+  done
+  printf 'absent\ttests present but nothing blocks deleting/skipping a failing test'
+}
+_rail_compound_status() {
+  if [ -d "$REPO/.claude/memory" ] && ls "$REPO"/.claude/memory/*.md >/dev/null 2>&1; then
+    printf 'present\t.claude/memory/'; return
+  fi
+  [ -f "$REPO/MEMORY.md" ]                && { printf 'present\tMEMORY.md'; return; }
+  [ -d "$REPO/.claude/skills/compound" ] && { printf 'present\t.claude/skills/compound'; return; }
+  printf 'absent\tno compounding-memory discipline (.claude/memory/ + a capture step) found'
+}
+
+# ── inert machinery (the guardrail that cannot fail) ──────────
+# The direct consequence of the drift thesis, turned on Header's OWN findings:
+# PRESENCE OF MACHINERY IS NOT COVERAGE. A pre-commit gate whose checks end in
+# `|| true`, a CI job with continue-on-error, a ratchet whose override is exported
+# in the environment — each is *detected as present*, earns rails credit, and
+# enforces nothing. That is strictly worse than an absent gate, because everyone
+# downstream believes they are covered.
+#
+# Precedent for the row already lives in this bin: `TOOL npm too-old` is exactly
+# this finding — the .npmrc cooldown gate is present and SILENTLY IGNORED because
+# npm is too old to honor it. This generalizes that one row into a family.
+#
+# High precision by construction: `|| true` is not a judgment call. Comment lines
+# are excluded, so a template that *documents* an escape hatch is not flagged.
+# _excerpt — normalize a `grep -n` hit into "<lineno>: <trimmed source>" so the
+# evidence reads cleanly in a finding instead of carrying the file's indentation.
+_excerpt() {
+  sed 's/^\([0-9]*\):[[:space:]]*/\1: /' | tr '\t' ' ' | cut -c1-46
+}
+
+_ci_files() {
+  for d in "$REPO/.github/workflows"; do
+    [ -d "$d" ] && find "$d" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null
+  done
+  for f in "$REPO/.gitlab-ci.yml" "$REPO/.circleci/config.yml"; do
+    [ -f "$f" ] && printf '%s\n' "$f"
+  done
+}
+
+# _rail_inert → RAIL-INERT rows: machinery that is present but cannot fail.
+# Emits: name <TAB> path <TAB> why
+_rail_inert() {
+  # 1. A gate script that neutralizes its own checks. `|| true` / `|| exit 0`
+  #    swallow a failing check; `set +e` disarms the whole script. Skip comments —
+  #    a scaffold that documents an escape hatch in prose is not an inert gate.
+  for g in $(_rail_gate_scripts); do
+    [ -f "$g" ] || continue
+    _hit="$(grep -nE '\|\|[[:space:]]*(true|:|exit[[:space:]]+0)|^[[:space:]]*set[[:space:]]+\+e' "$g" 2>/dev/null \
+      | grep -vE '^[0-9]+:[[:space:]]*#' | head -1 | _excerpt)"
+    [ -n "$_hit" ] && printf 'precommit-gate\t%s\tthe gate neutralizes its own checks (line %s) — it is present, it runs, and it cannot fail\n' \
+      "${g#"$REPO"/}" "$_hit"
+  done
+  # 2. CI that is configured never to fail the build.
+  _ci_files | while IFS= read -r c; do
+    [ -f "$c" ] || continue
+    _hit="$(grep -nE 'continue-on-error:[[:space:]]*true|allow_failure:[[:space:]]*true' "$c" 2>/dev/null \
+      | grep -vE '^[0-9]+:[[:space:]]*#' | head -1 | _excerpt)"
+    [ -n "$_hit" ] && printf 'ci\t%s\tCI step is set never to fail the build (line %s)\n' \
+      "${c#"$REPO"/}" "$_hit"
+  done
+  # 3. A test ratchet whose escape hatch is armed in the committed environment —
+  #    the override exists for a human to use deliberately, once. Exported in CI,
+  #    it means the ratchet never blocks anything, ever.
+  _ci_files | while IFS= read -r c; do
+    [ -f "$c" ] || continue
+    grep -qE 'RATCHET_OVERRIDE[[:space:]]*[:=][[:space:]]*("?(1|true|yes)"?)' "$c" 2>/dev/null \
+      && printf 'test-ratchet\t%s\tthe ratchet override is armed in CI — the ratchet can never block a skipped test\n' "${c#"$REPO"/}"
+  done
+}
+
+# ── the silence axis (information discarded without a signal) ─
+# The generalization of SCHEMA-LAX. A schema that silently strips unknown keys is
+# one instance of a wider defect class: code that throws information away and
+# says nothing. The failure is not that something broke — it is that nothing told
+# you. Two more instances, both deterministic:
+#
+#   ENV-UNDECLARED — the code reads a config var that nothing declares. Works on
+#                    your laptop (it's in your shell), dies in the runner.
+#   SWALLOW        — an exception handler with an empty body. The error happened;
+#                    nobody will ever know.
+_ENV_SKIP='^(HOME|PATH|USER|LOGNAME|PWD|SHELL|LANG|LC_ALL|TERM|TMPDIR|TMP|TEMP|HOSTNAME|EDITOR|VISUAL|CI|PYTHONPATH|VIRTUAL_ENV|GOPATH|GOROOT|NODE_ENV|NODE_OPTIONS|PORT|DISPLAY|SHLVL|OLDPWD|_)$'
+
+# Files that DECLARE config. The invariant only exists if the repo has the
+# discipline — no declaration file means no invariant to violate, so the scan
+# stays silent rather than inventing one (the drift-scan n/a trick).
+_env_decl_files() {
+  for f in .env.example .env.sample .env.template .env.defaults .env.dist env.example; do
+    [ -f "$REPO/$f" ] && printf '%s\n' "$REPO/$f"
+  done
+  for f in "$REPO"/docker-compose*.yml "$REPO"/docker-compose*.yaml "$REPO/Dockerfile" "$REPO/app.json" "$REPO/fly.toml"; do
+    [ -f "$f" ] && printf '%s\n' "$f"
+  done
+  _ci_files
+}
+
+# Every env var the SOURCE reads (tests excluded — they routinely set their own).
+_env_reads() {
+  # shellcheck disable=SC2086
+  grep -rhoE $_GEX \
+    "os\.environ\[[\"'][A-Z_][A-Z0-9_]*[\"']\]|os\.environ\.get\([\"'][A-Z_][A-Z0-9_]*[\"']|os\.getenv\([\"'][A-Z_][A-Z0-9_]*[\"']|process\.env\.[A-Z_][A-Z0-9_]*|process\.env\[[\"'][A-Z_][A-Z0-9_]*[\"']\]|os\.Getenv\([\"'][A-Z_][A-Z0-9_]*[\"']|ENV\[[\"'][A-Z_][A-Z0-9_]*[\"']\]" \
+    "$REPO" 2>/dev/null \
+    | grep -oE '[A-Z_][A-Z0-9_]{2,}' | grep -vE '^(OS|ENV|PROCESS|GET|GETENV|ENVIRON)$' \
+    | grep -vE "$_ENV_SKIP" | sort -u
+}
+
+# The file + line where a var is first read (for the finding's Where:).
+_env_read_site() {
+  # shellcheck disable=SC2086
+  grep -rnE $_GEX "(os\.environ|os\.getenv|os\.Getenv|process\.env|ENV)[\[\.\(][\"']?$1" "$REPO" 2>/dev/null \
+    | while IFS=: read -r f ln _; do
+        _is_testpath "$f" || { printf '%s\t%s\n' "${f#"$REPO"/}" "$ln"; break; }
+      done | head -1
+}
+
+_env_undeclared() {
+  _decl="$(_env_decl_files)"
+  [ -n "$_decl" ] || return 0          # no declaration discipline → no invariant
+  _env_reads | while IFS= read -r v; do
+    [ -n "$v" ] || continue
+    # Declared anywhere the repo declares config? Then the invariant holds.
+    printf '%s\n' "$_decl" | while IFS= read -r d; do
+      [ -f "$d" ] && grep -qE "(^|[^A-Z0-9_])$v([^A-Z0-9_]|$)" "$d" 2>/dev/null && { printf 'FOUND'; break; }
+    done | grep -q FOUND && continue
+    _site="$(_env_read_site "$v")"
+    [ -n "$_site" ] || continue        # only read from a test → not a prod break
+    printf '%s\t%s\n' "$v" "$_site"
+  done
+}
+
+# _swallows → exception handlers with an EMPTY body. Precision is everything: a
+# handler that logs, re-raises, returns a fallback, or even leaves a comment
+# explaining itself is a DECISION, not a swallow. Only a truly empty body counts.
+_swallows() {
+  # shellcheck disable=SC2086
+  grep -rlE $_GEX '(except[^:]*:|catch)' "$REPO" 2>/dev/null | while IFS= read -r f; do
+    _is_testpath "$f" && continue
+    case "$f" in
+      *.py)
+        awk -v F="${f#"$REPO"/}" '
+          # a python handler is a swallow when its ONLY statement is `pass`.
+          /^[[:space:]]*except([[:space:]].*)?:[[:space:]]*$/ { exc = NR; ind = match($0, /[^ ]/); next }
+          exc && /^[[:space:]]*$/ { next }                     # blank lines inside
+          exc {
+            if ($0 ~ /^[[:space:]]*pass[[:space:]]*$/ && match($0, /[^ ]/) > ind) {
+              printf "%s\t%d\tbare except: pass — the error happened and nothing recorded it\n", F, exc
+            }
+            exc = 0
+          }
+        ' "$f"
+        ;;
+      *.ts|*.tsx|*.js|*.jsx)
+        # empty catch block, or a promise .catch() that discards the rejection.
+        grep -nE 'catch[[:space:]]*(\([^)]*\))?[[:space:]]*\{[[:space:]]*\}|\.catch\([[:space:]]*\([^)]*\)[[:space:]]*=>[[:space:]]*\{[[:space:]]*\}[[:space:]]*\)' "$f" 2>/dev/null \
+          | while IFS=: read -r ln _; do
+              printf '%s\t%s\tempty catch block — the error happened and nothing recorded it\n' "${f#"$REPO"/}" "$ln"
+            done
+        # multi-line empty catch — the common formatting: `catch (e) {` at end of
+        # line, then only blank lines until `}`. A comment inside the block is a
+        # DECISION (per the doctrine above) and does not count as a swallow.
+        awk -v F="${f#"$REPO"/}" '
+          /catch[[:space:]]*(\([^)]*\))?[[:space:]]*\{[[:space:]]*$/ { c = NR; next }
+          c && /^[[:space:]]*$/ { next }
+          c && /^[[:space:]]*\}/ {
+            printf "%s\t%d\tempty catch block — the error happened and nothing recorded it\n", F, c
+            c = 0; next
+          }
+          c { c = 0 }
+        ' "$f"
+        ;;
+    esac
+  done
+}
+
+# ── pipeline drift (the round-trip invariant) ─────────────────
+# The other scans grade the PRESENCE OF MACHINERY (is there a gate? a ratchet?).
+# This one asks whether the machinery covers the invariant the architecture
+# actually depends on. The target failure: a value pipeline built as a chain of
+# hand-maintained hops (wire schema → column → import mapping → export query →
+# serializer → UI), where a field must be added in every hop or none, nothing
+# enforces that, and so it silently drifts — you get a column with no wire field,
+# or a wire field the exporter hardcodes. It is invisible precisely because no
+# test asserts "what I upload comes back identical", and because the schema
+# silently strips unknown keys, so a config authored with the dropped field still
+# LOOKS complete.
+#
+# Detection is deterministic and deliberately high-precision: the rail is n/a
+# unless a pipeline is actually detected, so a repo without one is never nagged
+# (and its grade never moves).
+_GEX='--exclude-dir=.git --exclude-dir=node_modules --exclude-dir=vendor --exclude-dir=dist --exclude-dir=build --exclude-dir=target --exclude-dir=.venv --exclude-dir=venv --exclude-dir=__pycache__ --exclude-dir=.next --exclude-dir=coverage'
+
+# A path that is part of the test suite (excluded from hop detection, and the
+# only place a round-trip test is looked for).
+_is_testpath() {
+  case "$1" in
+    */tests/*|*/test/*|*/spec/*|*/__tests__/*) return 0 ;;
+    *_test.*|*_spec.*|*.test.*|*.spec.*)       return 0 ;;
+    */test_*.py)                               return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Hop regexes, per kind. Strict, library-anchored markers only — a loose regex
+# here would fire the rail on repos with no pipeline, which is the one failure
+# mode that would make this scan unshippable.
+_HOP_SCHEMA_RX='\(BaseModel\)|from pydantic|import pydantic|z\.object\(|from ["'"'"']zod["'"'"']|from marshmallow|\(Schema\)|#\[derive\([^)]*Serialize|@JsonProperty'
+_HOP_PERSIST_RX='__tablename__|declarative_base|sqlalchemy|models\.Model|CREATE TABLE|ActiveRecord::|typeorm|@Entity\(|drizzle-orm|knex|sequelize'
+# Function DEFINITIONS that move a value across a hop. Anchored on the definition
+# keyword: bare `JSON.parse` / `json.loads` appear everywhere and would be noise.
+_HOP_SERDE_RX='(def|function|fn|func|const|export function|async def)[[:space:]]+[A-Za-z_]*(serialize|deserialize|to_dict|from_dict|to_json|from_json|to_wire|from_wire|import_|export_|_import|_export|marshal|unmarshal)'
+
+# _hop_files KIND → newline-separated non-test source files matching that hop.
+_hop_files() {
+  case "$1" in
+    schema)  _rx="$_HOP_SCHEMA_RX" ;;
+    persist) _rx="$_HOP_PERSIST_RX" ;;
+    serde)   _rx="$_HOP_SERDE_RX" ;;
+    *) return 0 ;;
+  esac
+  # shellcheck disable=SC2086
+  grep -rlE $_GEX "$_rx" "$REPO" 2>/dev/null | while IFS= read -r f; do
+    _is_testpath "$f" || printf '%s\n' "$f"
+  done
+  # protobuf / prisma / json-schema are schema hops by file type alone.
+  if [ "$1" = schema ]; then
+    find "$REPO" \( -name .git -o -name node_modules -o -name vendor \) -prune -o \
+      -type f \( -name '*.proto' -o -name '*.schema.json' -o -name 'schema.prisma' \) -print 2>/dev/null
+  fi
+  if [ "$1" = persist ]; then
+    for d in migrations db/migrate alembic prisma; do
+      [ -d "$REPO/$d" ] && printf '%s\n' "$REPO/$d"
+    done
+  fi
+}
+
+# wc -l, not `grep -c . || printf 0`: grep prints its own "0" AND exits 1 on no
+# match, so the || fallback appended a second "0" and every caller's [ -gt ] saw
+# a two-line string. wc always emits exactly one number and exits 0.
+_hop_count() { _hop_files "$1" | wc -l | tr -d ' \n'; }
+
+# _pipeline_kinds → the hop kinds present, space-separated. A PIPELINE (and hence
+# a non-n/a round-trip rail) requires a schema hop plus at least one hop it has to
+# round-trip THROUGH: persistence or a serde boundary. Schema alone is a type
+# definition, not a pipeline.
+_pipeline_kinds() {
+  _pk=""
+  for k in schema persist serde; do
+    [ "$(_hop_count "$k")" -gt 0 ] && _pk="$_pk $k"
+  done
+  printf '%s' "${_pk# }"
+}
+# A pipeline is a CHAIN: a schema hop, at least one hop to round-trip through, and
+# — critically — the hops must span at least two distinct FILES. A single file that
+# matches several hop regexes is not a hand-maintained chain; it is one file. This
+# guard is what stops the scanner from firing on itself (header-audit carries the
+# hop regexes as string literals, so it matches `schema` AND `persist` in one file)
+# and on the general class of linters, scanners and codegen tools that quote schema
+# and ORM identifiers in their own source. Drift needs somewhere to drift BETWEEN.
+_has_pipeline() {
+  _k=" $(_pipeline_kinds) "
+  case "$_k" in *" schema "*) ;; *) return 1 ;; esac
+  case "$_k" in *" persist "*|*" serde "*) ;; *) return 1 ;; esac
+  _nfiles="$( { _hop_files schema; _hop_files persist; _hop_files serde; } | sort -u | wc -l | tr -d ' \n')"
+  [ "${_nfiles:-0}" -ge 2 ]
+}
+
+# _roundtrip_test → the test file asserting the invariant, or empty. Two ways to
+# qualify: it says round-trip, or a single test file exercises BOTH directions
+# (serialize and deserialize) — which is what a round-trip test structurally is.
+_roundtrip_test() {
+  # shellcheck disable=SC2086
+  _rt="$(grep -rlEi $_GEX 'round.?trip' "$REPO" 2>/dev/null | while IFS= read -r f; do
+    _is_testpath "$f" && { printf '%s\n' "$f"; break; }
+  done)"
+  [ -n "$_rt" ] && { printf '%s' "$_rt"; return; }
+  # shellcheck disable=SC2086
+  grep -rlE $_GEX '(serialize|to_dict|to_json|export_|dump)' "$REPO" 2>/dev/null | while IFS= read -r f; do
+    _is_testpath "$f" || continue
+    grep -qE '(deserialize|from_dict|from_json|import_|load)' "$f" 2>/dev/null && { printf '%s\n' "$f"; break; }
+  done
+}
+
+_roundtrip_status() {
+  _has_pipeline || { printf 'n/a\tno value pipeline detected (needs a schema hop + a persistence/serde hop)'; return; }
+  _rt="$(_roundtrip_test | head -1)"
+  # Word-match only ("round-trip" string, or serialize+deserialize words in one
+  # test file) — it cannot verify the SAME value survives the pipeline, so the
+  # status is likely-present, not present. Absence of the words is still strong
+  # evidence of absence; presence of the words is weak evidence of coverage.
+  [ -n "$_rt" ] && { printf 'likely-present\t%s (word-match — not verified to round-trip the same value)' "${_rt#"$REPO"/}"; return; }
+  printf 'absent\tpipeline across %s hop(s) and no test asserts what goes in comes back out' \
+    "$(_pipeline_kinds | wc -w | tr -d ' ')"
+}
+
+# _schema_lax → schema files whose parser SILENTLY DROPS unknown keys. This is
+# what makes drift invisible rather than merely present: a config authored with a
+# field nobody wired still parses clean, so it looks complete and isn't. Strict
+# mode turns "wrong numbers, found by eye in a demo" into "import failed: unknown
+# field X". Emits: path <TAB> lineno <TAB> lib.
+_schema_lax() {
+  _hop_files schema | while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    case "$f" in
+      *.py)
+        grep -qE '\(BaseModel\)' "$f" 2>/dev/null || continue
+        grep -qE 'extra[[:space:]]*=[[:space:]]*["'"'"']?forbid|Extra\.forbid' "$f" 2>/dev/null && continue
+        _ln="$(grep -nE '\(BaseModel\)' "$f" 2>/dev/null | head -1 | cut -d: -f1)"
+        printf '%s\t%s\tpydantic\n' "$f" "${_ln:-1}"
+        ;;
+      *.ts|*.tsx|*.js|*.jsx)
+        grep -qE 'z\.object\(' "$f" 2>/dev/null || continue
+        grep -qE '\.strict\(|\.passthrough\(' "$f" 2>/dev/null && continue
+        _ln="$(grep -nE 'z\.object\(' "$f" 2>/dev/null | head -1 | cut -d: -f1)"
+        printf '%s\t%s\tzod\n' "$f" "${_ln:-1}"
+        ;;
+    esac
+  done
+}
+
+case "$sub" in
+  patterns)
+    _pv="$(_proven_patterns)"
+    _patterns | while IFS="$TAB" read -r id rx why; do
+      [ -n "${id:-}" ] || continue
+      ann=""
+      [ -n "$_pv" ] && ann="$(printf '%s\n' "$_pv" | awk -F"$TAB" -v k="$id" '$1==k{printf "  [proven: %s across %s repos, CI %s]", $2, $3, $4; exit}')"
+      printf '%-18s %s%s\n' "$id" "$why" "$ann"
+    done
+    [ -f "$PATTERNS_FILE" ] && printf '# (includes briefing-supplied patterns from %s)\n' "$PATTERNS_FILE"
+    ;;
+
+  harness)
+    # Model, if declared in Claude Code settings — plus a staleness flag when the
+    # id names a superseded tier (model migrations are the moat's first learning).
+    m=""; msrc=""
+    for s in "$REPO/.claude/settings.json" "$REPO/.claude/settings.local.json"; do
+      [ -f "$s" ] || continue
+      m="$(sed -n 's/.*"model"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$s" 2>/dev/null | head -1)"
+      if [ -n "$m" ]; then
+        # A model pinned in committed settings.json ships with the repo → PROJECT
+        # scope; settings.local.json is a gitignored local override → LOCAL.
+        case "$s" in *settings.local.json) msrc="local" ;; *) msrc="project" ;; esac
+        break
+      fi
+    done
+    # Fall back to the most recent model actually run (transcripts) when nothing is
+    # pinned, so the MODEL line and the staleness / upgrade flags fire for users who
+    # ride the default alias — matching the card / `mine --adopt` detection. That is
+    # the model YOU run, not one the repo dictates → LOCAL scope. The trailing
+    # source field lets `grade` attribute the model axis to the right grade.
+    em="$m"
+    if [ -z "$em" ]; then em="$(_recent_transcript_model)"; [ -n "$em" ] && msrc="local"; fi
+    [ -n "$em" ] && printf 'MODEL\t%s\t%s\n' "$em" "$msrc"
+    [ -n "$em" ] && _model_staleness "$em"
+    [ -n "$em" ] && _model_upgrade "$em"
+    # Bash tool security posture (whitelist > blacklist; blacklists are
+    # bypassable — see the briefing). Classify each settings file's policy.
+    for s in "$REPO/.claude/settings.json" "$REPO/.claude/settings.local.json" \
+             "$HOME/.claude/settings.json"; do
+      sig="$(_bash_security "$s")"
+      [ -n "$sig" ] || continue
+      _by=0; _al=0; _dn=0
+      while IFS="$TAB" read -r tag tok; do
+        [ -n "${tag:-}" ] || continue
+        case "$tag" in
+          BYPASS) _by=1 ;;
+          allow)  _al=1; printf 'SECURITY-DETAIL\tallow\t%s\t%s\n' "$tok" "$s" ;;
+          deny)   _dn=1; printf 'SECURITY-DETAIL\tdeny\t%s\t%s\n' "$tok" "$s" ;;
+        esac
+      done <<SIG
+$sig
+SIG
+      lvl="denylist"
+      [ "$_al" -eq 1 ] && lvl="allowlist"
+      [ "$_al" -eq 1 ] && [ "$_dn" -eq 1 ] && lvl="allowlist+denylist"
+      [ "$_by" -eq 1 ] && lvl="bypass"
+      # Only a weak posture (bypass / pure blacklist) is a recommendation — the
+      # canonical fix is the same either way: move to an allow-list.
+      case "$lvl" in
+        bypass|denylist) printf 'SECURITY\tbash\t%s\t%s\tkey=bash-allowlist\n' "$lvl" "$s" ;;
+        *)               printf 'SECURITY\tbash\t%s\t%s\n' "$lvl" "$s" ;;
+      esac
+    done
+    # Always-loaded markdown harness files: scan, follow @imports inline, and flag
+    # stale references. @imported files are counted as always-loaded FILE rows so
+    # the per-turn token sum isn't undercounted.
+    for f in "$REPO/CLAUDE.md" "$REPO/AGENTS.md" "$HOME/.claude/CLAUDE.md"; do
+      scan_tree "$f" 0
+    done
+    # Other fixed harness files (settings, MCP, editor rules): size + pattern scan.
+    for f in \
+      "$REPO/.claude/settings.json" "$REPO/.claude/settings.local.json" \
+      "$REPO/.mcp.json" "$REPO/.cursorrules" \
+      "$REPO/.github/copilot-instructions.md"; do
+      scan_file "$f"
+    done
+    # Globbed harness files (slash-commands, subagents). Their BODY is ON-DEMAND —
+    # loaded only when the command/agent is invoked, never every turn — so scan
+    # them for trim/debt but emit ONDEMAND, which the `grade` context axis excludes
+    # from the always-loaded token sum. (Counting full bodies here was the bug that
+    # summed dozens of these files into a phantom 30k-token "always-loaded" load and
+    # pinned the grade to F.) Only the registry frontmatter is a per-turn cost — see
+    # the CONTEXT-TAX registry accounting below. Guard each — no nullglob in sh.
+    for f in "$REPO"/.claude/commands/*.md "$REPO"/.claude/agents/*.md; do
+      [ -f "$f" ] && scan_file "$f" ONDEMAND
+    done
+    # ---- Always-loaded context tax (scope-split, static) ----
+    # On-demand things — slash-commands, subagents, installed skills — cost nothing
+    # per turn for their BODIES (loaded on invocation), but their frontmatter
+    # (name + description) is injected into the command/agent/skill registry every
+    # session. That frontmatter IS always-loaded, so account for it here in `harness`
+    # (STATIC config — reports on a fresh clone, transcript-independent), emitted as
+    # CONTEXT-TAX: NOT summed into the FILE total and never graded (the grade sums
+    # only FILE). Split by install scope so the two-grade scorecard stays clean —
+    #   repo → 📦 project always-loaded context;  user → 💻 local always-loaded context.
+    for kind_scope in "registry:repo:$REPO/.claude" "registry:user:$HOME/.claude" \
+                      "skills:repo:$REPO/.claude/skills" "skills:user:$HOME/.claude/skills"; do
+      kind="${kind_scope%%:*}"; _r="${kind_scope#*:}"; scope="${_r%%:*}"; dir="${_r#*:}"
+      tx_total=0; tx_count=0
+      case "$kind" in
+        registry)
+          kpfx="registry-context-tax"
+          for f in "$dir"/commands/*.md "$dir"/agents/*.md; do
+            [ -f "$f" ] || continue
+            fmb="$(awk '/^---$/{c++; next} c==1{n += length($0) + 1} c>=2{exit} END{print n+0}' "$f")"
+            [ "${fmb:-0}" -gt 0 ] || continue
+            tx_total=$(( tx_total + fmb )); tx_count=$(( tx_count + 1 ))
+          done ;;
+        skills)
+          kpfx="skill-context-tax"
+          [ -d "$dir" ] || continue
+          for sk in "$dir"/*/; do
+            [ -f "${sk}SKILL.md" ] || continue
+            fmb="$(awk '/^---$/{c++; next} c==1{n += length($0) + 1} c>=2{exit} END{print n+0}' "${sk}SKILL.md")"
+            [ "${fmb:-0}" -gt 0 ] || continue
+            printf 'SKILL-TAX\t%s\t%s\t%s\t%s\n' "$(basename "$sk")" "$scope" "$fmb" "$(( fmb / 4 ))"
+            tx_total=$(( tx_total + fmb )); tx_count=$(( tx_count + 1 ))
+          done ;;
+      esac
+      [ "$tx_count" -gt 0 ] && printf 'CONTEXT-TAX\t%s\t%s\t%s\t%s\t%s\tkey=%s-%s\n' \
+        "$kind" "$scope" "$tx_count" "$tx_total" "$(( tx_total / 4 ))" "$kpfx" "$scope"
+    done
+    # Hooks — arbitrary shell on agent events. A bigger unguarded execution +
+    # supply-chain surface than the Bash list, and previously unscanned.
+    for s in "$REPO/.claude/settings.json" "$REPO/.claude/settings.local.json" \
+             "$HOME/.claude/settings.json"; do
+      _hooks "$s" | while IFS="$TAB" read -r ev cmd; do
+        [ -n "${ev:-}" ] || continue
+        printf 'HOOK\t%s\t%s\t%s\tkey=hook-%s-%s\n' "$ev" "$cmd" "$s" "$(_slug "$ev")" "$(_slugn "$cmd" 24)"
+      done
+    done
+    # Installed skills (repo + user scope) — supply-chain + execution surface.
+    _skills "$REPO/.claude/skills" repo
+    _skills "$HOME/.claude/skills" user
+    # Nested CLAUDE.md / AGENTS.md (on-demand, not every turn) — reported apart.
+    _nested
+    # Proven patterns (6-field patterns.tsv rows): re-emit the cross-customer
+    # library's evidence so the presentation can cite it next to a HIT — a
+    # change proven across N repos doesn't need a local A/B to be trusted.
+    _proven_patterns | while IFS="$TAB" read -r pid eff n ci; do
+      [ -n "${pid:-}" ] || continue
+      printf 'PROVEN\t%s\t%s\t%s\t%s\n' "$pid" "$eff" "$n" "$ci"
+    done
+    ;;
+
+  deps)
+    # Ecosystems. npm detection also glances one directory level deep
+    # (frontend/, web/, …) — the gate check below already honors a subdir
+    # .npmrc, so a monorepo whose package.json lives in a subdirectory must not
+    # lose its npm finding to the scoping below.
+    has_npm=""; has_python=""
+    if [ -f "$REPO/package.json" ]; then
+      has_npm="$REPO/package.json"
+    else
+      has_npm="$(find "$REPO" -mindepth 2 -maxdepth 2 -name package.json \
+        -not -path '*/node_modules/*' -print 2>/dev/null | head -1)"
+    fi
+    [ -n "$has_npm" ] && printf 'ECOSYSTEM\tnpm\t%s\n' "$has_npm"
+    for p in requirements.txt pyproject.toml setup.cfg setup.py Pipfile; do
+      [ -f "$REPO/$p" ] && { has_python="$REPO/$p"; printf 'ECOSYSTEM\tpython\t%s\n' "$REPO/$p"; break; }
+    done
+    [ -f "$REPO/go.mod" ]     && printf 'ECOSYSTEM\tgo\t%s\n' "$REPO/go.mod"
+    [ -f "$REPO/Cargo.toml" ] && printf 'ECOSYSTEM\tcargo\t%s\n' "$REPO/Cargo.toml"
+    [ -f "$REPO/Gemfile" ]    && printf 'ECOSYSTEM\tbundler\t%s\n' "$REPO/Gemfile"
+
+    # Tooling versions + cooldown gates — only for ecosystems THIS repo has.
+    # A GATE/TOOL row for a package manager the project doesn't use is noise
+    # the presentation must curate away (and the model might not, every run):
+    # recommending an .npmrc cooldown to a pure-Go repo costs trust. Undetected
+    # ecosystems get an explicit `GATE <name> n/a` instead — same contract as
+    # the rails scan's n/a, "checked, doesn't apply" — which the SKILL.md flow
+    # skips. TOOL rows are simply omitted (the machine's npm version is
+    # irrelevant when nothing here installs through it).
+    if [ -n "$has_npm" ]; then
+      if command -v npm >/dev/null 2>&1; then
+        nv="$(npm --version 2>/dev/null)"
+        st="ok"; [ "$(ver_ge "$nv" 11.10)" = "ge" ] || st="too-old"
+        printf 'TOOL\tnpm\t%s\t%s\n' "${nv:--}" "$st"
+      else
+        printf 'TOOL\tnpm\t-\tabsent\n'
+      fi
+    fi
+    if [ -n "$has_python" ]; then
+      pv=""
+      if command -v pip >/dev/null 2>&1; then pv="$(pip --version 2>/dev/null | awk '{print $2}')"
+      elif command -v pip3 >/dev/null 2>&1; then pv="$(pip3 --version 2>/dev/null | awk '{print $2}')"
+      elif command -v python3 >/dev/null 2>&1; then pv="$(python3 -m pip --version 2>/dev/null | awk '{print $2}')"; fi
+      if [ -n "$pv" ]; then
+        st="ok"; [ "$(ver_ge "$pv" 26.1)" = "ge" ] || st="too-old"
+        printf 'TOOL\tpip\t%s\t%s\n' "$pv" "$st"
+      else
+        printf 'TOOL\tpip\t-\tabsent\n'
+      fi
+    fi
+
+    # Cooldown gate present?
+    if [ -n "$has_npm" ]; then
+      npmrc=""
+      for r in "$REPO/.npmrc" "$REPO/frontend/.npmrc" "$HOME/.npmrc"; do
+        [ -f "$r" ] && grep -qiE '^[[:space:]]*min-release-age[[:space:]]*=' "$r" 2>/dev/null && { npmrc="$r"; break; }
+      done
+      [ -n "$npmrc" ] && printf 'GATE\tnpm\tpresent\t%s\n' "$npmrc" || printf 'GATE\tnpm\tabsent\t-\tkey=gate-npm\n'
+    else
+      printf 'GATE\tnpm\tn/a\t-\n'
+    fi
+
+    if [ -n "$has_python" ]; then
+      pipgate=""
+      for c in "$REPO"/.github/workflows/*.yml "$REPO"/.github/workflows/*.yaml \
+               "$REPO/pip.conf" "$REPO/pip.ini" "$HOME/.config/pip/pip.conf"; do
+        [ -f "$c" ] && grep -qiE 'uploaded-prior-to' "$c" 2>/dev/null && { pipgate="$c"; break; }
+      done
+      [ -n "$pipgate" ] && printf 'GATE\tpip\tpresent\t%s\n' "$pipgate" || printf 'GATE\tpip\tabsent\t-\tkey=gate-pip\n'
+    else
+      printf 'GATE\tpip\tn/a\t-\n'
+    fi
+    ;;
+
+  cost)
+    # Cost-awareness: where the tokens actually go. Defers all pricing to the
+    # sibling header-cost (single source of truth for the price table + legacy/
+    # cache handling); this case only locates usage and reshapes report --json
+    # into SPEND / SPEND-TOTAL / ROUTE-CANDIDATE so the audit can lead with spend
+    # and turn the top line into a model-routing experiment candidate.
+    # Args arrive via args_rest (the top-level parser consumes $@); re-split like
+    # `gate` does — paths with spaces aren't supported (--input is for testing).
+    set -- $args_rest
+    SRC=""; SINCE=""; ALL_PROJECTS=""; HARNESS=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --input) SRC="${2:-}"; shift 2 ;;
+        --since) SINCE="${2:-}"; shift 2 ;;
+        --all-projects) ALL_PROJECTS=1; shift ;;
+        --harness) HARNESS="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -n "$HARNESS" ] || HARNESS="$(detect_harness)"
+    COST="$(dirname "$0")/header-cost"
+    [ -x "$COST" ] || COST="$(command -v header-cost 2>/dev/null || true)"
+    [ -n "$COST" ] || { printf 'NOTE\tcost\theader-cost not found alongside the audit — skipping spend analysis\n'; exit 0; }
+    if [ -n "$SRC" ]; then
+      # Explicit usage file (testing / ad-hoc). Scope is whatever the caller passed.
+      [ -f "$SRC" ] || { printf 'NOTE\tcost\tinput file not found: %s\n' "$SRC"; exit 0; }
+      printf 'COST-SCOPE\tinput\t%s\n' "$SRC"
+      usage_json="$("$COST" report --input "$SRC" ${SINCE:+--since "$SINCE"} --json 2>/dev/null || true)"
+    elif [ -n "$ALL_PROJECTS" ]; then
+      # Explicit machine-wide aggregate — every project under ~/.claude/projects.
+      # Clearly labeled global so the presentation never mistakes it for this repo.
+      tdir="$HOME/.claude/projects"
+      [ -d "$tdir" ] || { printf 'NOTE\tcost\tno usage history at %s — run some sessions first\n' "$tdir"; exit 0; }
+      ndirs="$(find "$tdir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+      printf 'COST-SCOPE\tglobal\t%s\t%s\tproject dirs\n' "$tdir" "$ndirs"
+      usage_json="$(find "$tdir" -name '*.jsonl' -exec cat {} + 2>/dev/null | "$COST" report ${SINCE:+--since "$SINCE"} --json 2>/dev/null || true)"
+    else
+      # Default: scope to THIS repo's transcript dir. Claude Code keys each repo's
+      # transcripts under ~/.claude/projects/<key>, where <key> is the absolute repo
+      # path with every non-alphanumeric char replaced by '-'. No silent fallback to
+      # all projects — a missing dir is a NOTE, so a global aggregate never sneaks in
+      # as a this-repo recommendation (HEA-435).
+      key="$(printf '%s' "$REPO" | sed 's/[^A-Za-z0-9]/-/g')"
+      tdir="$HOME/.claude/projects/$key"
+      [ -d "$tdir" ] || { printf 'NOTE\tcost\tno transcripts for this repo at %s — run `header-audit cost --all-projects` for machine-wide spend\n' "$tdir"; exit 0; }
+      nfiles="$(find "$tdir" -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')"
+      printf 'COST-SCOPE\trepo\t%s\n' "$REPO"
+      printf 'COST-INPUT\t%s\t%s\tfiles\n' "$tdir" "$nfiles"
+      usage_json="$(find "$tdir" -name '*.jsonl' -exec cat {} + 2>/dev/null | "$COST" report ${SINCE:+--since "$SINCE"} --json 2>/dev/null || true)"
+    fi
+    # Label whose usage this is. header-cost only parses Claude Code transcripts, so
+    # when the active harness is Codex the priced spend is historical Claude usage —
+    # a cross-harness mismatch the presentation must downgrade (never route Codex on
+    # it). --all-projects is an explicit cross-harness/cross-repo opt-in, so suppress
+    # the mismatch NOTE there.
+    printf 'COST-HARNESS\t%s\tclaude-transcripts\n' "$HARNESS"
+    [ "$HARNESS" = codex ] && [ -z "$ALL_PROJECTS" ] && \
+      printf 'COST-NOTE\tharness-mismatch\tClaude Code transcripts only; no Codex 5.x usage measured\n'
+    [ -n "$usage_json" ] || { printf 'NOTE\tcost\tno priced usage found\n'; exit 0; }
+    printf '%s' "$usage_json" | awk -v since="$SINCE" '
+      {
+        total = 0
+        if (match($0, /"total_usd":[0-9.eE+-]+/))  { s = substr($0, RSTART, RLENGTH); sub(/.*:/, "", s); total = s + 0 }
+        tcalls = 0
+        if (match($0, /"calls":[0-9]+/))           { s = substr($0, RSTART, RLENGTH); sub(/.*:/, "", s); tcalls = s + 0 }
+        printf "SPEND-TOTAL\t%.4f\t%d%s\n", total, tcalls, (since != "" ? ("\t" since) : "")
+        rest = $0; top_model = ""; top_cost = -1; top_share = 0
+        while (match(rest, /\{"model":"[^"]*"[^}]*\}/)) {
+          blk = substr(rest, RSTART, RLENGTH); rest = substr(rest, RSTART + RLENGTH)
+          m = ""; if (match(blk, /"model":"[^"]*"/)) { m = substr(blk, RSTART, RLENGTH); sub(/"model":"/, "", m); sub(/"$/, "", m) }
+          c = 0;  if (match(blk, /"cost_usd":[0-9.eE+-]+/)) { s = substr(blk, RSTART, RLENGTH); sub(/.*:/, "", s); c = s + 0 }
+          cl = 0; if (match(blk, /"calls":[0-9]+/))         { s = substr(blk, RSTART, RLENGTH); sub(/.*:/, "", s); cl = s + 0 }
+          share = (total > 0) ? (c / total * 100) : 0
+          printf "SPEND\t%s\t%d\t%.4f\t%.1f\n", m, cl, c, share
+          if (c > top_cost) { top_cost = c; top_model = m; top_share = share }
+        }
+        if (top_model != "") {
+          k = tolower(top_model); gsub(/[^a-z0-9]+/, "-", k); sub(/^-+/, "", k); sub(/-+$/, "", k)
+          printf "ROUTE-CANDIDATE\t%s\t%.4f\t%.1f\tkey=route-%s\n", top_model, top_cost, top_share, k
+        }
+      }
+    '
+    ;;
+
+  waste)
+    # Transcript-mined waste: what the harness pays for vs what it uses. Same
+    # input as `cost` (Claude Code transcripts), same repo-scope discipline
+    # (HEA-435) — but instead of pricing tokens it counts tool_use / tool_result
+    # records: per-tool call+error counts, MCP servers configured-but-unused,
+    # skill invocations vs installed skills, compaction events, and the
+    # always-loaded frontmatter tax of installed skills. Deterministic, read-only,
+    # nothing leaves the machine. The SKILL.md flow curates rows into findings.
+    set -- $args_rest
+    SRC=""; SINCE=""; ALL_PROJECTS=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --input) SRC="${2:-}"; shift 2 ;;
+        --since) SINCE="${2:-}"; shift 2 ;;
+        --all-projects) ALL_PROJECTS=1; shift ;;
+        *) shift ;;
+      esac
+    done
+    stream_cmd=""
+    if [ -n "$SRC" ]; then
+      [ -f "$SRC" ] || { printf 'NOTE\twaste\tinput file not found: %s\n' "$SRC"; exit 0; }
+      printf 'WASTE-SCOPE\tinput\t%s\n' "$SRC"
+      nfiles=1
+      stream_cmd="cat \"$SRC\""
+    elif [ -n "$ALL_PROJECTS" ]; then
+      tdir="$HOME/.claude/projects"
+      [ -d "$tdir" ] || { printf 'NOTE\twaste\tno usage history at %s — run some sessions first\n' "$tdir"; exit 0; }
+      ndirs="$(find "$tdir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+      nfiles="$(find "$tdir" -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')"
+      printf 'WASTE-SCOPE\tglobal\t%s\t%s\tproject dirs\n' "$tdir" "$ndirs"
+      stream_cmd="find \"$tdir\" -name '*.jsonl' -exec cat {} + 2>/dev/null"
+    else
+      # Default: THIS repo's transcript dir only (same key convention as `cost`).
+      key="$(printf '%s' "$REPO" | sed 's/[^A-Za-z0-9]/-/g')"
+      tdir="$HOME/.claude/projects/$key"
+      [ -d "$tdir" ] || { printf 'NOTE\twaste\tno transcripts for this repo at %s — run `header-audit waste --all-projects` for machine-wide usage\n' "$tdir"; exit 0; }
+      nfiles="$(find "$tdir" -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')"
+      printf 'WASTE-SCOPE\trepo\t%s\n' "$REPO"
+      printf 'WASTE-INPUT\t%s\t%s\tfiles\n' "$tdir" "$nfiles"
+      stream_cmd="find \"$tdir\" -name '*.jsonl' -exec cat {} + 2>/dev/null"
+    fi
+
+    # Configured MCP servers: top-level keys of "mcpServers" in the repo's
+    # .mcp.json. Best-effort awk (atomize braces, track depth) — same approach
+    # as _bash_security; no JSON parser.
+    MCP_FILE="$REPO/.mcp.json"
+    mcp_configured=""
+    if [ -f "$MCP_FILE" ]; then
+      mcp_configured="$(awk '
+        { all = all $0 "\n" }
+        END {
+          if (all !~ /"mcpServers"[[:space:]]*:/) exit
+          gsub(/\{/, "\n{\n", all); gsub(/\}/, "\n}\n", all); gsub(/,/, ",\n", all)
+          n = split(all, L, "\n"); depth = 0; pending = 0; sdepth = -1
+          for (i = 1; i <= n; i++) {
+            line = L[i]
+            if (line ~ /^[[:space:]]*\{/)  { depth++; if (pending) { sdepth = depth; pending = 0 }; continue }
+            if (line ~ /^[[:space:]]*\}/)  { depth--; if (sdepth > 0 && depth < sdepth) exit; continue }
+            if (line ~ /"mcpServers"[[:space:]]*:/) { pending = 1; continue }
+            if (sdepth > 0 && depth == sdepth && match(line, /"[^"]+"[[:space:]]*:/)) {
+              k = substr(line, RSTART, RLENGTH)
+              sub(/^"/, "", k); sub(/"[[:space:]]*:$/, "", k)
+              print k
+            }
+          }
+        }' "$MCP_FILE")"
+    fi
+
+    # Repo-installed skills (candidates for SKILL-UNUSED — user-scope skills
+    # serve other projects, so absence of use HERE is not evidence of waste).
+    repo_skills=""
+    for sk in "$REPO"/.claude/skills/*/; do
+      [ -d "$sk" ] || continue
+      repo_skills="${repo_skills}$(basename "$sk")	${sk%/}
+"
+    done
+
+    # One pass over the transcript stream. Escaped JSON inside content strings
+    # cannot match these patterns (the inner quotes are backslash-escaped), so
+    # plain matching is safe. Parsing is KEY-ORDER TOLERANT: blocks anchor on the
+    # "type":"tool_use" marker and read "id"/"name" from the rest of the block
+    # (cut at "input", whose keys are raw JSON and could shadow "name"), and any
+    # block whose id/name can't be found is counted and surfaced as SCAN-DEGRADED
+    # — a writer/serializer change must degrade VISIBLY, never silently zero the
+    # counts (the scan's own silence-axis contract).
+    # The multi-line lists travel via ENVIRON, not -v: BSD awk (macOS) rejects a
+    # newline in a -v value ("newline in string") — the header-cost idiom.
+    eval "$stream_cmd" | HEADER_WASTE_MCP="$mcp_configured" HEADER_WASTE_SKILLS="$repo_skills" \
+      awk -v since="$SINCE" -v nfiles="$nfiles" -v mcp_file="$MCP_FILE" '
+      function slug(s,  t) { t = tolower(s); gsub(/[^a-z0-9]+/, "-", t); sub(/^-+/, "", t); sub(/-+$/, "", t); return t }
+      BEGIN {
+        mcp_configured = ENVIRON["HEADER_WASTE_MCP"]
+        repo_skills    = ENVIRON["HEADER_WASTE_SKILLS"]
+      }
+      {
+        if (since != "" && match($0, /"timestamp":"[^"]*"/)) {
+          ts = substr($0, RSTART + 13, RLENGTH - 14)
+          if (ts < since) next
+        }
+        # tool_use blocks → per-tool call counts + id→name map (for error joins).
+        line = $0
+        while (match(line, /"type":"tool_use"/)) {
+          seg = substr(line, RSTART + RLENGTH, 500)
+          pre = (RSTART > 500) ? substr(line, RSTART - 500, 500) : substr(line, 1, RSTART - 1)
+          line = substr(line, RSTART + RLENGTH)
+          attempts++
+          # backward window: keys may precede "type" — scan back only to this
+          # block-opening brace so a neighboring block cannot leak its id/name in.
+          q = length(pre); while (q > 0 && substr(pre, q, 1) != "{") q--
+          pre = (q > 0) ? substr(pre, q) : ""
+          blkseg = seg
+          if ((p = index(blkseg, "\"input\"")) > 0) blkseg = substr(blkseg, 1, p - 1)
+          id = ""; nm = ""
+          if (match(blkseg, /"id":"[^"]*"/))            id = substr(blkseg, RSTART + 6, RLENGTH - 7)
+          if (id == "" && match(pre, /"id":"[^"]*"/))   id = substr(pre, RSTART + 6, RLENGTH - 7)
+          if (match(blkseg, /"name":"[^"]*"/))          nm = substr(blkseg, RSTART + 8, RLENGTH - 9)
+          if (nm == "" && match(pre, /"name":"[^"]*"/)) nm = substr(pre, RSTART + 8, RLENGTH - 9)
+          if (id == "" || nm == "") { unparsed++; continue }
+          Name[id] = nm
+          if (!(nm in Calls)) ToolKeys[++ntk] = nm
+          Calls[nm]++
+          if (nm == "Skill" && match(seg, /"skill":"[^"]*"/)) {
+            sk = substr(seg, RSTART + 9, RLENGTH - 10)
+            if (!(sk in SkillUse)) SkillKeys[++nsk] = sk
+            SkillUse[sk]++
+          }
+        }
+        # tool_result blocks → error attribution. Intra-block field order varies
+        # between writer versions (tool_use_id before OR after is_error), and
+        # "is_error" may be OMITTED when false — so k-th-to-k-th positional
+        # pairing misaligns the moment one block skips the flag. Attribute each
+        # "is_error":true to the NEAREST "tool_use_id" by byte offset instead:
+        # blocks are contiguous, so the nearest id is that block-local id under
+        # either field order, with or without omitted-false flags.
+        nid = 0; ner = 0; off = 0
+        line = $0
+        while (match(line, /"tool_use_id":"[^"]*"/)) {
+          Ids[++nid] = substr(line, RSTART + 15, RLENGTH - 16); IdPos[nid] = off + RSTART
+          off += RSTART + RLENGTH - 1; line = substr(line, RSTART + RLENGTH)
+        }
+        off = 0; line = $0
+        while (match(line, /"is_error":true/)) {
+          ErrPos[++ner] = off + RSTART
+          off += RSTART + RLENGTH - 1; line = substr(line, RSTART + RLENGTH)
+        }
+        for (k = 1; k <= ner; k++) {
+          bestd = -1; besti = 0
+          for (j = 1; j <= nid; j++) {
+            dd = ErrPos[k] - IdPos[j]; if (dd < 0) dd = -dd
+            if (bestd < 0 || dd < bestd) { bestd = dd; besti = j }
+          }
+          if (besti && (Ids[besti] in Name)) Err[Name[Ids[besti]]]++
+        }
+        # Compaction markers: a compaction writes BOTH a summary message and a
+        # boundary record — count each, report the max (not the sum).
+        if ($0 ~ /"isCompactSummary":true/)        c_sum++
+        if ($0 ~ /"subtype":"compact_boundary"/)   c_bnd++
+      }
+      END {
+        # TOOL-USE, sorted by calls desc (selection sort; tool count is small).
+        for (a = 1; a <= ntk; a++) for (b = a + 1; b <= ntk; b++)
+          if (Calls[ToolKeys[b]] > Calls[ToolKeys[a]]) { t = ToolKeys[a]; ToolKeys[a] = ToolKeys[b]; ToolKeys[b] = t }
+        for (a = 1; a <= ntk; a++) {
+          nm = ToolKeys[a]
+          printf "TOOL-USE\t%s\t%d\t%d\n", nm, Calls[nm], Err[nm] + 0
+          if (nm ~ /^mcp__/) {
+            srv = nm; sub(/^mcp__/, "", srv); sub(/__.*/, "", srv)
+            if (!(srv in McpCalls)) McpKeys[++nmk] = srv
+            McpCalls[srv] += Calls[nm]; McpErr[srv] += Err[nm] + 0
+          }
+        }
+        for (a = 1; a <= nmk; a++) {
+          srv = McpKeys[a]
+          printf "MCP-SERVER\t%s\t%d\t%d\n", srv, McpCalls[srv], McpErr[srv]
+        }
+        # Configured-but-unused MCP servers: their tool schemas are loaded every
+        # turn; zero calls in the window means that context is paid for nothing.
+        nconf = split(mcp_configured, MC, "\n")
+        for (a = 1; a <= nconf; a++) {
+          srv = MC[a]; if (srv == "") continue
+          if (!(srv in McpCalls)) printf "MCP-UNUSED\t%s\t%s\tkey=waste-mcp-%s\n", srv, mcp_file, slug(srv)
+        }
+        for (a = 1; a <= nsk; a++)
+          printf "SKILL-USE\t%s\t%d\n", SkillKeys[a], SkillUse[SkillKeys[a]]
+        # Repo-installed skills never invoked here.
+        nrs = split(repo_skills, RS_, "\n")
+        for (a = 1; a <= nrs; a++) {
+          if (RS_[a] == "") continue
+          split(RS_[a], F, "\t")
+          if (!(F[1] in SkillUse)) printf "SKILL-UNUSED\t%s\t%s\tkey=waste-skill-%s\n", F[1], F[2], slug(F[1])
+        }
+        # High error-rate tools (enough volume to mean something).
+        for (a = 1; a <= ntk; a++) {
+          nm = ToolKeys[a]; c = Calls[nm]; e = Err[nm] + 0
+          if (c >= 10 && e * 5 >= c)
+            printf "ERROR-RATE\t%s\t%d\t%d\t%.0f\tkey=error-rate-%s\n", nm, e, c, e * 100 / c, slug(nm)
+        }
+        cmp = (c_sum > c_bnd) ? c_sum : c_bnd
+        if (cmp > 0) printf "COMPACTIONS\t%d\t%d\n", cmp, nfiles
+        # Parse-failure canary: a transcript-format change must never read as
+        # "low usage". Any tool_use marker whose id/name could not be extracted
+        # degrades the scan VISIBLY.
+        if (unparsed > 0)
+          printf "SCAN-DEGRADED\twaste\t%d of %d tool_use block(s) unparseable — counts above are an undercount, not evidence of low usage\n", unparsed, attempts + 0
+      }
+    '
+
+    # (The always-loaded skill / registry context tax moved to `harness` in 0.37.1
+    # — it's STATIC config, so it belongs on the transcript-independent scan and now
+    # reports on a fresh clone, split by scope. See the CONTEXT-TAX block there.)
+    ;;
+
+  retro)
+    # Behavioral mining of the user's OWN sessions — the COACH axis, distinct from
+    # waste's pay-for-vs-use accounting. Same input (Claude Code transcripts), same
+    # repo-scope discipline (HEA-435). Emits: window session count, edit-thrash
+    # (files re-edited heavily = rework), failed-tool volume (the gotcha/pitfall
+    # signal), git-workflow tells (stash / branch-switch / reset / force-push /
+    # worktree), and DERIVED capability nudges (RETRO-CAP) that map demonstrated
+    # behavior to the practice that addresses it — worktrees for branch juggling, a
+    # guardrail for repeated failures, compounding memory for ungathered pitfalls.
+    # The SKILL.md coach flow ranks + narrates these; the host supplies per-gotcha
+    # detail from its own session context. Read-only; nothing leaves. A tool_use
+    # block the parser cannot read emits SCAN-DEGRADED (see the waste scan) — the
+    # behavioral counts must degrade visibly, never read as a quiet week.
+    set -- $args_rest
+    SRC=""; SINCE=""; ALL_PROJECTS=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --input) SRC="${2:-}"; shift 2 ;;
+        --since) SINCE="${2:-}"; shift 2 ;;
+        --all-projects) ALL_PROJECTS=1; shift ;;
+        *) shift ;;
+      esac
+    done
+    # Files go to awk as ARGS (not catted) so FNR==1/FILENAME mark session
+    # boundaries — the per-session join behind RETRO-CORR / RETRO-GAP.
+    files=(); nfiles=0
+    if [ -n "$SRC" ]; then
+      [ -f "$SRC" ] || { printf 'NOTE\tretro\tinput file not found: %s\n' "$SRC"; exit 0; }
+      printf 'RETRO-SCOPE\tinput\t%s\n' "$SRC"; files=("$SRC"); nfiles=1
+    elif [ -n "$ALL_PROJECTS" ]; then
+      tdir="$HOME/.claude/projects"
+      [ -d "$tdir" ] || { printf 'NOTE\tretro\tno usage history at %s — run some sessions first\n' "$tdir"; exit 0; }
+      ndirs="$(find "$tdir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+      while IFS= read -r -d '' f; do files+=("$f"); done < <(find "$tdir" -name '*.jsonl' -print0 2>/dev/null)
+      nfiles=${#files[@]}
+      printf 'RETRO-SCOPE\tglobal\t%s\t%s\tproject dirs\n' "$tdir" "$ndirs"
+    else
+      key="$(printf '%s' "$REPO" | sed 's/[^A-Za-z0-9]/-/g')"
+      tdir="$HOME/.claude/projects/$key"
+      [ -d "$tdir" ] || { printf 'NOTE\tretro\tno transcripts for this repo at %s — run `header-audit retro --all-projects` for machine-wide history\n' "$tdir"; exit 0; }
+      while IFS= read -r -d '' f; do files+=("$f"); done < <(find "$tdir" -name '*.jsonl' -print0 2>/dev/null)
+      nfiles=${#files[@]}
+      printf 'RETRO-SCOPE\trepo\t%s\n' "$REPO"
+      printf 'RETRO-INPUT\t%s\t%s\tfiles\n' "$tdir" "$nfiles"
+    fi
+
+    # committed compounding memory present? drives the RETRO-CAP compound nudge.
+    mem_present=0
+    for _m in "$REPO"/.claude/memory/*.md; do [ -f "$_m" ] && { mem_present=1; break; }; done
+
+    if [ -n "$SINCE" ]; then printf 'RETRO-WINDOW\t%s\t%s\n' "$nfiles" "$SINCE"
+    else printf 'RETRO-WINDOW\t%s\n' "$nfiles"; fi
+    printf 'RETRO-HARNESS\tclaude-transcripts\n'   # the harness these signals are read from
+    [ "${#files[@]}" -gt 0 ] || exit 0
+    awk -v since="$SINCE" -v mem_present="$mem_present" -v nfiles="$nfiles" '
+      function base(p,  n) { n = p; sub(/.*\//, "", n); return n }
+      # finalize the session that just ended: bucket it for the per-session signals.
+      function endsession() {
+        if (!seen) return
+        if (s_active) {
+          nsess++
+          if (s_plan) { plan_n++; plan_err += s_err } else { noplan_n++; noplan_err += s_err }
+          if (s_edit && s_claim && !s_test) gap_n++
+        }
+        s_active = 0; s_plan = 0; s_err = 0; s_edit = 0; s_claim = 0; s_test = 0
+      }
+      FNR == 1 { endsession(); seen = 1 }      # new file = new session boundary
+      {
+        if (since != "" && match($0, /"timestamp":"[^"]*"/)) {
+          ts = substr($0, RSTART + 13, RLENGTH - 14); if (ts < since) next
+        }
+        if ($0 ~ /"permissionMode":"plan"/) s_plan = 1
+        # fix/done claim in assistant text (heuristic) + test/build command this session.
+        if ($0 ~ /"role":"assistant"/ && tolower($0) ~ /should (now )?work|that should (fix|do it)|all set|fixed (it|the|that)|is fixed|now (fixed|works)|good to go|that fixes/) s_claim = 1
+        if ($0 ~ /(npm (run )?test|pytest|go test|jest|vitest|cargo test|rspec|bats|make test|\.\/test|test\/run)/) s_test = 1
+        line = $0
+        # tool_use: count edits per file (thrash); map id->name for error joins.
+        # Key-order tolerant, same contract as the waste scan: unparseable blocks
+        # are counted and surfaced as SCAN-DEGRADED, never silently dropped.
+        while (match(line, /"type":"tool_use"/)) {
+          seg = substr(line, RSTART + RLENGTH, 500)
+          pre = (RSTART > 500) ? substr(line, RSTART - 500, 500) : substr(line, 1, RSTART - 1)
+          line = substr(line, RSTART + RLENGTH)
+          attempts++
+          q = length(pre); while (q > 0 && substr(pre, q, 1) != "{") q--
+          pre = (q > 0) ? substr(pre, q) : ""
+          blkseg = seg
+          if ((p = index(blkseg, "\"input\"")) > 0) blkseg = substr(blkseg, 1, p - 1)
+          id = ""; nm = ""
+          if (match(blkseg, /"id":"[^"]*"/))            id = substr(blkseg, RSTART + 6, RLENGTH - 7)
+          if (id == "" && match(pre, /"id":"[^"]*"/))   id = substr(pre, RSTART + 6, RLENGTH - 7)
+          if (match(blkseg, /"name":"[^"]*"/))          nm = substr(blkseg, RSTART + 8, RLENGTH - 9)
+          if (nm == "" && match(pre, /"name":"[^"]*"/)) nm = substr(pre, RSTART + 8, RLENGTH - 9)
+          if (id == "" || nm == "") { unparsed++; continue }
+          Name[id] = nm; if (!(nm in Calls)) ToolKeys[++ntk] = nm; Calls[nm]++; s_active = 1
+          if (nm == "Edit" || nm == "Write" || nm == "NotebookEdit") {
+            s_edit = 1
+            if (match(seg, /"file_path":"[^"]*"/)) {
+              fp = substr(seg, RSTART + 13, RLENGTH - 14); b = base(fp)
+              if (!(b in Edits)) EditKeys[++nek] = b; Edits[b]++
+            }
+          }
+        }
+        # git-workflow tells: count distinctive subcommands anywhere in the line
+        # (they live in Bash command strings; counting is reliable even when the
+        # full command cannot be cleanly extracted from escaped JSON).
+        if ($0 ~ /git stash/)                    Git["stash"]++
+        if ($0 ~ /git (checkout|switch) /)       Git["branch-switch"]++
+        if ($0 ~ /git worktree/)                 Git["worktree"]++
+        if ($0 ~ /git reset --hard/)             Git["reset-hard"]++
+        if ($0 ~ /git push/ && $0 ~ /(--force|-f )/) Git["force-push"]++
+        # user redirects (corrections) — course-correct rate + compound feedback_.
+        if ($0 ~ /"type":"user"/) {
+          ci = index($0, "\"role\":\"user\",\"content\":\"")
+          if (ci > 0) {
+            u = tolower(substr($0, ci + 25, 160))
+            if (u ~ /^(no |no,|nope|actually|wait,|stop |revert|undo|instead|don.t )/ || u ~ /that.?s (wrong|not)|not what i|you (broke|misunderstood)/) corrections++
+          }
+        }
+        # tool_result error attribution — nearest-id by byte offset (per the waste
+        # scan): field order varies and "is_error" may be omitted when false, so
+        # positional k-th-to-k-th pairing misaligns.
+        nid = 0; ner = 0; off = 0; line = $0
+        while (match(line, /"tool_use_id":"[^"]*"/)) { Ids[++nid] = substr(line, RSTART + 15, RLENGTH - 16); IdPos[nid] = off + RSTART; off += RSTART + RLENGTH - 1; line = substr(line, RSTART + RLENGTH) }
+        off = 0; line = $0
+        while (match(line, /"is_error":true/)) { ErrPos[++ner] = off + RSTART; off += RSTART + RLENGTH - 1; line = substr(line, RSTART + RLENGTH) }
+        for (k = 1; k <= ner; k++) {
+          bestd = -1; besti = 0
+          for (j = 1; j <= nid; j++) { dd = ErrPos[k] - IdPos[j]; if (dd < 0) dd = -dd; if (bestd < 0 || dd < bestd) { bestd = dd; besti = j } }
+          if (besti && (Ids[besti] in Name)) { Err[Name[Ids[besti]]]++; if (Name[Ids[besti]] == "Bash") s_err++ }
+        }
+      }
+      END {
+        endsession()                                       # finalize the last session
+        if (unparsed > 0)
+          printf "SCAN-DEGRADED\tretro\t%d of %d tool_use block(s) unparseable — behavioral counts are an undercount\n", unparsed, attempts + 0
+        printf "RETRO-PLAN\t%d\t%d\n", plan_n + 0, nsess + 0
+        # THRASH: heavily re-edited files. Sort desc; surface those >= 5 edits.
+        for (a = 1; a <= nek; a++) for (b = a + 1; b <= nek; b++)
+          if (Edits[EditKeys[b]] > Edits[EditKeys[a]]) { t = EditKeys[a]; EditKeys[a] = EditKeys[b]; EditKeys[b] = t }
+        for (a = 1; a <= nek; a++) { b = EditKeys[a]; if (Edits[b] >= 5) printf "RETRO-THRASH\t%s\t%d\n", b, Edits[b] }
+        # FAILS: per-tool error volume — the gotcha/pitfall signal.
+        bash_fail = 0
+        for (a = 1; a <= ntk; a++) {
+          nm = ToolKeys[a]; e = Err[nm] + 0
+          if (e > 0) printf "RETRO-FAILS\t%s\t%d\t%d\n", nm, e, Calls[nm]
+          if (nm == "Bash") bash_fail = e
+        }
+        # GIT tells, in a fixed order.
+        git_switch = Git["stash"] + Git["branch-switch"] + Git["worktree"]
+        n = split("stash branch-switch worktree reset-hard force-push", GK, " ")
+        for (a = 1; a <= n; a++) { g = GK[a]; if (Git[g] > 0) printf "RETRO-GIT\t%s\t%d\n", g, Git[g] }
+        if (corrections > 0) printf "RETRO-CORRECTION\t%d\n", corrections
+        # Per-session join: plan-mode -> avg Bash errors (both buckets >=2 to dodge
+        # N=1 noise), and verification gaps (edit + completion claim + no test run).
+        if (plan_n >= 2 && noplan_n >= 2)
+          printf "RETRO-CORR\tplan-mode\t%.2f\t%.2f\n", plan_err / plan_n, noplan_err / noplan_n
+        if (gap_n > 0) printf "RETRO-GAP\t%d\t%d\tkey=cap-verify\n", gap_n, nsess
+        # DERIVED capability nudges (behavior -> the practice that addresses it).
+        if (git_switch >= 3 && Git["worktree"] == 0)
+          printf "RETRO-CAP\tworktree\t%d branch-juggling events (stash/switch), no worktree use\tkey=cap-worktree\n", git_switch
+        if (bash_fail >= 3)
+          printf "RETRO-CAP\tguardrail\t%d failed Bash calls; a pre-commit gate catches breakage in-loop\tkey=cap-guardrail\n", bash_fail
+        if (bash_fail >= 3 && mem_present == 0)
+          printf "RETRO-CAP\tcompound\t%d gotchas and no committed .claude/memory; capture them via /header wrapup\tkey=cap-compound\n", bash_fail
+      }
+    ' "${files[@]}"
+
+    # Shipped this window (git) — repo scope only, in a git repo. Enriches the
+    # coach overview ("N commits / M LOC; busiest day Tue").
+    if [ -z "$SRC" ] && [ -z "$ALL_PROJECTS" ] && git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
+      # Window: --since if given, else the SESSION span floored at 30 days — so a
+      # recent commit stream still shows when sessions are sparse/recent (e.g. last
+      # commit 11 days ago, 3 sessions this week), and widens to the full span for
+      # long-running work. A fixed 7d missed the common "committed last week" case.
+      if [ -n "$SINCE" ]; then gsince="$SINCE"
+      else
+        oldest=""
+        for f in "${files[@]}"; do
+          m="$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)"
+          if [ -z "$oldest" ] || [ "$m" -lt "$oldest" ]; then oldest="$m"; fi
+        done
+        now="$(date +%s)"; floor=$(( now - 30 * 86400 ))
+        gepoch="${oldest:-$floor}"; [ "$gepoch" -gt "$floor" ] && gepoch="$floor"
+        gsince="$(date -r "$gepoch" '+%Y-%m-%d' 2>/dev/null || date -d "@$gepoch" '+%Y-%m-%d' 2>/dev/null || echo '30 days ago')"
+      fi
+      ncommits="$(git -C "$REPO" log --since="$gsince" --format='%h' 2>/dev/null | wc -l | tr -d ' ')"
+      if [ "${ncommits:-0}" -gt 0 ]; then
+        set -- $(git -C "$REPO" log --since="$gsince" --numstat --format= 2>/dev/null | awk '$1 ~ /^[0-9]+$/ {a+=$1; d+=$2} END{print a+0, d+0}')
+        printf 'RETRO-SHIP\t%s\t%s\t%s\n' "$ncommits" "${1:-0}" "${2:-0}"
+        peak="$(git -C "$REPO" log --since="$gsince" --format='%ad' --date=format:'%a' 2>/dev/null | sort | uniq -c | sort -rn | head -1 | awk '{print $2"\t"$1}')"
+        [ -n "$peak" ] && printf 'RETRO-PEAK\t%s\n' "$peak"
+
+        # ── CO-CHANGE DRIFT ──────────────────────────────────────────────────
+        # The generalized shape of the hand-maintained-pipeline bug, mined from
+        # git history alone — no knowledge of schemas, languages or frameworks:
+        #
+        #   "These files almost always change together. Here are the commits
+        #    where one of them didn't."
+        #
+        # A file pair that co-changes 80%+ of the time encodes an invariant the
+        # repo never wrote down (add the column → add the mapping). The commits
+        # that break the pattern are exactly where a field got half-wired. That
+        # is a DETERMINISTIC finding: the exceptions are counted, not inferred.
+        #
+        # Conservative by construction: bulk commits (>25 files: merges, renames,
+        # vendoring) are dropped — they co-change everything with everything and
+        # would swamp the signal. A coupling needs real support (>=4 joint commits)
+        # and the violations must be EXCEPTIONS (<= 1/3 of the file's commits), not
+        # the norm — a pair that drifts half the time isn't a broken invariant,
+        # it's two files that merely often change together.
+        git -C "$REPO" log --since="$gsince" --format='%H' --name-only 2>/dev/null | awk '
+          function slug(s) { gsub(/[^A-Za-z0-9]+/, "-", s); gsub(/^-|-$/, "", s); return tolower(s) }
+          function base(p,  n) { n = p; sub(/.*\//, "", n); return n }
+          function flush(  i, j, a, b) {
+            if (nf > 0 && nf <= 25) {                 # drop bulk commits
+              ncommit++
+              for (i = 1; i <= nf; i++) {
+                Seen[F[i]]++
+                for (j = i + 1; j <= nf; j++) {
+                  a = F[i]; b = F[j]
+                  if (a > b) { t = a; a = b; b = t }  # canonical pair order
+                  Pair[a SUBSEP b]++
+                }
+              }
+            }
+            nf = 0
+          }
+          /^[0-9a-f]{40}$/ { flush(); next }
+          NF == 0          { next }
+          { F[++nf] = $0 }
+          END {
+            flush()
+            if (ncommit < 8) exit 0        # too little history to claim a pattern
+            nd = 0; nc = 0
+            for (k in Pair) {
+              split(k, P, SUBSEP); a = P[1]; b = P[2]
+              tg = Pair[k]
+              if (tg < 4) continue          # needs real support
+              ca = Seen[a]; cb = Seen[b]
+              pa = 100 * tg / ca; pb = 100 * tg / cb
+              # A coupling: both files mostly appear together.
+              if (pa < 70 || pb < 70) continue
+              if (nc++ < 5) printf "RETRO-COCHANGE\t%s\t%s\t%d\t%d\t%d\n", a, b, tg, (ca > cb ? ca : cb), (pa < pb ? pa : pb)
+              # A drift: one side has commits the other is missing from, and those
+              # are exceptions rather than the norm. Report the direction.
+              ma = ca - tg; mb = cb - tg
+              if (ma >= 1 && pa >= 75 && nd < 5) { Drift[++nd] = sprintf("%s\t%s\t%d\t%d\tkey=cochange-%s", a, b, ma, ca, slug(base(a) "-" base(b))) }
+              if (mb >= 1 && pb >= 75 && nd < 5) { Drift[++nd] = sprintf("%s\t%s\t%d\t%d\tkey=cochange-%s", b, a, mb, cb, slug(base(b) "-" base(a))) }
+            }
+            for (i = 1; i <= nd; i++) printf "RETRO-DRIFT\t%s\n", Drift[i]
+          }
+        '
+      fi
+    fi
+    ;;
+
+  gate)
+    eco="$(printf '%s' "$args_rest" | awk '{print $1}')"
+    days="$(printf '%s' "$args_rest" | awk '{print $2}')"; case "$days" in ''|*[!0-9]*) days=7 ;; esac
+    case "$eco" in
+      npm)
+        cat <<EOF
+# Supply-chain defense: refuse to install packages published in the last $days days.
+# Most malicious publishes are caught and removed within hours-to-days, so this
+# window blocks fresh compromises (recent chalk/debug, eslint-config-prettier,
+# etc.) while letting normal releases through after the dust settles.
+#
+# Requires npm >= 11.10. Silently ignored on older npm — so bump npm locally
+# (\`npm install -g npm@latest\`) and in CI for this to actually take effect.
+min-release-age=$days
+EOF
+        ;;
+      pip)
+        cat <<EOF
+# Supply-chain defense: refuse to install packages published in the last $days days.
+# pip >= 26.1 honors --uploaded-prior-to with ISO 8601 durations.
+#   Local:  pip install --upgrade 'pip>=26.1'
+#           pip install --uploaded-prior-to P${days}D <targets>
+#   CI:     bump pip the same way before installing deps.
+# The runner that installs your deps may hold prod secrets; a trojaned transitive
+# dep would otherwise have a path to them. The cooldown blocks fresh compromises.
+EOF
+        ;;
+      *) echo "header-audit: gate <npm|pip> [days]" >&2; exit 1 ;;
+    esac
+    ;;
+
+  rails)
+    # Determinism guardrails present/absent + the environment the delivery chooser
+    # needs. Comprehensive: every rail every run (the SKILL.md presentation honors
+    # the ledger and skips n/a). Conservative detection — see helpers above.
+    eco="$(_rail_primary_ecosystem)"
+    all="$(_rail_ecosystems)"; [ -n "$all" ] || all="-"
+    tp="$(_rail_testpath)"
+    hp="$(_rail_hookspath)"; [ -n "$hp" ] || hp="unset"
+    rem="no"; [ -n "$(git -C "$REPO" remote 2>/dev/null)" ] && rem="yes"
+    cl="no"; [ -d "$REPO/.claude" ] && cl="yes"
+    printf 'RAIL-ENV\tecosystem\t%s\n' "$eco"
+    printf 'RAIL-ENV\tecosystem-all\t%s\n' "$all"
+    printf 'RAIL-ENV\tgit-remote\t%s\n' "$rem"
+    printf 'RAIL-ENV\thooks-path\t%s\n' "$hp"
+    printf 'RAIL-ENV\tclaude\t%s\n' "$cl"
+    printf 'RAIL-ENV\ttests\t%s\n' "$tp"
+    # An absent rail is a recommendation → it carries the canonical ledger key;
+    # present / n/a rows are status only.
+    _rail_row() {
+      case "$2" in
+        absent*) printf 'RAIL\t%s\t%s\tkey=rail-%s\n' "$1" "$2" "$1" ;;
+        *)       printf 'RAIL\t%s\t%s\n' "$1" "$2" ;;
+      esac
+    }
+    _rail_row precommit-gate      "$(_rail_precommit_status)"
+    _rail_row test-ratchet        "$(_rail_ratchet_status "$tp")"
+    _rail_row compound-memory     "$(_rail_compound_status)"
+    _rail_row roundtrip-invariant "$(_roundtrip_status)"
+    # INERT: machinery that is PRESENT and cannot fail. Strictly worse than absent
+    # — it earns rails credit while enforcing nothing, and everyone downstream
+    # believes they are covered. Graded exactly like an absent rail.
+    _rail_inert | while IFS="$TAB" read -r nm path why; do
+      [ -n "${nm:-}" ] || continue
+      printf 'RAIL-INERT\t%s\t%s\t%s\tkey=inert-%s\n' "$nm" "$path" "$why" "$nm"
+    done
+    ;;
+
+  silence)
+    # THE SILENCE AXIS — information discarded without a signal. The generalization
+    # of SCHEMA-LAX: the defect is not that something broke, it is that NOTHING
+    # TOLD YOU. Deterministic, read-only, high-precision; each row is a specific
+    # place the code throws information away.
+    printf 'SILENCE-SCOPE\trepo\t%s\n' "$REPO"
+    # ENV-UNDECLARED — reads a config var nothing declares. The classic silent prod
+    # break: it's in your shell, so it works on your laptop and dies in the runner.
+    # Only fires when the repo HAS declaration files: no declaration discipline
+    # means no invariant to violate, and inventing one would be noise.
+    _nd=0
+    if [ -z "$(_env_decl_files)" ]; then
+      printf 'NOTE\tsilence\tno config-declaration file (.env.example, compose, Dockerfile, CI) — no declaration invariant to check\n'
+    else
+      _env_undeclared | while IFS="$TAB" read -r v f ln; do
+        [ -n "${v:-}" ] || continue
+        printf 'ENV-UNDECLARED\t%s\t%s\t%s\tread but declared nowhere — present in your shell, absent in the runner\tkey=declare-env-%s\n' \
+          "$v" "$f" "$ln" "$(_slug "$v")"
+      done
+    fi
+    # SWALLOW — an exception handler with an empty body. A handler that logs,
+    # re-raises, or returns a fallback is a DECISION; only a truly empty one is a
+    # swallow, and that is the same defect as a schema silently dropping a field.
+    _swallows | while IFS="$TAB" read -r f ln why; do
+      [ -n "${f:-}" ] || continue
+      printf 'SWALLOW\t%s\t%s\t%s\tkey=swallow-%s-%s\n' "$f" "$ln" "$why" "$(_relslug "$REPO/$f")" "$ln"
+    done
+    ;;
+
+  drift)
+    # The INVARIANT-COVERAGE scan: does the repo's machinery actually cover the
+    # thing its architecture depends on? Grades no config — it locates a value
+    # pipeline in the SOURCE (not the harness files the `harness` scan greps) and
+    # reports whether anything round-trips it. Every row is deterministic; the
+    # presentation narrates, it does not detect.
+    if ! _has_pipeline; then
+      printf 'NOTE\tdrift\tno value pipeline detected — needs a schema hop plus a persistence/serde hop\n'
+      exit 0
+    fi
+    printf 'DRIFT-ENV\tecosystem\t%s\n' "$(_rail_primary_ecosystem)"
+    printf 'DRIFT-ENV\ttests\t%s\n' "$(_rail_testpath)"
+    # PIPELINE: one row per hop kind — the chain a field must survive end to end.
+    for k in schema persist serde; do
+      n="$(_hop_count "$k")"
+      [ "$n" -gt 0 ] || continue
+      ex="$(_hop_files "$k" | head -1)"
+      printf 'PIPELINE\t%s\t%s\t%s\n' "$k" "$n" "${ex#"$REPO"/}"
+    done
+    # ROUNDTRIP: the headline. Absent = a field can be dropped in any hop and
+    # nothing in the repo will ever say so. Shares the rails ledger key.
+    rt="$(_roundtrip_status)"
+    case "$rt" in
+      absent*) printf 'ROUNDTRIP\t%s\tkey=rail-roundtrip-invariant\n' "$rt" ;;
+      *)       printf 'ROUNDTRIP\t%s\n' "$rt" ;;
+    esac
+    # SCHEMA-LAX: the reason drift is INVISIBLE rather than merely present.
+    _schema_lax | while IFS="$TAB" read -r f ln lib; do
+      [ -n "${f:-}" ] || continue
+      printf 'SCHEMA-LAX\t%s\t%s\t%s\tsilently drops unknown keys — a field nobody wired still parses clean\tkey=strict-schema-%s\n' \
+        "${f#"$REPO"/}" "$ln" "$lib" "$(_relslug "$f")"
+    done
+    ;;
+
+  rail)
+    # Scaffold printer — the analogue of `gate` for determinism rails. Reads the
+    # shipped header/scaffold/ templates, adapts the stack-specific checks, and
+    # prints a ready-to-install artifact (the SKILL.md flow writes the files).
+    set -- $args_rest
+    RNAME=""; ECO=""; DELIVERY="both"; RAT="on"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --ecosystem) ECO="${2:-}"; shift 2 ;;
+        --delivery)  DELIVERY="${2:-}"; shift 2 ;;
+        --ratchet)   RAT="${2:-}"; shift 2 ;;
+        --*)         shift ;;
+        *)           [ -z "$RNAME" ] && RNAME="$1"; shift ;;
+      esac
+    done
+    SCAFFOLD="$(CDPATH= cd "$(dirname "$0")/../scaffold" 2>/dev/null && pwd || true)"
+    [ -n "$SCAFFOLD" ] && [ -d "$SCAFFOLD" ] || { echo "header-audit: scaffold templates not found alongside the bin" >&2; exit 1; }
+    [ -n "$ECO" ] || ECO="$(_rail_primary_ecosystem)"
+
+    _assemble_gate() {
+      _chk="$SCAFFOLD/checks/$ECO.sh"; [ -f "$_chk" ] || _chk="$SCAFFOLD/checks/unknown.sh"
+      awk -v chk="$_chk" -v rat="$SCAFFOLD/ratchet.sh" -v raton="$RAT" '
+        /^#==CHECKS==$/   { while ((getline l < chk) > 0) print l; close(chk); next }
+        /^#==RATCHET==$/  {
+            if (raton == "on") { while ((getline l < rat) > 0) print l; close(rat) }
+            else print "# (test ratchet not included — add later: header-audit rail test-ratchet)"
+            next }
+        /^#==COMPOUND==$/ {
+            print "# ── (optional) compound gate — require a session-learning review per commit ──"
+            print "# Off by default. To enforce: uncomment, and have /header wrapup (or a standalone"
+            print "# /compound) run `touch .claude/.compound_ran` (cleared in a post-commit hook)."
+            print "# See the Session wrap-up & compound flow in the Header skill."
+            print "# if [ ! -f .claude/.compound_ran ]; then"
+            print "#   fail \"compound not run for this commit — invoke /header wrapup, then retry\"; exit 2"
+            print "# fi"
+            next }
+        { print }
+      ' "$SCAFFOLD/pre-commit-gate.sh"
+    }
+    _print_wiring() {
+      case "$1" in
+        git|both)
+          printf '\n# ===== WIRING (git-native: gates humans + every harness; each clone enables once) =====\n'
+          echo "# 1. Save the script above to scripts/pre-commit-gate.sh, then: chmod +x scripts/pre-commit-gate.sh"
+          echo "# 2. Save the file below to .githooks/pre-commit, then: chmod +x .githooks/pre-commit"
+          echo "# ----- FILE: .githooks/pre-commit -----"
+          cat "$SCAFFOLD/githook-pre-commit"
+          echo "# 3. Enable once per clone: git config core.hooksPath .githooks"
+          ;;
+      esac
+      case "$1" in
+        pretooluse|both)
+          printf '\n# ===== WIRING (Claude Code PreToolUse: gates the agent in-loop; auto-propagates to teammates) =====\n'
+          echo "# Save the script above to scripts/pre-commit-gate.sh (chmod +x), then merge this into .claude/settings.json:"
+          echo "# ----- FILE: .claude/settings.json (merge the 'hooks' key) -----"
+          cat "$SCAFFOLD/pretooluse.json"
+          ;;
+      esac
+      [ "$1" = both ] && printf '\n# Both wirings exec the SAME scripts/pre-commit-gate.sh — one script, two triggers.\n'
+    }
+
+    case "$RNAME" in
+      precommit-gate)
+        echo "# ===== FILE: scripts/pre-commit-gate.sh (chmod +x) — ecosystem: $ECO, ratchet: $RAT ====="
+        _assemble_gate
+        _print_wiring "$DELIVERY"
+        ;;
+      test-ratchet)
+        echo "# ===== test ratchet — insert into scripts/pre-commit-gate.sh, right after the fail() helper ====="
+        echo "# (No gate yet? Run: header-audit rail precommit-gate — it bundles this in.)"
+        cat "$SCAFFOLD/ratchet.sh"
+        ;;
+      compound-memory)
+        echo "# ===== compounding memory — capture session learnings into committed .claude/memory/ ====="
+        echo "# Header runs this natively: '/header wrapup' at session end (or '/header compound'"
+        echo "# anytime) reviews the session and writes the pitfalls/learnings worth keeping here."
+        echo "# No separate skill to install. This just seeds the committed index it writes to."
+        printf '\n# 1. Seed the committed memory index (skip if .claude/memory/MEMORY.md already exists):\n'
+        echo "# ----- FILE: .claude/memory/MEMORY.md -----"
+        cat "$SCAFFOLD/compound/MEMORY.md"
+        printf '\n# 2. Run /header wrapup at session end (and /header compound after notable events).\n'
+        echo "#    Optional: enable the compound commit gate in scripts/pre-commit-gate.sh to"
+        echo "#    require a capture review per commit."
+        printf '\n# 3. (Optional) For sessions that do NOT use Header, install a standalone /compound\n'
+        echo "#    skill that mirrors the native flow:"
+        echo "# ----- FILE: .claude/skills/compound/SKILL.md -----"
+        cat "$SCAFFOLD/compound/SKILL.md"
+        ;;
+      roundtrip-invariant)
+        # The artifact, not advice: a round-trip test adapted to the detected stack,
+        # plus the strict-parsing change that makes the drift visible in the first
+        # place. Mirrors `gate npm 7` — the bin prints, the SKILL.md flow writes.
+        case "$ECO" in
+          python) _rtf="$SCAFFOLD/roundtrip/python.py"; _rtp="tests/test_roundtrip.py" ;;
+          npm)    _rtf="$SCAFFOLD/roundtrip/npm.ts";    _rtp="tests/roundtrip.test.ts" ;;
+          go)     _rtf="$SCAFFOLD/roundtrip/go.go";     _rtp="roundtrip_test.go" ;;
+          *)      _rtf="$SCAFFOLD/roundtrip/unknown.md"; _rtp="" ;;
+        esac
+        if [ -n "$_rtp" ]; then
+          echo "# ===== FILE: $_rtp — ecosystem: $ECO ====="
+        else
+          echo "# ===== round-trip invariant — ecosystem: $ECO (no template; the shape to write) ====="
+        fi
+        cat "$_rtf"
+        # The companion one-liner. Strict parsing is what turns a silent drop into a
+        # named failure — without it, a config authored with an unwired field still
+        # parses clean, so it LOOKS complete. Print it next to the test, always.
+        printf '\n# ===== COMPANION FIX: reject unknown keys at the import boundary =====\n'
+        echo "# Silent tolerance of unknown input is what makes field drift INVISIBLE."
+        echo "# Turn it off. In most schema libraries this is one line:"
+        echo "#   pydantic v2   → model_config = ConfigDict(extra='forbid')"
+        echo "#   pydantic v1   → class Config: extra = 'forbid'"
+        echo "#   zod           → z.object({...}).strict()"
+        echo "#   marshmallow   → class Meta: unknown = RAISE"
+        echo "#   serde (rust)  → #[serde(deny_unknown_fields)]"
+        echo "#   encoding/json → dec := json.NewDecoder(r); dec.DisallowUnknownFields()"
+        echo "# Run 'header-audit drift' to list the schema files still parsing leniently."
+        ;;
+      *)
+        echo "header-audit: rail <precommit-gate|test-ratchet|compound-memory|roundtrip-invariant> [--ecosystem E] [--delivery git|pretooluse|both] [--ratchet on|off]" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+
+  grade)
+    # Composite, deterministic SETUP GRADE over the five scorecard axes
+    # (context / model / security / deps / rails) — the single glanceable mark the
+    # audit headlines with ("Setup grade B+"). Re-runs harness+deps+rails (cheap,
+    # read-only) and reduces their findings to one +/- letter grade plus a per-axis
+    # breakdown. STATIC-CONFIG ONLY: the transcript-mined scans (cost/waste/retro)
+    # are deliberately excluded so the grade is stable whether or not the repo has
+    # session history. Start at 100, deduct per finding, clamp 0..100, map to a
+    # standard +/- band. The weights + bands are a STABILITY CONTRACT — changing
+    # one moves every user's grade — hence computed here, never model-assigned.
+    {
+      "$0" harness --repo "$REPO" 2>/dev/null
+      "$0" deps    --repo "$REPO" 2>/dev/null
+      "$0" rails   --repo "$REPO" 2>/dev/null
+    } | awk -F"$TAB" -v home="$HOME" '
+      function clamp(x) { return x < 0 ? 0 : (x > 100 ? 100 : x) }
+      function d(x)     { return x == 0 ? "0" : "-" x }    # render a deduction
+      function band(s)  { return s>=97?"A+":s>=93?"A":s>=90?"A-":s>=87?"B+":s>=83?"B":s>=80?"B-":s>=77?"C+":s>=73?"C":s>=70?"C-":s>=67?"D+":s>=63?"D":s>=60?"D-":"F" }
+      # Scope a path: a file under the user-global ~/.claude, or a gitignored
+      # settings.local.json override, is LOCAL (your machine); everything else the
+      # scan reaches under the repo is PROJECT (checked-in, travels with the repo).
+      function scope_of(p) {
+        if (p ~ /\/settings\.local\.json$/)                 return "local"
+        if (home != "" && index(p, home "/.claude/") == 1)  return "local"
+        return "project"
+      }
+      $1 == "FILE"          { ctx[scope_of($2)] += $4 + 0 }
+      $1 == "HIT"           { hits[scope_of($2)]++ }
+      $1 == "STALE-REF"     { stale[scope_of($2)]++ }
+      # MODEL carries its source (project=repo-pinned, local=settings.local/transcript);
+      # the staleness/upgrade flags that follow inherit it.
+      $1 == "MODEL"         { msrc = ($3 == "local" ? "local" : "project") }
+      $1 == "MODEL-STALE"   { model_stale[msrc] = 1 }
+      $1 == "MODEL-UPGRADE" { model_up[msrc] = 1 }
+      $1 == "SECURITY" && $2 == "bash" {
+        # worst posture wins, per scope; an allow-list (even alongside a deny) is OK.
+        sc = scope_of($4)
+        rank = ($3 ~ /bypass/) ? 3 : (($3 ~ /allowlist/) ? 0 : (($3 ~ /denylist/) ? 2 : 0))
+        if (rank > sec[sc]) sec[sc] = rank
+      }
+      $1 == "GATE" && $3 == "absent"  { gates["project"]++ }       # the cooldown gate is a checked-in .npmrc
+      $1 == "RAIL" && $3 == "absent"  { rails_absent["project"]++ } # determinism rails are repo guardrails
+      # A PRESENT rail that cannot fail (gate with `|| true`, CI continue-on-error,
+      # an armed ratchet override) earns NO credit. Presence of machinery is not
+      # coverage — the whole thesis of the drift/invariant work — and an inert gate
+      # is strictly worse than an absent one, because everyone believes they are
+      # covered. Graded identically to absent.
+      $1 == "RAIL-INERT"              { rails_absent["project"]++ }
+      $1 == "TOOL" && $4 == "too-old" { toolold["local"]++ }       # the machine package-tool version is LOCAL
+      END {
+        split("project local", SC, " ")
+        for (i = 1; i <= 2; i++) {
+          s = SC[i]
+          # context: always-loaded tokens (tiered) + prompt-debt hits + stale refs
+          t = ctx[s] + 0
+          cd = (t > 30000) ? 22 : ((t > 15000) ? 15 : ((t > 8000) ? 9 : ((t > 4000) ? 4 : 0)))
+          hd = (hits[s] + 0) * 2;  if (hd > 8) hd = 8
+          sd = (stale[s] + 0) * 2; if (sd > 6) sd = 6
+          ctxd[s] = cd + hd + sd
+          # model: only a SUPERSEDED tier is debt; a newer model shipping (UPGRADE)
+          # is an opportunity, never penalized.
+          md[s] = model_stale[s] ? 12 : 0
+          # security: only an actively weak Bash posture deducts (no policy is fine)
+          secd[s] = (sec[s] == 3) ? 18 : ((sec[s] == 2) ? 8 : 0)
+          # deps: PROJECT docks an absent checked-in cooldown gate; LOCAL docks a
+          # machine package-tool too old to honor one (the machine-dependent half,
+          # which is why it lives in the LOCAL grade and never the project one).
+          depd[s] = (s == "project") ? (gates[s] + 0) * 7 : (toolold[s] + 0) * 4
+          # rails: opinionated house guardrails (weighed light). A repo property —
+          # n/a for the local harness, so it never deducts there.
+          raild[s] = (s == "project") ? ((rails_absent[s] + 0) * 2 > 6 ? 6 : (rails_absent[s] + 0) * 2) : 0
+          score[s] = clamp(100 - ctxd[s] - md[s] - secd[s] - depd[s] - raild[s])
+        }
+        # project rows keep the original GRADE / GRADE-AXIS names (backward-compatible
+        # headline); local rows are the parallel -LOCAL set.
+        emit("project", "GRADE-AXIS",       "GRADE")
+        emit("local",   "GRADE-AXIS-LOCAL", "GRADE-LOCAL")
+      }
+      function emit(s, axrow, grow,   ck) {
+        ck = sprintf("%.1fk", (ctx[s] + 0) / 1000)
+        printf "%s\tcontext\t%s\t%s always-loaded tokens%s%s\n", axrow, d(ctxd[s]), ck,
+          ((hits[s] + 0) ? sprintf(", %d debt hit(s)", hits[s]) : ""), ((stale[s] + 0) ? sprintf(", %d stale ref(s)", stale[s]) : "")
+        printf "%s\tmodel\t%s\t%s\n", axrow, d(md[s]),
+          (model_stale[s] ? "on a superseded tier" : (model_up[s] ? "a newer model is available (optional)" : "current tier"))
+        printf "%s\tsecurity\t%s\t%s\n", axrow, d(secd[s]),
+          (sec[s] == 3 ? "Bash permissions bypassed (no gating)" : (sec[s] == 2 ? "Bash deny-list (bypassable)" : "allow-list or local-only"))
+        if (s == "project")
+          printf "%s\tdeps\t%s\t%s\n", axrow, d(depd[s]),
+            ((gates[s] + 0) ? sprintf("%d supply-chain gate(s) absent", gates[s]) : "supply-chain gates present or n/a")
+        else
+          printf "%s\tdeps\t%s\t%s\n", axrow, d(depd[s]),
+            ((toolold[s] + 0) ? sprintf("%d package tool(s) too old to honor a cooldown gate", toolold[s]) : "package tooling current or n/a")
+        if (s == "project")
+          printf "%s\trails\t%s\t%s\n", axrow, d(raild[s]),
+            ((rails_absent[s] + 0) ? sprintf("%d determinism rail(s) absent or inert", rails_absent[s]) : "determinism rails present or n/a")
+        else
+          printf "%s\trails\t0\tn/a — determinism rails are a repo property\n", axrow
+        printf "%s\t%s\t%d\t100\n", grow, band(score[s]), score[s]
+      }
+    '
+    ;;
+
+  -h|--help)
+    echo "Usage: header-audit {harness|deps|cost|waste|retro|rails|rail|drift|silence|grade|patterns|gate} [--repo DIR] ..."
+    exit 0
+    ;;
+  *)
+    echo "Usage: header-audit {harness|deps|cost|waste|retro|rails|rail|drift|silence|grade|patterns|gate} [--repo DIR] ..." >&2
+    exit 1
+    ;;
+esac
+
+# Success-path exit. header-audit is a best-effort, read-only row emitter — each
+# case branch ends on whatever command happened to run last (a literal-glob
+# `[ -f ]` test that found nothing, a `grep` with no HITS, a `scan_file` whose
+# trailing pipeline returned non-zero). Without this, those incidental statuses
+# leak out as the script's exit code, and a caller that runs the auditor under a
+# tool wrapper sees a spurious "Error: Exit code 1" despite a complete audit.
+# Hard usage errors above exit 1 directly, before reaching here. This exit-0 is
+# NOT a license to fail silently: a scan that could not read its own input says
+# so in-band with a SCAN-DEGRADED row (see waste/retro), so a clean report and a
+# degraded one are never indistinguishable.
+exit 0

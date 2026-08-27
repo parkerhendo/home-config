@@ -1,5 +1,6 @@
 import type {
   ExtensionAPI,
+  ExtensionCommandContext,
   ExtensionContext,
   KeybindingsManager,
   Theme,
@@ -10,11 +11,15 @@ import {
   type Focusable,
   fuzzyFilter,
   Input,
+  Key,
+  matchesKey,
   type SelectItem,
   SelectList,
   Text,
   type TUI,
 } from "@earendil-works/pi-tui";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 
 type GitHubRepositoryUser = {
   login: string;
@@ -29,7 +34,7 @@ type RepositoryUsers = {
 
 type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 
-const BARE_REVIEW_AS_COMMAND = /^\/skill:review-as\s*$/;
+const REVIEW_AS_SKILL_NAME = "review-as";
 const GH_TIMEOUT_MS = 30_000;
 const MAX_VISIBLE_USERS = 12;
 
@@ -195,6 +200,7 @@ async function loadRepositoryUsers(
 
 class GitHubUserPicker implements Component, Focusable {
   private readonly input = new Input();
+  private readonly selectedLogins = new Set<string>();
   private filteredUsers: GitHubRepositoryUser[];
   private selectedIndex = 0;
   private selectList: SelectList;
@@ -204,7 +210,7 @@ class GitHubUserPicker implements Component, Focusable {
     private readonly tui: TUI,
     private readonly theme: Theme,
     private readonly keybindings: KeybindingsManager,
-    private readonly done: (login: string | null) => void,
+    private readonly done: (logins: string[] | null) => void,
   ) {
     this.filteredUsers = repositoryUsers.users;
     this.selectList = this.createSelectList();
@@ -221,7 +227,7 @@ class GitHubUserPicker implements Component, Focusable {
   private createSelectList(): SelectList {
     const items: SelectItem[] = this.filteredUsers.map((user) => ({
       value: user.login,
-      label: `@${user.login}`,
+      label: `${this.selectedLogins.has(user.login) ? "[x]" : "[ ]"} @${user.login}`,
       description: user.description,
     }));
 
@@ -267,10 +273,24 @@ class GitHubUserPicker implements Component, Focusable {
             : this.selectedIndex + 1;
         this.selectList.setSelectedIndex(this.selectedIndex);
       }
-    } else if (this.keybindings.matches(data, "tui.select.confirm")) {
+    } else if (matchesKey(data, Key.space)) {
       const selectedUser = this.filteredUsers[this.selectedIndex];
       if (selectedUser) {
-        this.done(selectedUser.login);
+        if (this.selectedLogins.has(selectedUser.login)) {
+          this.selectedLogins.delete(selectedUser.login);
+        } else {
+          this.selectedLogins.add(selectedUser.login);
+        }
+        this.selectList = this.createSelectList();
+      }
+    } else if (this.keybindings.matches(data, "tui.select.confirm")) {
+      if (this.selectedLogins.size > 0) {
+        this.done([...this.selectedLogins]);
+      } else {
+        const selectedUser = this.filteredUsers[this.selectedIndex];
+        if (selectedUser) {
+          this.done([selectedUser.login]);
+        }
       }
     } else if (this.keybindings.matches(data, "tui.select.cancel")) {
       this.done(null);
@@ -293,7 +313,7 @@ class GitHubUserPicker implements Component, Focusable {
         this.theme.fg(
           "accent",
           this.theme.bold(
-            `Review as someone in ${this.repositoryUsers.repository}`,
+            `Review as people in ${this.repositoryUsers.repository}`,
           ),
         ),
         1,
@@ -304,8 +324,16 @@ class GitHubUserPicker implements Component, Focusable {
       this.selectList,
       new Text(
         this.theme.fg(
+          "muted",
+          `${this.selectedLogins.size} reviewer${this.selectedLogins.size === 1 ? "" : "s"} selected`,
+        ),
+        1,
+        0,
+      ),
+      new Text(
+        this.theme.fg(
           "dim",
-          "Type to search · ↑↓ navigate · enter select · esc cancel",
+          "Type to search · ↑↓ navigate · space toggle · enter review · esc cancel",
         ),
         1,
         0,
@@ -322,10 +350,10 @@ class GitHubUserPicker implements Component, Focusable {
   }
 }
 
-async function chooseRepositoryUser(
+async function chooseRepositoryUsers(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
-): Promise<string | null> {
+): Promise<string[] | null> {
   const repositoryUsers = await ctx.ui.custom<Result<RepositoryUsers> | null>(
     (tui, theme, _keybindings, done) => {
       const loader = new BorderedLoader(tui, theme, "Loading GitHub users…");
@@ -364,7 +392,7 @@ async function chooseRepositoryUser(
     return null;
   }
 
-  return ctx.ui.custom<string | null>(
+  return ctx.ui.custom<string[] | null>(
     (tui, theme, keybindings, done) =>
       new GitHubUserPicker(
         repositoryUsers.value,
@@ -376,24 +404,118 @@ async function chooseRepositoryUser(
   );
 }
 
-export default function reviewAsExtension(pi: ExtensionAPI): void {
-  pi.on("input", async (event, ctx) => {
-    if (
-      event.source === "extension" ||
-      ctx.mode !== "tui" ||
-      !BARE_REVIEW_AS_COMMAND.test(event.text)
-    ) {
-      return { action: "continue" };
+function normalizeSkillCommandName(name: string): string {
+  return name.startsWith("skill:") ? name.slice("skill:".length) : name;
+}
+
+function resolveMaybeRelativePath(filePath: string, cwd: string): string {
+  return path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath);
+}
+
+function stripFrontmatter(content: string): string {
+  return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
+}
+
+async function buildReviewAsSkillPrompt(
+  pi: ExtensionAPI,
+  cwd: string,
+  args: string,
+): Promise<Result<string>> {
+  const skillCommand = pi
+    .getCommands()
+    .find(
+      (command) =>
+        command.source === "skill" &&
+        normalizeSkillCommandName(command.name) === REVIEW_AS_SKILL_NAME,
+    );
+  if (!skillCommand) {
+    return { ok: false, error: "review-as skill is not available" };
+  }
+
+  const skillPath = resolveMaybeRelativePath(skillCommand.sourceInfo.path, cwd);
+  const skillBaseDir = path.dirname(skillPath);
+
+  try {
+    const content = await fs.readFile(skillPath, "utf8");
+    const body = stripFrontmatter(content);
+    if (!body) {
+      return { ok: false, error: "review-as skill has no instructions" };
     }
 
-    const login = await chooseRepositoryUser(pi, ctx);
-    if (!login) {
-      return { action: "handled" };
-    }
-
+    const skillBlock = `<skill name="${REVIEW_AS_SKILL_NAME}" location="${skillPath}">\nReferences are relative to ${skillBaseDir}.\n\n${body}\n</skill>`;
     return {
-      action: "transform",
-      text: `${event.text.trim()} ${login}`,
+      ok: true,
+      value: args ? `${skillBlock}\n\n${args}` : skillBlock,
     };
+  } catch (error) {
+    const details = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: `failed to load review-as skill: ${details}` };
+  }
+}
+
+async function startReviewAsThread(
+  ctx: ExtensionCommandContext,
+): Promise<Result<boolean>> {
+  const firstUserMessage = ctx.sessionManager
+    .getEntries()
+    .find((entry) => entry.type === "message" && entry.message.role === "user");
+  if (!firstUserMessage) {
+    return { ok: true, value: true };
+  }
+
+  try {
+    const result = await ctx.navigateTree(firstUserMessage.id, {
+      summarize: false,
+      label: "review-as",
+    });
+    if (result.cancelled) {
+      return { ok: true, value: false };
+    }
+    ctx.ui.setEditorText("");
+    return { ok: true, value: true };
+  } catch (error) {
+    const details = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      error: `failed to start review-as thread: ${details}`,
+    };
+  }
+}
+
+export default function reviewAsExtension(pi: ExtensionAPI): void {
+  pi.registerCommand("skill:review-as", {
+    description: "Review code as selected GitHub users in a new thread",
+    handler: async (args, ctx) => {
+      let skillArgs = args.trim();
+      if (!skillArgs && ctx.mode === "tui") {
+        const logins = await chooseRepositoryUsers(pi, ctx);
+        if (!logins || logins.length === 0) {
+          return;
+        }
+        skillArgs = logins.join(" ");
+      }
+
+      const skillPrompt = await buildReviewAsSkillPrompt(
+        pi,
+        ctx.cwd,
+        skillArgs,
+      );
+      if (!skillPrompt.ok) {
+        ctx.ui.notify(`/skill:review-as: ${skillPrompt.error}`, "error");
+        return;
+      }
+
+      const thread = await startReviewAsThread(ctx);
+      if (!thread.ok) {
+        ctx.ui.notify(`/skill:review-as: ${thread.error}`, "error");
+        return;
+      }
+      if (!thread.value) {
+        ctx.ui.notify("Review-as cancelled", "info");
+        return;
+      }
+
+      pi.sendUserMessage(skillPrompt.value);
+    },
   });
 }

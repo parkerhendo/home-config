@@ -1,0 +1,300 @@
+#!/usr/bin/env bash
+# header-auth — anonymous device registration + local account state.
+#
+# The Header skill's zero-friction on-ramp. When a user opts into custom
+# (codebase-tuned) enrichment, the skill mints an ANONYMOUS trial account keyed
+# on this device's installation-id, saves the returned read+write API key, and
+# caches the account's claim/trial state. No email, no card, no signup screen —
+# the account is convertible to a full one later via the cached claim URL.
+#
+# Usage:
+#   header-auth register     POST /api/v2/auth/anonymous for this device. On a
+#                            2xx, save the key to ~/.header/credentials (umask
+#                            077) and cache state to ~/.header/.account. Prints
+#                            'registered' (or 'already registered'). Exit: 0 ok ·
+#                            1 network/HTTP failure · 3 a user key already exists.
+#   header-auth save-key <k> Store a user-provided key (the "I already have a
+#                            Header account" path) under umask 077, verifying the
+#                            perms. Supersedes any local anonymous account → state
+#                            becomes 'full'. Exit: 0 ok · 1 empty/insecure.
+#   header-auth state        machine-readable account state for the preamble:
+#                            none | anonymous-unclaimed | anonymous-claimed | full
+#   header-auth status       human-readable summary (the /header account view).
+#   header-auth claim-url     print the cached claim URL (empty if none/claimed).
+#
+# Privacy: register sends ONLY this device's installation-id (a random UUID) plus
+# os / arch / skill_version. No repo data, no code, no file contents. The
+# credentials and .account files are written under umask 077 and are only ever
+# READ AS DATA elsewhere (parsed with sed/grep, never sourced).
+#
+# Env:
+#   HEADER_HOME           state dir (default $HOME/.header)
+#   HEADER_API_BASE       API host (default https://joinheader.com)
+#   HEADER_AUTH_URL       full override for the register endpoint (testing)
+#   HEADER_AUTH_STUB      file path: use its contents as the register response
+#                         body instead of calling the network (hermetic tests)
+#   HEADER_AUTH_STUB_CODE http code to pair with HEADER_AUTH_STUB (default 200)
+#
+# Never exits non-zero from `state`/`status`/`claim-url` — the preamble depends
+# on them and must not break the audit. Never clobbers a user-provided key.
+set -uo pipefail
+
+BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+STATE_DIR="${HEADER_HOME:-$HOME/.header}"
+CREDS="$STATE_DIR/credentials"
+ACCOUNT="$STATE_DIR/.account"
+IDFILE="$STATE_DIR/installation-id"
+VERSION_FILE="$(cd "$BIN_DIR/.." && pwd)/VERSION"
+API_BASE="${HEADER_API_BASE:-https://joinheader.com}"
+ANON_URL="${HEADER_AUTH_URL:-$API_BASE/api/v2/auth/anonymous}"
+
+json_escape() { printf '%s' "$1" | tr -d '\n\r' | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+# json_str <body> <key> — extract a quoted string field (empty if absent/null).
+json_str() { printf '%s' "$1" | sed -n "s/.*\"$2\":\"\\([^\"]*\\)\".*/\\1/p" | head -1; }
+
+# Same uuid + installation-id scheme as header-telemetry / header-experiment, so
+# one device keeps one stable id across all three.
+gen_uuid() {
+  uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null \
+    || od -An -tx1 -N16 /dev/urandom 2>/dev/null | tr -d ' \n'
+}
+install_id() {
+  [ -f "$IDFILE" ] && { cat "$IDFILE"; return; }
+  id="$(gen_uuid)"
+  if [ -n "$id" ]; then mkdir -p "$STATE_DIR"; printf '%s' "$id" > "$IDFILE"; fi
+  printf '%s' "$id"
+}
+
+# has_key — a usable API key is present (env or the credentials file).
+has_key() {
+  [ -n "${HEADER_API_KEY:-}" ] && return 0
+  [ -f "$CREDS" ] && grep -q '^HEADER_API_KEY=' "$CREDS" 2>/dev/null
+}
+# resolve_key — env first, then the credentials file (parsed, never sourced).
+resolve_key() {
+  [ -n "${HEADER_API_KEY:-}" ] && { printf '%s' "$HEADER_API_KEY"; return; }
+  sed -n 's/^HEADER_API_KEY=//p' "$CREDS" 2>/dev/null | head -1
+}
+# post_billing <path> [payload] — POST to a billing endpoint; echo "<body>\n<code>".
+post_billing() {
+  local key; key="$(resolve_key)"; [ -n "$key" ] || { printf '\n401'; return; }
+  local -a a=(-sS -w '\n%{http_code}' --max-time 20 -X POST "$API_BASE/api/v2/$1" -H "Authorization: Bearer $key")
+  [ -n "${2:-}" ] && a+=(-H 'Content-Type: application/json' --data "$2")
+  curl "${a[@]}" 2>/dev/null || printf '\n000'
+}
+get_api() {  # GET /api/v2/<path> → echo "<body>\n<code>"
+  local key; key="$(resolve_key)"; [ -n "$key" ] || { printf '\n401'; return; }
+  curl -sS -w '\n%{http_code}' --max-time 20 "$API_BASE/api/v2/$1" -H "Authorization: Bearer $key" 2>/dev/null || printf '\n000'
+}
+# json_bool <body> <key> — value of an unquoted "<key>":true|false (empty if absent).
+json_bool() { printf '%s' "$1" | grep -o "\"$2\":\\(true\\|false\\)" | head -1 | sed 's/.*://'; }
+
+# secure_save_key <key> — write the credentials file under a tight umask and
+# verify the perms before trusting it. 0 ok · 1 couldn't secure it. Shared by
+# `register` (minted key) and `save-key` (user-pasted key).
+secure_save_key() {
+  local key="$1"
+  mkdir -p "$STATE_DIR"
+  ( umask 077; printf 'HEADER_API_KEY=%s\n' "$key" > "$CREDS" )
+  chmod 600 "$CREDS" 2>/dev/null || true
+  case "$(ls -l "$CREDS" 2>/dev/null)" in
+    -rw-------*) return 0 ;;
+    *) rm -f "$CREDS"; echo "header-auth: could not secure $CREDS — not saving the key" >&2; return 1 ;;
+  esac
+}
+
+# write_account <response-body> — cache the account fields as flat JSON (read as
+# data only). `claimed` is parsed by substring so we stay portable (no sed -E).
+write_account() {
+  local b="$1" claimed=false
+  case "$b" in *'"claimed":true'*) claimed=true ;; esac
+  mkdir -p "$STATE_DIR"
+  ( umask 077; printf '{"account_id":"%s","anonymous":true,"claimed":%s,"tier":"%s","trial_ends_at":"%s","claim_url":"%s"}\n' \
+      "$(json_escape "$(json_str "$b" account_id)")" "$claimed" \
+      "$(json_escape "$(json_str "$b" tier)")" \
+      "$(json_escape "$(json_str "$b" trial_ends_at)")" \
+      "$(json_escape "$(json_str "$b" claim_url)")" \
+      > "$ACCOUNT" )
+  chmod 600 "$ACCOUNT" 2>/dev/null || true
+}
+
+register() {
+  # Don't overwrite a key we didn't mint. If we already own an anonymous
+  # account, re-register is a benign no-op; otherwise refuse (exit 3).
+  if has_key; then
+    [ -f "$ACCOUNT" ] && { echo "already registered"; return 0; }
+    echo "header-auth: an API key is already configured — not overwriting it" >&2
+    return 3
+  fi
+
+  local iid os arch ver body code payload tmp
+  iid="$(install_id)"
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  arch="$(uname -m)"
+  ver="$(tr -d '[:space:]' < "$VERSION_FILE" 2>/dev/null || echo unknown)"
+
+  if [ -n "${HEADER_AUTH_STUB:-}" ]; then
+    body="$(cat "$HEADER_AUTH_STUB" 2>/dev/null)"
+    code="${HEADER_AUTH_STUB_CODE:-200}"
+  else
+    payload="$(printf '{"v":1,"installation_id":"%s","client":{"os":"%s","arch":"%s","skill_version":"%s"}}' \
+      "$(json_escape "$iid")" "$(json_escape "$os")" "$(json_escape "$arch")" "$(json_escape "$ver")")"
+    tmp="$(mktemp)"
+    code="$(printf '%s' "$payload" | curl -sS -o "$tmp" -w '%{http_code}' --max-time 15 \
+      -X POST "$ANON_URL" -H 'Content-Type: application/json' --data @- 2>/dev/null || echo 000)"
+    body="$(cat "$tmp" 2>/dev/null)"; rm -f "$tmp"
+  fi
+
+  case "$code" in
+    2*) ;;
+    000) echo "header-auth: could not reach $ANON_URL (offline?)" >&2; return 1 ;;
+    *)   echo "header-auth: registration failed (HTTP $code)${body:+ — $(printf '%s' "$body" | head -c 160)}" >&2; return 1 ;;
+  esac
+
+  local key; key="$(json_str "$body" api_key)"
+  [ -n "$key" ] || { echo "header-auth: no api_key in the response" >&2; return 1; }
+
+  secure_save_key "$key" || return 1
+  write_account "$body"
+  echo "registered"
+  return 0
+}
+
+# save_key_cmd <key> — store a user-provided key (the "already a Header user"
+# branch). No .account is written — a pasted key is a full account, not one we
+# minted — and any stale anonymous .account is removed so `state` reads `full`.
+save_key_cmd() {
+  local key="$1"
+  [ -n "$key" ] || { echo "header-auth: save-key needs a key (hdr_sk_...)" >&2; return 1; }
+  case "$key" in
+    hdr_sk_*) ;;
+    *) echo "header-auth: warning — key doesn't start with hdr_sk_ (saving anyway)" >&2 ;;
+  esac
+  secure_save_key "$key" || return 1
+  rm -f "$ACCOUNT" 2>/dev/null || true
+  echo "saved"
+  return 0
+}
+
+# state — the preamble's ACCOUNT signal. Pure local read; never errors.
+state() {
+  if [ ! -f "$ACCOUNT" ]; then
+    has_key && echo full || echo none
+    return 0
+  fi
+  case "$(cat "$ACCOUNT" 2>/dev/null)" in
+    *'"claimed":true'*) echo anonymous-claimed ;;
+    *)                  echo anonymous-unclaimed ;;
+  esac
+}
+
+# claim-url — the conversion link; empty once claimed or when there's no account.
+claim_url() {
+  [ -f "$ACCOUNT" ] || return 0
+  case "$(cat "$ACCOUNT" 2>/dev/null)" in *'"claimed":true'*) return 0 ;; esac
+  json_str "$(cat "$ACCOUNT" 2>/dev/null)" claim_url
+}
+
+# status — the human-readable /header account view.
+status() {
+  local st b
+  st="$(state)"
+  case "$st" in
+    none) echo "No Header account on this device."
+          echo "Run /header and choose codebase-tuned (custom) enrichment to set one up,"
+          echo "or paste a key from https://joinheader.com."
+          return 0 ;;
+    full) echo "Using a user-provided Header API key (not an anonymous account)."
+          return 0 ;;
+  esac
+  b="$(cat "$ACCOUNT" 2>/dev/null)"
+  case "$st" in
+    anonymous-unclaimed) echo "Anonymous Header trial account (unclaimed)." ;;
+    anonymous-claimed)   echo "Header account (claimed)." ;;
+  esac
+  echo "  account:      $(json_str "$b" account_id)"
+  echo "  tier:         $(json_str "$b" tier)"
+  echo "  trial ends:   $(json_str "$b" trial_ends_at)"
+  local url; url="$(claim_url)"
+  [ -n "$url" ] && {
+    echo "  claim it:     $url"
+    echo "  (keeps your API key + topics; lets you browse briefings in the web UI)"
+  }
+  echo "  stop creating accounts:  header-config set auto_register false"
+}
+
+# trial — start the account's free trial (the *_FREE recovery for an existing-user
+# key with no trial yet; anonymous accounts already have one). Deterministic.
+trial() {
+  local resp code body
+  if [ -n "${HEADER_AUTH_BILLING_STUB:-}" ]; then body="$(cat "$HEADER_AUTH_BILLING_STUB" 2>/dev/null)"; code="${HEADER_AUTH_BILLING_CODE:-200}"
+  else resp="$(post_billing billing/trial/start)"; code="${resp##*$'\n'}"; body="${resp%$'\n'*}"; fi
+  case "$code" in
+    2*) local te; te="$(json_str "$body" trial_ends_at)"; echo "TRIAL_ACTIVE true"; [ -n "$te" ] && echo "TRIAL_ENDS_AT $te"; return 0 ;;
+    401|403 ) [ "$code" = 401 ] && { echo "header-auth: no API key" >&2; return 2; }
+              local ec; ec="$(json_str "$body" error_code)"; printf 'ERROR_CODE %s\n' "${ec:-UNKNOWN}"; echo "header-auth: trial not started (${ec:-HTTP $code})" >&2; return 3 ;;
+    409)      local ec; ec="$(json_str "$body" error_code)"; printf 'ERROR_CODE %s\n' "${ec:-TRIAL_ALREADY_USED}"; echo "header-auth: trial not started (${ec:-TRIAL_ALREADY_USED})" >&2; return 3 ;;
+    000)      echo "header-auth: offline" >&2; return 1 ;;
+    *)        echo "header-auth: trial failed (HTTP $code)" >&2; return 1 ;;
+  esac
+}
+
+# checkout --email E — create a Pro checkout URL (upgrade). The backend requires an
+# email, so anonymous accounts must CLAIM first; upgrade is otherwise UI-only.
+checkout() {
+  local email=""
+  while [ $# -gt 0 ]; do case "$1" in --email) email="${2:-}"; shift 2 ;; *) shift ;; esac; done
+  [ -n "$email" ] || { echo "header-auth: checkout --email <email> required (upgrade needs an email — anonymous accounts must claim first)" >&2; return 1; }
+  local resp code body
+  if [ -n "${HEADER_AUTH_BILLING_STUB:-}" ]; then body="$(cat "$HEADER_AUTH_BILLING_STUB" 2>/dev/null)"; code="${HEADER_AUTH_BILLING_CODE:-200}"
+  else resp="$(post_billing billing/create-checkout "$(printf '{"email":"%s"}' "$(json_escape "$email")")")"; code="${resp##*$'\n'}"; body="${resp%$'\n'*}"; fi
+  case "$code" in
+    2*) local u; u="$(json_str "$body" url)"; [ -n "$u" ] || u="$(json_str "$body" checkout_url)"
+        [ -n "$u" ] && { printf 'CHECKOUT_URL %s\n' "$u"; return 0; }; echo "header-auth: no url in checkout response" >&2; return 1 ;;
+    401) echo "header-auth: no API key" >&2; return 2 ;;
+    000) echo "header-auth: offline" >&2; return 1 ;;
+    *)   echo "header-auth: checkout failed (HTTP $code)${body:+ — $(printf '%s' "$body" | head -c 120)}" >&2; return 1 ;;
+  esac
+}
+
+# subscription — the account's tier/trial state (existing GET /billing/subscription),
+# printed machine-readable so the flow can detect a lapsed trial deterministically.
+subscription() {
+  local resp code body
+  if [ -n "${HEADER_AUTH_BILLING_STUB:-}" ]; then body="$(cat "$HEADER_AUTH_BILLING_STUB" 2>/dev/null)"; code="${HEADER_AUTH_BILLING_CODE:-200}"
+  else resp="$(get_api billing/subscription)"; code="${resp##*$'\n'}"; body="${resp%$'\n'*}"; fi
+  case "$code" in
+    2*) ;;
+    401) echo "header-auth: no API key" >&2; return 2 ;;
+    000) echo "header-auth: offline" >&2; return 1 ;;
+    *) echo "header-auth: HTTP $code" >&2; return 1 ;;
+  esac
+  local ta cs te tf; ta="$(json_bool "$body" trial_active)"; cs="$(json_bool "$body" can_start_trial)"
+  te="$(json_str "$body" trial_ends_at)"; tf="$(json_str "$body" tier_flip_kind)"
+  printf 'TRIAL_ACTIVE %s\n' "${ta:-unknown}"
+  printf 'CAN_START_TRIAL %s\n' "${cs:-unknown}"
+  [ -n "$te" ] && printf 'TRIAL_ENDS_AT %s\n' "$te"
+  [ -n "$tf" ] && printf 'TIER_FLIP_KIND %s\n' "$tf"
+  # EXPIRED yes when the trial lapsed (flip=trial_expired, or inactive + can't restart).
+  if [ "$tf" = "trial_expired" ] || { [ "$ta" = "false" ] && [ "$cs" = "false" ]; }; then echo "EXPIRED yes"; fi
+}
+
+case "${1:-}" in
+  register)     register ;;
+  save-key)     save_key_cmd "${2:-}" ;;
+  state)        state ;;
+  status)       status ;;
+  claim-url)    claim_url ;;
+  trial)        trial ;;
+  checkout)     shift; checkout "$@" ;;
+  subscription) subscription ;;
+  -h|--help)
+    echo "Usage: header-auth {register|save-key|state|status|claim-url|trial|checkout --email E|subscription}"
+    exit 0
+    ;;
+  *)
+    echo "Usage: header-auth {register|save-key|state|status|claim-url|trial|checkout --email E|subscription}" >&2
+    exit 1
+    ;;
+esac

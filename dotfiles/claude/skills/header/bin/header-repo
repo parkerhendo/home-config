@@ -1,0 +1,201 @@
+#!/usr/bin/env bash
+# header-repo — remember which Header topic a repository uses, so a new session
+# in that repo reuses it instead of falling back to the public default topic.
+#
+# Storage: a global registry at ~/.header/repos.jsonl (append-only; the last line
+# for a repo wins). Nothing is ever written inside the repo itself, and the
+# registry never leaves the machine. Repos are keyed by their git remote
+# (stable across clones / moves / teammates), falling back to the repo's root
+# path, then the current directory.
+#
+# The schedule (how often briefings regenerate) is NOT stored here — it lives
+# server-side on the goal (schedule_enabled / schedule_frequency_days). This file
+# only tracks the repo→topic binding and a per-repo "last briefing seen" marker
+# used for the session-start freshness check.
+#
+# Usage:
+#   header-repo key                  print the identity key for the current repo
+#   header-repo bind <topic> [name]  remember <topic> (a topic UUID) for this repo
+#   header-repo get                  print the topic bound to this repo, or nothing
+#   header-repo clear                forget this repo's binding
+#   header-repo list                 every remembered repo → topic (latest wins)
+#   header-repo seen [value]         get, or set, the last-seen briefing marker
+#                                    for this repo (used for freshness checks)
+#   header-repo enrich-mode [value]  get, or set, this repo's enrichment choice
+#                                    (custom|generic) — the answer to the
+#                                    generic-vs-custom prompt, remembered per repo
+#   header-repo flag <name> [set]    get (prints yes|no), or set, a per-repo
+#                                    onboarding flag (e.g. topic-offered,
+#                                    schedule-offered) so an offer is made once
+#                                    *per repo* rather than once per machine
+#
+# Env:
+#   HEADER_HOME       override the state directory (default: $HOME/.header)
+#   HEADER_REPO_KEY   override the computed repo key (testing / advanced pinning)
+set -uo pipefail
+
+STATE_DIR="${HEADER_HOME:-$HOME/.header}"
+REPOS="$STATE_DIR/repos.jsonl"
+SEEN_DIR="$STATE_DIR/repo-seen"
+FLAGS_DIR="$STATE_DIR/repo-flags"
+MODE_DIR="$STATE_DIR/repo-mode"
+
+json_escape() { printf '%s' "$1" | tr -d '\n\r' | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+# Per-repo memory toggle (config key repo_memory, default true).
+enabled() {
+  [ "$("$(dirname "$0")/header-config" get repo_memory 2>/dev/null || echo true)" != "false" ]
+}
+
+# Normalize a git remote URL to a stable host/path key:
+#   git@github.com:me/repo.git              -> github.com/me/repo
+#   https://github.com/me/repo.git          -> github.com/me/repo
+#   https://user:token@github.com/me/repo   -> github.com/me/repo
+#   ssh://git@github.com/me/repo.git        -> github.com/me/repo
+normalize_remote() {
+  printf '%s' "$1" \
+    | sed -E 's#\.git$##; s#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#^[^@/]*@##; s#:#/#'
+}
+
+# repo_key — stable identity for the current repository.
+repo_key() {
+  if [ -n "${HEADER_REPO_KEY:-}" ]; then printf '%s\n' "$HEADER_REPO_KEY"; return; fi
+  local url root
+  url="$(git config --get remote.origin.url 2>/dev/null || true)"
+  if [ -n "$url" ]; then printf '%s\n' "$(normalize_remote "$url")"; return; fi
+  root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -n "$root" ]; then printf '%s\n' "$root"; return; fi
+  pwd
+}
+
+# seen_file — per-repo marker path (filename derived from a hash of the key, so
+# any remote/path is safe as a filename).
+seen_file() {
+  local h
+  h="$(repo_key | cksum | cut -d' ' -f1)"
+  printf '%s/%s\n' "$SEEN_DIR" "$h"
+}
+
+# mode_file — per-repo enrichment-choice marker path (custom|generic). Same
+# repo-key hashing as seen_file so any remote/path is safe as a filename.
+mode_file() {
+  local h
+  h="$(repo_key | cksum | cut -d' ' -f1)"
+  printf '%s/%s\n' "$MODE_DIR" "$h"
+}
+
+# flag_file — per-repo onboarding-flag marker path. <name> is a controlled,
+# hyphenated identifier from the skill (e.g. topic-offered); the repo key is
+# hashed into the filename so any remote/path is safe.
+flag_file() {
+  local name h
+  name="$(printf '%s' "$1" | tr -cd 'a-z0-9-')"
+  h="$(repo_key | cksum | cut -d' ' -f1)"
+  printf '%s/%s.%s\n' "$FLAGS_DIR" "$h" "$name"
+}
+
+cmd="${1:-}"
+shift 2>/dev/null || true
+
+case "$cmd" in
+  key)
+    repo_key
+    ;;
+
+  bind)
+    topic="${1:-}"; shift 2>/dev/null || true
+    name="${1:-}"
+    [ -n "$topic" ] || { echo "header-repo: <topic> required" >&2; exit 1; }
+    enabled || exit 0                       # repo_memory off → no-op
+    key="$(repo_key)"
+    mkdir -p "$STATE_DIR"
+    printf '{"ts":"%s","epoch":%s,"key":"%s","topic":"%s","name":"%s"}\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(date +%s)" \
+      "$(json_escape "$key")" "$(json_escape "$topic")" "$(json_escape "$name")" \
+      >> "$REPOS"
+    ;;
+
+  get)
+    enabled || exit 0
+    [ -f "$REPOS" ] || exit 0
+    key="$(repo_key)"
+    # Last line for this exact key wins; a tombstone ("topic":"") clears it.
+    latest="$(grep -F "\"key\":\"$(json_escape "$key")\"" "$REPOS" 2>/dev/null | tail -1)"
+    [ -n "$latest" ] || exit 0
+    topic="$(printf '%s' "$latest" | sed -n 's/.*"topic":"\([^"]*\)".*/\1/p')"
+    [ -n "$topic" ] && printf '%s\n' "$topic"
+    ;;
+
+  clear)
+    key="$(repo_key)"
+    mkdir -p "$STATE_DIR"
+    printf '{"ts":"%s","epoch":%s,"key":"%s","topic":"","name":""}\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(date +%s)" "$(json_escape "$key")" \
+      >> "$REPOS"
+    ;;
+
+  list)
+    [ -f "$REPOS" ] || exit 0
+    awk '
+      {
+        k=""; tp=""; nm=""
+        if (match($0, /"key":"[^"]*"/))   k=substr($0, RSTART+7,  RLENGTH-8)
+        if (match($0, /"topic":"[^"]*"/)) tp=substr($0, RSTART+9, RLENGTH-10)
+        if (match($0, /"name":"[^"]*"/))  nm=substr($0, RSTART+8, RLENGTH-9)
+        if (k=="") next
+        lt[k]=tp; ln[k]=nm
+      }
+      END {
+        for (k in lt) {
+          if (lt[k]=="") continue           # tombstoned — forgotten
+          printf "%s\t%s\t%s\n", k, lt[k], ln[k]
+        }
+      }' "$REPOS"
+    ;;
+
+  seen)
+    sf="$(seen_file)"
+    if [ $# -gt 0 ] && [ -n "${1:-}" ]; then
+      mkdir -p "$SEEN_DIR"
+      printf '%s\n' "$1" > "$sf"
+    else
+      [ -f "$sf" ] && cat "$sf" || true
+    fi
+    ;;
+
+  enrich-mode)
+    # Per-repo answer to the generic-vs-custom enrichment prompt. Mirrors `seen`:
+    # no arg → print the stored value (empty if unset); arg → store it. A `set`
+    # respects repo_memory (off → no persistence), like `bind`.
+    mf="$(mode_file)"
+    if [ $# -gt 0 ] && [ -n "${1:-}" ]; then
+      case "$1" in custom|generic) ;; *) echo "header-repo: enrich-mode must be custom|generic" >&2; exit 1 ;; esac
+      enabled || exit 0
+      mkdir -p "$MODE_DIR"
+      printf '%s\n' "$1" > "$mf"
+    else
+      [ -f "$mf" ] && cat "$mf" || true
+    fi
+    ;;
+
+  flag)
+    name="${1:-}"; shift 2>/dev/null || true
+    [ -n "$name" ] || { echo "header-repo: flag <name> required" >&2; exit 1; }
+    ff="$(flag_file "$name")"
+    if [ "${1:-}" = "set" ]; then
+      mkdir -p "$FLAGS_DIR"
+      : > "$ff"
+    else
+      [ -f "$ff" ] && echo yes || echo no
+    fi
+    ;;
+
+  -h|--help)
+    echo "Usage: header-repo {key|bind|get|clear|list|seen|enrich-mode|flag} ..."
+    exit 0
+    ;;
+  *)
+    echo "Usage: header-repo {key|bind|get|clear|list|seen|enrich-mode|flag} ..." >&2
+    exit 1
+    ;;
+esac

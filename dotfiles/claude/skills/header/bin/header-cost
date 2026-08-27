@@ -1,0 +1,261 @@
+#!/usr/bin/env bash
+# header-cost — estimate agent token spend from real usage. (beta)
+#
+# Phase 1 of the experimentation platform (see docs/experiments-design.md). It
+# reports MEASURED spend only — real token counts × verified prices. It does NOT
+# guess what switching models would save; that needs a real A/B (experiments,
+# coming soon), so `savings` only points there.
+#
+# Usage:
+#   header-cost prices                         show the active price table
+#   header-cost refresh [--url U]              fetch a live price table → cache it
+#                                              (URL from --url or $HEADER_PRICES_URL)
+#   header-cost cost <model> <in> <out> [cache_read] [cache_write_5m] [cache_write_1h]
+#                                              cost one usage tuple (tokens) → USD
+#   header-cost report [--input F] [--since T] [--json]
+#                                              read usage JSONL (stdin or -F), break
+#                                              spend down by model + total
+#   header-cost savings ...                    (no projection — prints the experiments note)
+#
+# Usage record schema (one flat JSON object per line; cache fields optional):
+#   {"model":"claude-opus-4-7","input_tokens":1200,"output_tokens":800,
+#    "cache_read_tokens":5000,"cache_write_tokens":0,"ts":"2026-05-20T10:00:00Z"}
+# `report` also parses raw Claude Code transcript lines best-effort: it reads
+# input_tokens/output_tokens/cache_read_input_tokens and the cache-write split
+# (cache_creation -> ephemeral_5m_input_tokens / ephemeral_1h_input_tokens),
+# falling back to the flat cache_creation_input_tokens (priced at the 5-minute
+# rate) only when no split is present, and skips lines with no usage:
+#   find ~/.claude/projects -name '*.jsonl' -exec cat {} + | header-cost report
+#
+# Prices are USD per 1,000,000 tokens. Built-ins are DEFAULTS — confirm against
+# current Anthropic pricing and override per family or per model id in
+# ~/.header/prices.tsv (or $HEADER_PRICES_FILE), one per line, '#' comments ok:
+#   opus    5  25  0.50  6.25  10           # family input output cache_rd cw_5m cw_1h
+#   claude-sonnet-4-6   3   15              # cache columns optional → derived from input
+# Cache columns, if omitted, derive from input via Anthropic's fixed multipliers:
+# read = 0.1x, 5-min write = 1.25x, 1-hour write = 2x. Legacy Opus (3.x / 4.0 /
+# 4.1 = 15/75) is auto-detected from the model id and priced separately.
+#
+# Env:
+#   HEADER_HOME          state dir (default: $HOME/.header)
+#   HEADER_PRICES_FILE   price-override file (default: $HEADER_HOME/prices.tsv)
+#   HEADER_PRICES_URL    served price table for `refresh` (TSV, same columns)
+#
+# Prices drift — the built-in table is a dated FLOOR. `report` prints the price
+# source + freshness on stderr; refresh (or override) before relying on figures.
+# The defaults were verified 2026-05-22 vs platform.claude.com/docs.
+#
+# BASIS: all $ figures are API (pay-per-token) rates. On a Claude subscription
+# ($20/$100/$200/mo) you don't pay these — your constraint is usage limits, so the
+# $ is a proxy for cap consumption. The % savings is the same either way (tokens
+# saved = dollars for API, headroom for subscription). report says this.
+#
+# All local; nothing is sent anywhere.
+set -euo pipefail
+
+STATE_DIR="${HEADER_HOME:-$HOME/.header}"
+PRICES_FILE="${HEADER_PRICES_FILE:-$STATE_DIR/prices.tsv}"
+CACHE_FILE="$STATE_DIR/prices-cache.tsv"     # written by `header-cost refresh`
+PRICES_AS_OF="2026-05-22"                      # date the built-ins below were verified
+
+# Built-in defaults: family  input  output  cache_read  cw_5m  cw_1h  (USD / 1M tokens).
+# Verified ${PRICES_AS_OF} vs platform.claude.com/docs — CURRENT tiers (Opus 4.5+,
+# Sonnet 4.x, Haiku 4.5). opus-legacy = Opus 3.x / 4.0 / 4.1, auto-matched by id.
+default_prices() {
+  printf '%s\n' \
+    "opus 5 25 0.50 6.25 10" \
+    "sonnet 3 15 0.30 3.75 6" \
+    "haiku 1 5 0.10 1.25 2" \
+    "opus-legacy 15 75 1.50 18.75 30"
+}
+
+# Defaults (floor) -> refreshed cache -> user override. load_prices() lets later
+# lines win, so the override beats the cache beats the defaults.
+price_blob() {
+  default_prices
+  if [ -f "$CACHE_FILE" ];  then grep -vE '^[[:space:]]*(#|$)' "$CACHE_FILE"  || true; fi
+  if [ -f "$PRICES_FILE" ]; then grep -vE '^[[:space:]]*(#|$)' "$PRICES_FILE" || true; fi
+}
+
+# price_provenance — on stderr, state which prices a calculation used and how fresh.
+price_provenance() {
+  if [ -f "$PRICES_FILE" ]; then
+    echo "Prices: user override ($PRICES_FILE)." >&2
+  elif [ -f "$CACHE_FILE" ]; then
+    _f="$(sed -n 's/^#[[:space:]]*fetched //p' "$CACHE_FILE" | head -1)"
+    echo "Prices: refreshed ${_f:-recently} (cached) — 'header-cost refresh' to update." >&2
+  else
+    echo "Prices: bundled defaults as of $PRICES_AS_OF — verify online before relying on figures ('header-cost refresh' with a served table, or update $PRICES_FILE). Source: platform.claude.com/docs." >&2
+  fi
+}
+
+# billing_note — costs here are API (pay-per-token) rates; subscription users differ.
+billing_note() {
+  echo "Basis: USD at API (pay-per-token) rates. On a Claude subscription (\$20/\$100/\$200/mo) you don't pay these — your constraint is usage limits, so read \$ as a proxy for cap consumption; the % still applies (tokens saved = headroom freed)." >&2
+}
+
+# Shared awk: price loading + lookup + cost + JSON field extraction.
+AWK_LIB='
+function load_prices(   blob,n,lines,i,f,nf) {
+  blob = ENVIRON["HEADER_PRICE_BLOB"]; n = split(blob, lines, "\n")
+  for (i=1;i<=n;i++) {
+    if (lines[i]=="") continue
+    nf = split(lines[i], f, /[ \t]+/)
+    if (f[1]=="") continue
+    P[f[1]"_in"]  = f[2]+0
+    P[f[1]"_out"] = f[3]+0
+    # cache columns optional — derive from input via fixed Anthropic multipliers.
+    P[f[1]"_cr"]  = (nf>=4 && f[4]!="") ? f[4]+0 : 0.1  * (f[2]+0)
+    P[f[1]"_cw5"] = (nf>=5 && f[5]!="") ? f[5]+0 : 1.25 * (f[2]+0)
+    P[f[1]"_cw1"] = (nf>=6 && f[6]!="") ? f[6]+0 : 2.0  * (f[2]+0)
+  }
+}
+# pkey — resolve a model string to a price key: exact override id, then Opus
+# (current vs legacy by version), then sonnet/haiku family, else "" (unknown).
+function pkey(m,  lm) {
+  if ((m "_in") in P) return m
+  lm = tolower(m)
+  if (index(lm,"opus")) {
+    if (lm ~ /(^|[^0-9a-z])3-?opus/ || lm ~ /opus-?3([^0-9]|$)/ \
+        || lm ~ /opus-4-0([^0-9]|$)/ || lm ~ /opus-4-1([^0-9]|$)/ \
+        || lm ~ /opus-4-[0-9][0-9][0-9][0-9]/)
+      return ("opus-legacy_in" in P) ? "opus-legacy" : (("opus_in" in P) ? "opus" : "")
+    return ("opus_in" in P) ? "opus" : ""
+  }
+  if (index(lm,"sonnet") && ("sonnet_in" in P)) return "sonnet"
+  if (index(lm,"haiku")  && ("haiku_in"  in P)) return "haiku"
+  return ""
+}
+function cost_of(k,i,o,cr,cw5,cw1) {
+  return i/1e6*P[k"_in"] + o/1e6*P[k"_out"] + cr/1e6*P[k"_cr"] + cw5/1e6*P[k"_cw5"] + cw1/1e6*P[k"_cw1"]
+}
+function jnum(line,key,  re,s){ re="\""key"\"[ \t]*:[ \t]*[0-9]+"
+  if (match(line,re)){ s=substr(line,RSTART,RLENGTH); sub(/.*:[ \t]*/,"",s); return s+0 } return 0 }
+function jstr(line,key,  re,s){ re="\""key"\"[ \t]*:[ \t]*\"[^\"]*\""
+  if (match(line,re)){ s=substr(line,RSTART,RLENGTH); sub(/.*:[ \t]*"/,"",s); sub(/"$/,"",s); return s } return "" }
+function rd_cr(line,  v){ v=jnum(line,"cache_read_tokens"); if(v==0) v=jnum(line,"cache_read_input_tokens"); return v }
+# cache writes: prefer the real 5m/1h split; fall back to the flat total (priced
+# at the 5-minute rate) only when no breakdown is present. Returns "cw5 cw1".
+function rd_cw(line,  c5,c1,flat){
+  c5=jnum(line,"ephemeral_5m_input_tokens"); c1=jnum(line,"ephemeral_1h_input_tokens")
+  if (c5==0 && c1==0) { flat=jnum(line,"cache_write_tokens"); if(flat==0) flat=jnum(line,"cache_creation_input_tokens"); c5=flat }
+  return c5 " " c1
+}
+'
+
+usage() {
+  # `usage 0` → help on stdout, exit 0 (explicit --help is a success action).
+  # Default → usage error on stderr, exit 1 (no/unknown subcommand).
+  if [ "${1:-1}" = 0 ]; then
+    echo "Usage: header-cost {prices|refresh|cost|report|savings} ..."
+    exit 0
+  fi
+  echo "Usage: header-cost {prices|refresh|cost|report|savings} ..." >&2
+  exit 1
+}
+
+cmd="${1:-}"; shift 2>/dev/null || true
+
+case "$cmd" in
+  prices)
+    echo "Active price table (USD per 1M tokens) — defaults; override in $PRICES_FILE"
+    printf '  %-14s %7s %7s %8s %8s %8s\n' "family/model" "input" "output" "cache_rd" "cw_5m" "cw_1h"
+    HEADER_PRICE_BLOB="$(price_blob)" awk "$AWK_LIB"'
+    BEGIN{
+      load_prices()
+      for (k in P) { sub(/_(in|out|cr|cw5|cw1)$/,"",k); seen[k]=1 }
+      for (m in seen) printf "  %-14s %7.2f %7.2f %8.2f %8.2f %8.2f\n", m, P[m"_in"], P[m"_out"], P[m"_cr"], P[m"_cw5"], P[m"_cw1"]
+    }' | sort
+    [ -f "$CACHE_FILE" ] && echo "  (refreshed table cached at $CACHE_FILE)" || true
+    [ -f "$PRICES_FILE" ] && echo "  (overrides loaded from $PRICES_FILE)" || true
+    ;;
+
+  refresh)
+    URL="${HEADER_PRICES_URL:-}"
+    while [ $# -gt 0 ]; do case "$1" in
+      --url) URL="${2:?--url needs a value}"; shift 2 ;;
+      *) echo "header-cost refresh: unknown arg '$1'" >&2; exit 1 ;;
+    esac; done
+    [ -n "$URL" ] || { echo "header-cost: no price URL. Set HEADER_PRICES_URL (or --url) to a served price table, or update $PRICES_FILE from current pricing — see the skill's Cost analytics section." >&2; exit 1; }
+    mkdir -p "$STATE_DIR"
+    tmp="$(mktemp "${CACHE_FILE}.XXXXXX")"
+    if curl -fsSL --retry 1 "$URL" -o "$tmp" 2>/dev/null \
+       && grep -qiE '(opus|sonnet|haiku|claude)[ \t]+[0-9.]+[ \t]+[0-9.]+' "$tmp"; then
+      { printf '# fetched %s from %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$URL"; cat "$tmp"; } > "$CACHE_FILE"
+      rm -f "$tmp"
+      echo "Refreshed price table from $URL"
+    else
+      rm -f "$tmp"
+      echo "header-cost: could not fetch a valid price table from $URL (offline, 404, or unexpected format) — keeping existing prices." >&2
+      exit 1
+    fi
+    ;;
+
+  cost)
+    model="${1:-}"; in="${2:-}"; out="${3:-}"; cr="${4:-0}"; cw5="${5:-0}"; cw1="${6:-0}"
+    [ -n "$model" ] && [ -n "$in" ] && [ -n "$out" ] || { echo "Usage: header-cost cost <model> <in> <out> [cache_read] [cache_write_5m] [cache_write_1h]" >&2; exit 1; }
+    HEADER_PRICE_BLOB="$(price_blob)" awk -v m="$model" -v i="$in" -v o="$out" -v cr="$cr" -v cw5="$cw5" -v cw1="$cw1" "$AWK_LIB"'
+    BEGIN{
+      load_prices(); k=pkey(m)
+      if (k=="") { printf "header-cost: unknown model %s (no price; set it in the prices file)\n", m > "/dev/stderr"; print "0.000000"; exit 2 }
+      printf "%.6f\n", cost_of(k, i+0, o+0, cr+0, cw5+0, cw1+0)
+    }'
+    ;;
+
+  report)
+    SRC="/dev/stdin"; SINCE=""; JSON=0
+    while [ $# -gt 0 ]; do case "$1" in
+      --input) SRC="${2:?--input needs a file}"; shift 2 ;;
+      --since) SINCE="${2:?--since needs a timestamp}"; shift 2 ;;
+      --json)  JSON=1; shift ;;
+      *) echo "header-cost report: unknown arg '$1'" >&2; exit 1 ;;
+    esac; done
+    price_provenance
+    billing_note
+    HEADER_PRICE_BLOB="$(price_blob)" awk -v since="$SINCE" -v json="$JSON" "$AWK_LIB"'
+    BEGIN{ load_prices() }
+    {
+      model=jstr($0,"model"); inp=jnum($0,"input_tokens"); outp=jnum($0,"output_tokens")
+      cr=rd_cr($0); split(rd_cw($0), CW, " "); cw5=CW[1]+0; cw1=CW[2]+0; ts=jstr($0,"ts")
+      if (model=="" || (inp==0 && outp==0 && cr==0 && cw5==0 && cw1==0)) next   # not a usage record
+      if (since!="" && ts!="" && ts<since) next
+      cache=cr+cw5+cw1
+      k=pkey(model); c=(k==""?0:cost_of(k,inp,outp,cr,cw5,cw1)); if(k=="") unk++
+      if (!(model in Calls)) Keys[++nk]=model
+      Calls[model]++; In[model]+=inp; Out[model]+=outp; Cache[model]+=cache; Cost[model]+=c
+      tCalls++; tIn+=inp; tOut+=outp; tCache+=cache; tCost+=c
+    }
+    END{
+      for (a=1;a<=nk;a++) for (b=a+1;b<=nk;b++) if (Cost[Keys[b]]>Cost[Keys[a]]) { t=Keys[a]; Keys[a]=Keys[b]; Keys[b]=t }
+      if (json) {
+        printf "{\"basis\":\"api_rates\",\"total_usd\":%.6f,\"calls\":%d,\"unknown\":%d,\"models\":[", tCost, tCalls, unk+0
+        for (a=1;a<=nk;a++){ m=Keys[a]
+          printf "%s{\"model\":\"%s\",\"calls\":%d,\"input\":%d,\"output\":%d,\"cache\":%d,\"cost_usd\":%.6f}", (a>1?",":""), m, Calls[m], In[m], Out[m], Cache[m], Cost[m] }
+        print "]}"
+      } else {
+        printf "Header cost report — %d call(s)%s  ·  USD at API rates\n", tCalls, (since!=""?(", since " since):"")
+        printf "  %-26s %8s %12s %12s %12s %12s\n", "MODEL","CALLS","INPUT","OUTPUT","CACHE","COST(USD)"
+        for (a=1;a<=nk;a++){ m=Keys[a]
+          printf "  %-26s %8d %12d %12d %12d %11.2f\n", m, Calls[m], In[m], Out[m], Cache[m], Cost[m] }
+        printf "  %-26s %8d %12d %12d %12d %11.2f\n", "TOTAL", tCalls, tIn, tOut, tCache, tCost
+        if (unk>0) printf "  [!] %d record(s) had no known price (unknown model) — add it to the prices file.\n", unk
+      }
+    }' "$SRC"
+    ;;
+
+  savings)
+    # We do not print projections. A price re-rating of identical tokens is a
+    # guess (the cheaper model uses different tokens at different quality); the
+    # honest number comes from a real A/B + correctness check.
+    echo "header-cost prints measured spend only — projections are guesses (same tokens, different model, different quality)."
+    echo "Run a real A/B with header-experiment (beta) to prove a switch:"
+    echo "  header-experiment define my-switch && header-experiment validate my-switch"
+    echo "  header-experiment run my-switch --aa && header-experiment run my-switch"
+    echo "  header-experiment analyze my-switch && header-experiment report my-switch"
+    exit 0
+    ;;
+
+  -h|--help) usage 0 ;;
+  "")        usage ;;
+  *) echo "header-cost: unknown subcommand '$cmd'" >&2; usage ;;
+esac

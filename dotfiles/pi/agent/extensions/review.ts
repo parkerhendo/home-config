@@ -1271,6 +1271,22 @@ export default function reviewExtension(pi: ExtensionAPI) {
     return "commit";
   }
 
+  // ModelSelectorComponent (from pi-coding-agent) expects a ModelRuntime-shaped
+  // object (getAvailableSnapshot/getModel), but extensions only receive the
+  // public ModelRegistry facade (getAvailable/find). Adapt the facade so the
+  // selector's internal calls resolve instead of throwing
+  // "getAvailableSnapshot is not a function".
+  function toModelSelectorRuntime(modelRegistry: ExtensionContext["modelRegistry"]) {
+    return {
+      getAvailableSnapshot: () => modelRegistry.getAvailable(),
+      getModel: (provider: string, modelId: string) =>
+        modelRegistry.find(provider, modelId),
+      refresh: (options?: { signal?: AbortSignal }) =>
+        modelRegistry.refresh(options),
+      getError: () => modelRegistry.getError(),
+    } as unknown as ConstructorParameters<typeof ModelSelectorComponent>[3];
+  }
+
   async function pickReviewModelOverride(
     ctx: ExtensionContext,
   ): Promise<ReviewModelOverride | undefined> {
@@ -1291,7 +1307,7 @@ export default function reviewExtension(pi: ExtensionAPI) {
           tui,
           currentModel,
           settingsManager,
-          ctx.modelRegistry,
+          toModelSelectorRuntime(ctx.modelRegistry),
           scopedModels,
           (model) => done({ provider: model.provider, modelId: model.id }),
           () => done(undefined),

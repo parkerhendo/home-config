@@ -1,0 +1,4 @@
+interface:
+  display_name: "WWTD"
+  short_description: "Infer how a GitHub user would implement this"
+  default_prompt: "Use $wwtd to infer how the named GitHub user would approach this engineering task from their authored implementation history."

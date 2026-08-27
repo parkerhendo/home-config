@@ -57,6 +57,13 @@ Read every applicable reference completely before designing the change:
 - [`references/imports-exports-and-files.md`](references/imports-exports-and-files.md) — when imports, exports, entrypoints, helper placement, or file organization change.
 - [`references/comments-and-jsdoc.md`](references/comments-and-jsdoc.md) — when exported symbols, comments, JSDoc, user-facing text, or rendered errors change.
 
+When working in the `braintrustdata/braintrust` monorepo, the explicit repository-specific rules below govern over incompatible generic guidance according to the decision priority:
+
+- [`references/braintrust-monorepo-and-typescript.md`](references/braintrust-monorepo-and-typescript.md) — for every TypeScript change in the Braintrust monorepo.
+- [`references/braintrust-react-and-next.md`](references/braintrust-react-and-next.md) — for React, Next.js, UI, client state, or frontend tests under `app/`.
+- [`references/braintrust-schemas-and-local-packages.md`](references/braintrust-schemas-and-local-packages.md) — for shared schemas, compatibility contracts, or packages under `local/js/`.
+- [`references/braintrust-apis-auth-and-persistence.md`](references/braintrust-apis-auth-and-persistence.md) — for routes, auth/RBAC, database access, audit logging, or backend TypeScript in `app/` and `api-ts/`.
+
 **Complete when:** every changed input, output, failure, dependency, effect, state transition, external representation, and test surface maps to an owning module and an applicable reference.
 
 ## 3. Design from the public types inward

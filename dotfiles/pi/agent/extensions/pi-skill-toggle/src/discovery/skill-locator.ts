@@ -9,14 +9,25 @@ export interface SkillLocator {
 }
 
 export class DefaultSkillLocator implements SkillLocator {
-  constructor(private readonly fs: FileSystem) {}
+  constructor(
+    private readonly fs: FileSystem,
+    private readonly loadedSkillFiles: () => LocatedSkillFile[] = () => [],
+  ) {}
 
   async findSkillFiles(cwd: string): Promise<LocatedSkillFile[]> {
-    const roots = getSkillRoots(cwd);
     const files: LocatedSkillFile[] = [];
     const seen = new Set<string>();
 
-    for (const root of roots) {
+    for (const file of this.loadedSkillFiles()) {
+      if (seen.has(file.filePath) || !(await this.isRegularFile(file.filePath))) continue;
+      seen.add(file.filePath);
+      files.push({
+        ...file,
+        editable: file.editable && await this.isWritable(file.filePath),
+      });
+    }
+
+    for (const root of getSkillRoots(cwd)) {
       if (!(await this.fs.access(root.path))) continue;
       const found = await this.scanSkillDir(root.path, root.path, root.source, true);
       for (const file of found) {
@@ -68,6 +79,14 @@ export class DefaultSkillLocator implements SkillLocator {
     }
 
     return out;
+  }
+
+  private async isRegularFile(path: string): Promise<boolean> {
+    try {
+      return (await this.fs.stat(path)).isFile;
+    } catch {
+      return false;
+    }
   }
 
   private async isDirectory(path: string, entry: { isDirectory: boolean; isSymbolicLink: boolean }): Promise<boolean> {

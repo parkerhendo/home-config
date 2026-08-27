@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# header-update-check — is a newer skill version available?
+#
+# Queries the Header version endpoint, compares to the local VERSION, and prints
+# ONE line (or nothing):
+#   UP_TO_DATE <local>
+#   UPDATE_AVAILABLE <local> <latest>
+#   UPDATE_REQUIRED <local> <min_supported>     local is below the API's minimum
+#   (nothing)                                    disabled, snoozed, or no VERSION file
+#
+# Cached (UP_TO_DATE 60 min, UPDATE_* 720 min) so it doesn't hit the endpoint on
+# every run; honors an escalating snooze written by the SKILL.md update flow.
+#
+# Env overrides:
+#   HEADER_HOME          state dir (default ~/.header)
+#   HEADER_API_BASE      API base (default https://joinheader.com)
+#   HEADER_VERSION_URL   full endpoint override (default $HEADER_API_BASE/api/v2/skill/version)
+#   HEADER_VERSION_JSON  use this response body instead of curl (for tests)
+#
+# Never exits non-zero on a network/parse failure — a broken check must never
+# break the briefing. No `set -e`.
+set -uo pipefail
+
+BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+SKILL_DIR="$(cd "$BIN_DIR/.." && pwd)"
+STATE_DIR="${HEADER_HOME:-$HOME/.header}"
+CONFIG="$BIN_DIR/header-config"
+VERSION_FILE="$SKILL_DIR/VERSION"
+CACHE_FILE="$STATE_DIR/last-update-check"
+SNOOZE_FILE="$STATE_DIR/update-snoozed"
+INFO_FILE="$STATE_DIR/version-info.json"
+API_BASE="${HEADER_API_BASE:-https://joinheader.com}"
+VERSION_URL="${HEADER_VERSION_URL:-$API_BASE/api/v2/skill/version}"
+
+# --force busts cache + snooze (used by a standalone update check)
+[ "${1:-}" = "--force" ] && rm -f "$CACHE_FILE" "$SNOOZE_FILE"
+
+# Disabled by config?
+_UC="$("$CONFIG" get update_check 2>/dev/null || echo true)"
+[ "$_UC" = "false" ] && exit 0
+
+# Local version (skip silently if absent)
+LOCAL=""
+[ -f "$VERSION_FILE" ] && LOCAL="$(tr -d '[:space:]' < "$VERSION_FILE" 2>/dev/null || true)"
+[ -n "$LOCAL" ] || exit 0
+mkdir -p "$STATE_DIR" 2>/dev/null || true
+
+# version_lt A B → 0 (true) when A is strictly less than B
+version_lt() {
+  [ "$1" != "$2" ] || return 1
+  [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V 2>/dev/null | head -1)" = "$1" ]
+}
+
+# check_snooze <target_version> → 0 if currently snoozed for that version
+check_snooze() {
+  [ -f "$SNOOZE_FILE" ] || return 1
+  local ver lvl epoch dur now
+  read -r ver lvl epoch < "$SNOOZE_FILE" 2>/dev/null || return 1
+  [ -n "$ver" ] && [ -n "$lvl" ] && [ -n "$epoch" ] || return 1
+  case "$lvl" in ''|*[!0-9]*) return 1 ;; esac
+  case "$epoch" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$ver" = "$1" ] || return 1
+  case "$lvl" in 1) dur=86400 ;; 2) dur=172800 ;; *) dur=604800 ;; esac
+  now="$(date +%s)"
+  [ "$now" -lt "$((epoch + dur))" ]
+}
+
+json_field() {
+  printf '%s' "$1" | sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -1
+}
+
+emit_up_to_date() {
+  echo "UP_TO_DATE $LOCAL" > "$CACHE_FILE" 2>/dev/null || true
+  echo "UP_TO_DATE $LOCAL"
+  exit 0
+}
+
+# ── Replay a fresh cache instead of refetching ───────────────
+if [ -f "$CACHE_FILE" ]; then
+  CACHED="$(cat "$CACHE_FILE" 2>/dev/null || true)"
+  if [ -n "$CACHED" ]; then
+    case "$CACHED" in
+      UP_TO_DATE*) TTL=60 ;;
+      UPDATE_*)    TTL=720 ;;
+      *)           TTL=0 ;;
+    esac
+    if [ "$TTL" -gt 0 ] && [ -z "$(find "$CACHE_FILE" -mmin +"$TTL" 2>/dev/null)" ]; then
+      C_STATE="$(printf '%s' "$CACHED" | awk '{print $1}')"
+      C_LOCAL="$(printf '%s' "$CACHED" | awk '{print $2}')"
+      C_TARGET="$(printf '%s' "$CACHED" | awk '{print $3}')"
+      if [ "$C_LOCAL" = "$LOCAL" ]; then
+        case "$C_STATE" in
+          UP_TO_DATE)      echo "$CACHED"; exit 0 ;;
+          UPDATE_REQUIRED) echo "$CACHED"; exit 0 ;;
+          UPDATE_AVAILABLE) check_snooze "$C_TARGET" && exit 0; echo "$CACHED"; exit 0 ;;
+        esac
+      fi
+    fi
+  fi
+fi
+
+# ── Fetch the version endpoint ───────────────────────────────
+if [ -n "${HEADER_VERSION_JSON:-}" ]; then
+  RESP="$HEADER_VERSION_JSON"
+else
+  RESP="$(curl -fsS --max-time 5 "$VERSION_URL" 2>/dev/null || true)"
+fi
+
+# Unreachable / empty → assume up to date (fail-safe; endpoint may not exist yet)
+[ -z "$RESP" ] && emit_up_to_date
+
+# Stash the raw response so the update flow can read message / notes_url
+printf '%s' "$RESP" > "$INFO_FILE" 2>/dev/null || true
+
+LATEST="$(json_field "$RESP" latest)"
+MIN="$(json_field "$RESP" min_supported)"
+case "$LATEST" in ''|*[!0-9.]*) LATEST="" ;; esac
+case "$MIN"    in ''|*[!0-9.]*) MIN="" ;; esac
+
+# Unparseable latest → treat as up to date
+[ -z "$LATEST" ] && emit_up_to_date
+
+# ── Decide (REQUIRED beats AVAILABLE; REQUIRED is never snoozed) ──
+if [ -n "$MIN" ] && version_lt "$LOCAL" "$MIN"; then
+  echo "UPDATE_REQUIRED $LOCAL $MIN" > "$CACHE_FILE" 2>/dev/null || true
+  echo "UPDATE_REQUIRED $LOCAL $MIN"
+  exit 0
+fi
+if version_lt "$LOCAL" "$LATEST"; then
+  echo "UPDATE_AVAILABLE $LOCAL $LATEST" > "$CACHE_FILE" 2>/dev/null || true
+  check_snooze "$LATEST" && exit 0
+  echo "UPDATE_AVAILABLE $LOCAL $LATEST"
+  exit 0
+fi
+
+emit_up_to_date
