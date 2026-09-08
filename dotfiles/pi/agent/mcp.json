@@ -1,8 +1,16 @@
 {
   "mcpServers": {
+    "chrome-devtools": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest"
+      ],
+      "directTools": false
+    },
     "notion": {
       "url": "https://mcp.notion.com/mcp",
-      "directTools": false
+      "directTools": true
     },
     "sentry": {
       "command": "npx",
@@ -23,9 +31,8 @@
       "directTools": false
     },
     "braintrust": {
-      "url": "https://api.braintrust.dev/mcp",
-      "auth": "bearer",
-      "bearerTokenEnv": "BRAINTRUST_API_KEY",
+      "url": "http://127.0.0.1:8000/mcp",
+      "auth": "oauth",
       "directTools": false
     },
     "datadog": {

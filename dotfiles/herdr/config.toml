@@ -94,6 +94,19 @@ type = "plugin_action"
 command = "annotate.manage"
 description = "manage annotations"
 
+# Document review via plannotator-tui.
+[[keys.command]]
+key = "prefix+o"
+type = "plugin_action"
+command = "annotate.open"
+description = "review documents in this folder"
+
+[[keys.command]]
+key = "prefix+shift+o"
+type = "plugin_action"
+command = "annotate.last"
+description = "review the agent's last reply"
+
 [ui]
 agent_panel_sort = "spaces"
 sidebar_width = 32

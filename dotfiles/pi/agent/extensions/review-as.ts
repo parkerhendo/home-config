@@ -35,6 +35,7 @@ type RepositoryUsers = {
 type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 
 const REVIEW_AS_SKILL_NAME = "review-as";
+const REVIEW_AS_ANCHOR_TYPE = "review-as-anchor";
 const GH_TIMEOUT_MS = 30_000;
 const MAX_VISIBLE_USERS = 12;
 
@@ -454,8 +455,17 @@ async function buildReviewAsSkillPrompt(
 }
 
 async function startReviewAsThread(
+  pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
 ): Promise<Result<boolean>> {
+  // A new session has no leaf to branch from. The non-context anchor keeps the
+  // review prompt in its own empty branch, matching /review.
+  if (!ctx.sessionManager.getLeafId()) {
+    pi.appendEntry(REVIEW_AS_ANCHOR_TYPE, {
+      createdAt: new Date().toISOString(),
+    });
+  }
+
   const firstUserMessage = ctx.sessionManager
     .getEntries()
     .find((entry) => entry.type === "message" && entry.message.role === "user");
@@ -484,7 +494,8 @@ async function startReviewAsThread(
 
 export default function reviewAsExtension(pi: ExtensionAPI): void {
   pi.registerCommand("skill:review-as", {
-    description: "Review code as selected GitHub users in a new thread",
+    description:
+      "Review code as selected GitHub users in an empty session branch",
     handler: async (args, ctx) => {
       let skillArgs = args.trim();
       if (!skillArgs && ctx.mode === "tui") {
@@ -505,7 +516,7 @@ export default function reviewAsExtension(pi: ExtensionAPI): void {
         return;
       }
 
-      const thread = await startReviewAsThread(ctx);
+      const thread = await startReviewAsThread(pi, ctx);
       if (!thread.ok) {
         ctx.ui.notify(`/skill:review-as: ${thread.error}`, "error");
         return;

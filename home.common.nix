@@ -159,6 +159,10 @@ in
     fi
   '';
 
+  home.activation.installStarfolkCli = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    curl -fsSL https://app.starfolk.ai/api/v1/cli/install.sh | sh
+  '';
+
   home.sessionPath = [
     "$HOME/.local/share/mise/shims"
     "$HOME/.local/bin"

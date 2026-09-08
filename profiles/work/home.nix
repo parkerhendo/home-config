@@ -2,6 +2,7 @@
   config,
   pkgs,
   lib,
+  inputs,
   ...
 }:
 
@@ -46,6 +47,7 @@
     docker
     actionlint
     sentry-cli
+    inputs.hunk.packages.${pkgs.stdenv.hostPlatform.system}.hunk
 
     # utilities
     hyperfine
