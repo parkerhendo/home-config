@@ -99,5 +99,6 @@
     ".prompts".source = ../../prompts;
     "herdr/config.toml".source =
       config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/herdr/config.toml";
+    "hunk/config.toml".source = ../../dotfiles/hunk/config.toml;
   };
 }
