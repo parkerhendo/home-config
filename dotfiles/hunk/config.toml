@@ -1,1 +1,10 @@
 theme = "gruvbox-dark-medium"
+mode = "split"
+line_numbers = true
+wrap_lines = false
+hunk_headers = true
+menu_bar = true
+transparent_background = true
+agent_notes = false
+copy_decorations = false
+cursor_line = "row"

@@ -12,4 +12,4 @@ Run typechecking regularly, single test files regularly, and the full test suite
 
 Once done, use /review to review the work.
 
-Commit your work to the current branch.
+After each phase of the plan, make an atomic commit to the current branch. Prefix each commit with `/git` so it can execute.

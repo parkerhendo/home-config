@@ -17,6 +17,7 @@
     "openai-codex/gpt-5.6-sol",
     "openai-codex/gpt-5.6-luna",
     "openai-codex/gpt-5.6-terra",
-    "anthropic/claude-fable-5"
+    "anthropic/claude-fable-5",
+    "openai-codex/gpt-6-astra"
   ]
 }
