@@ -6,7 +6,7 @@
         "-y",
         "chrome-devtools-mcp@latest"
       ],
-      "directTools": false
+      "directTools": true
     },
     "notion": {
       "url": "https://mcp.notion.com/mcp",

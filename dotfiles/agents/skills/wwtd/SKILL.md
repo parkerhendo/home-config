@@ -5,7 +5,6 @@ license: MIT
 metadata:
   author: Mainframe
   version: "0.1.0"
-disable-model-invocation: true
 ---
 
 # WWTD — What Would They Do?

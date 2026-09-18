@@ -138,6 +138,7 @@ in
   xdg.enable = true;
   xdg.configFile."lumen".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/lumen";
   xdg.configFile."tuicr".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/tuicr";
+  xdg.configFile."plannotator-tui/config.toml".source = config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/home-config/dotfiles/plannotator-tui/config.toml";
 
   # Give Nix a GitHub token so `nix flake update` and github: inputs don't
   # hit the 60 req/hr unauthenticated rate limit. The token itself lives at
