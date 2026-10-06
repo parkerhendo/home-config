@@ -6,38 +6,27 @@
         "-y",
         "chrome-devtools-mcp@latest"
       ],
-      "directTools": true
+      "exposure": "direct"
     },
     "notion": {
       "url": "https://mcp.notion.com/mcp",
-      "directTools": true
+      "exposure": "direct"
     },
     "sentry": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "mcp-remote@latest",
-        "https://mcp.sentry.dev/mcp"
-      ],
-      "directTools": false
+      "url": "https://mcp.sentry.dev/mcp",
+      "exposure": "codemode"
     },
     "vercel": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "mcp-remote",
-        "https://mcp.vercel.com"
-      ],
-      "directTools": false
+      "url": "https://mcp.vercel.com",
+      "exposure": "codemode"
     },
     "braintrust": {
       "url": "http://127.0.0.1:8000/mcp",
-      "auth": "oauth",
-      "directTools": false
+      "exposure": "codemode"
     },
     "datadog": {
       "url": "https://mcp.us5.datadoghq.com/api/unstable/mcp-server/mcp",
-      "directTools": false
+      "exposure": "codemode"
     }
   }
 }

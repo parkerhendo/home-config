@@ -33,7 +33,6 @@ in
     opencode
     claude-code
     cursor-cli
-    gemini-cli
     herdrWithStableBinPath
     pi-coding-agent
 
@@ -161,7 +160,7 @@ in
   '';
 
   home.activation.installStarfolkCli = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-    curl -fsSL https://app.starfolk.ai/api/v1/cli/install.sh | sh
+    ${pkgs.curl}/bin/curl -fsSL https://app.starfolk.ai/api/v1/cli/install.sh | PATH="${pkgs.curl}/bin:$PATH" sh
   '';
 
   home.sessionPath = [
