@@ -3,7 +3,7 @@
   "externalEditor": "nvim",
   "lastChangelogVersion": "1.0.2",
   "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-6-sol",
+  "defaultModel": "gpt-6.1-sol",
   "hideThinkingBlock": false,
   "defaultThinkingLevel": "medium",
   "enableSkillCommands": true,
@@ -12,7 +12,7 @@
     "git:github.com/DietrichGebert/ponytail"
   ],
   "enabledModels": [
-    "openai-codex/gpt-6-sol",
+    "openai-codex/gpt-6.1-sol",
     "openai-codex/gpt-6-astra",
     "openai-codex/gpt-6-luna",
     "anthropic/claude-fable-5-1",

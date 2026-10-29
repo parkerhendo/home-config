@@ -8,6 +8,11 @@
       ],
       "exposure": "direct"
     },
+    "paper": {
+      "command": "/Applications/Paper.app/Contents/Resources/app.asar.unpacked/dist/cli-bin/darwin-arm64/paper",
+      "args": ["mcp"],
+      "exposure": "codemode"
+    },
     "notion": {
       "url": "https://mcp.notion.com/mcp",
       "exposure": "direct"
@@ -22,6 +27,10 @@
     },
     "braintrust": {
       "url": "http://127.0.0.1:8000/mcp",
+      "exposure": "codemode"
+    },
+    "braintrust-prod": {
+      "url": "https://api.braintrust.dev/mcp",
       "exposure": "codemode"
     },
     "datadog": {

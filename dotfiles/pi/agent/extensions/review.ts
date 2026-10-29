@@ -42,7 +42,6 @@ import {
   DynamicBorder,
   BorderedLoader,
   ModelSelectorComponent,
-  SettingsManager,
 } from "@mariozechner/pi-coding-agent";
 import {
   Container,
@@ -1277,6 +1276,7 @@ export default function reviewExtension(pi: ExtensionAPI) {
   // selector's internal calls resolve instead of throwing
   // "getAvailableSnapshot is not a function".
   function toModelSelectorRuntime(modelRegistry: ExtensionContext["modelRegistry"]) {
+    // SAFETY: The selector only uses these four ModelRuntime methods.
     return {
       getAvailableSnapshot: () => modelRegistry.getAvailable(),
       getModel: (provider: string, modelId: string) =>
@@ -1284,13 +1284,12 @@ export default function reviewExtension(pi: ExtensionAPI) {
       refresh: (options?: { signal?: AbortSignal }) =>
         modelRegistry.refresh(options),
       getError: () => modelRegistry.getError(),
-    } as unknown as ConstructorParameters<typeof ModelSelectorComponent>[3];
+    } as unknown as ConstructorParameters<typeof ModelSelectorComponent>[2];
   }
 
   async function pickReviewModelOverride(
     ctx: ExtensionContext,
   ): Promise<ReviewModelOverride | undefined> {
-    const settingsManager = SettingsManager.inMemory();
     const configuredModel = reviewModelOverride
       ? ctx.modelRegistry.find(
           reviewModelOverride.provider,
@@ -1306,7 +1305,6 @@ export default function reviewExtension(pi: ExtensionAPI) {
         const selector = new ModelSelectorComponent(
           tui,
           currentModel,
-          settingsManager,
           toModelSelectorRuntime(ctx.modelRegistry),
           scopedModels,
           (model) => done({ provider: model.provider, modelId: model.id }),
