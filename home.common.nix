@@ -30,7 +30,6 @@ in
 
     # AI Stuff
     amp-cli
-    opencode
     claude-code
     cursor-cli
     herdrWithStableBinPath
